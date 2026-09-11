@@ -1,0 +1,80 @@
+export interface ParsedArgs {
+  command: string;
+  positional: string[];
+  flags: Record<string, string | boolean>;
+}
+
+export function parseArgs(argv: string[]): ParsedArgs {
+  const args = argv.slice(2);
+  const command = args[0] && !args[0].startsWith('-') ? args[0] : 'help';
+  const rest = command === 'help' && args[0]?.startsWith('-') ? args : args.slice(1);
+  const positional: string[] = [];
+  const flags: Record<string, string | boolean> = {};
+
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === '--') {
+      positional.push(...rest.slice(i + 1));
+      break;
+    }
+    if (a.startsWith('--')) {
+      const eq = a.indexOf('=');
+      if (eq > 0) {
+        flags[a.slice(2, eq)] = a.slice(eq + 1);
+      } else {
+        const key = a.slice(2);
+        const next = rest[i + 1];
+        if (next && !next.startsWith('-')) {
+          flags[key] = next;
+          i++;
+        } else {
+          flags[key] = true;
+        }
+      }
+    } else if (a.startsWith('-') && a.length === 2) {
+      const key = a.slice(1);
+      const next = rest[i + 1];
+      if (next && !next.startsWith('-')) {
+        flags[key] = next;
+        i++;
+      } else {
+        flags[key] = true;
+      }
+    } else {
+      positional.push(a);
+    }
+  }
+
+  return { command, positional, flags };
+}
+
+export function flagString(
+  flags: Record<string, string | boolean>,
+  ...names: string[]
+): string | undefined {
+  for (const n of names) {
+    const v = flags[n];
+    if (typeof v === 'string') return v;
+  }
+  return undefined;
+}
+
+export function flagBool(
+  flags: Record<string, string | boolean>,
+  ...names: string[]
+): boolean {
+  for (const n of names) {
+    const v = flags[n];
+    if (v === true || v === 'true') return true;
+  }
+  return false;
+}
+
+export function flagNumber(
+  flags: Record<string, string | boolean>,
+  name: string,
+): number | undefined {
+  const v = flags[name];
+  if (typeof v === 'string' && /^-?\d+$/.test(v)) return parseInt(v, 10);
+  return undefined;
+}

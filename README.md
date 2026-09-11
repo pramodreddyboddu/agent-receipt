@@ -1,60 +1,92 @@
 # agent-receipt
 
-Open-source CLI that writes **human-readable receipts** for what an AI coding agent changed in a git repo.
+**Tamper-evident git snapshot receipts for AI / agent coding sessions.**
 
-> Status: scaffolding. Cloud Agent build is queued pending plan/credits. This brief is the v0.1 contract.
+Capture what an agent changed (branch, HEAD, files, diffs, risk hints) into a
+Markdown receipt with an embedded SHA-256 integrity footer. Verify later that
+nobody edited the receipt.
 
-## Why
+[![CI](https://github.com/pramodreddyboddu/agent-receipt/actions/workflows/ci.yml/badge.svg)](https://github.com/pramodreddyboddu/agent-receipt/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Agent sessions leave a pile of diffs. `git log` and `git diff` are accurate but not a shareable “what did the agent do?” summary. `agent-receipt` turns the working tree and recent commits into a clear receipt you can paste into a PR, chat, or audit trail.
-
-## Who it’s for
-
-Developers (and agent operators) who want a durable, human-readable record of an agent’s code changes — without dumping raw patches by default.
-
-## v0.1 scope
-
-| Capability | Notes |
-| --- | --- |
-| Run in a git working tree | Optional `--cwd` |
-| Summarize working tree + last N commits | Flags to narrow |
-| Markdown receipt (stdout) | Default |
-| JSON receipt | `--json` |
-| Write to file | `--out <path>` |
-| Agent/session label | `--agent` / `--session` |
-| Safe git invocation | `execFile`, `shell: false`, fixed arg arrays |
-
-### Receipt contents
-
-- ISO-8601 timestamp
-- Repo identity (name/remote if available), branch, HEAD short SHA
-- Change summary (added / modified / deleted + line stats)
-- Per-file digest (path, kind, short intent) — full patches only with `--full`
-
-### Non-goals for v0.1
-
-- No MCP server (see sibling [agent-safety-pack](https://github.com/pramodreddyboddu/agent-safety-pack))
-- No network calls, no cloud upload
-- No rewriting history
-
-## Install (planned)
+## 30-second quickstart
 
 ```bash
-npm install -g agent-receipt   # or npx agent-receipt
-agent-receipt --help
+# from any git repo
+npx agent-receipt init
+npx agent-receipt capture --agent cursor --message "refactor auth helpers"
+npx agent-receipt show
+npx agent-receipt verify
 ```
 
-## Usage (planned)
+Or install globally / locally:
 
 ```bash
-agent-receipt
-agent-receipt --json --out receipt.json
-agent-receipt --agent cursor --session bc-… --commits 5
+npm install -g agent-receipt
+agent-receipt help
 ```
 
-## Sibling
+## Commands
 
-Quality bar and packaging should match [agent-safety-pack](https://github.com/pramodreddyboddu/agent-safety-pack) (TypeScript, Node 20+, MIT, real tests).
+| Command | Purpose |
+|---------|---------|
+| `init` | Write `.agent-receipt.yml` + short setup notes |
+| `capture` | Git snapshot → Markdown receipt (+ optional JSON) |
+| `show [path]` | Pretty-print last / given receipt |
+| `verify [path]` | Hash-check tamper-evident integrity |
+
+### `capture` flags
+
+| Flag | Description |
+|------|-------------|
+| `--since <ref>` | Diff from ref (e.g. `main`, `HEAD~5`) |
+| `--commits <N>` | Last N commits (default: config / 1) |
+| `--message <text>` | Session message |
+| `--agent <name>` | Agent label |
+| `--out <path>` | Output Markdown path |
+| `--full` | Full diffs (no truncation) |
+| `--json` | Also write companion `.json` |
+
+## What a receipt includes
+
+- Timestamp, branch, HEAD, optional agent / message
+- Commit list for the range
+- Files changed with insertions / deletions / binary flag
+- Per-file diff summary (`--full` for complete diffs)
+- Risk hints: secret-looking paths, large binaries, lockfile / CI deletions
+- SHA-256 integrity footer (tamper-evident)
+
+See [`examples/sample-receipt.md`](examples/sample-receipt.md).
+
+## Config (`.agent-receipt.yml`)
+
+```yaml
+outDir: .agent-receipt/receipts
+defaultAgent: agent
+defaultCommits: 1
+fullDiffs: false
+```
+
+## Integrity model
+
+The Markdown body (everything except the Integrity section / hash marker) is
+hashed with SHA-256. `verify` recomputes the hash and compares it to the embedded
+marker. Any edit to the body fails verification.
+
+This is **tamper-evident**, not cryptographic signing. For signatures, wrap the
+receipt with your own signing flow (e.g. `minisign`, GPG).
+
+## Development
+
+```bash
+git clone https://github.com/pramodreddyboddu/agent-receipt.git
+cd agent-receipt
+npm install
+npm test
+node bin/agent-receipt.js help
+```
+
+Requires Node.js ≥ 18 and `git` on `PATH`.
 
 ## License
 
