@@ -22,7 +22,9 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      - run: npm run pack:check
       - name: CLI smoke
         run: |
           node bin/agent-receipt.js help
           node bin/agent-receipt.js version
+          node bin/agent-receipt.js --version
