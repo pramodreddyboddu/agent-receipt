@@ -196,6 +196,14 @@ describe('capture --uncommitted + index + history --json + allowlist', () => {
     assert.ok(Array.isArray(rows));
     assert.ok(rows.length >= 1);
     assert.ok(rows[0].timestamp || rows[0].path);
+    assert.equal(rows[0].uncommitted, true);
+  });
+
+  it('history text table shows [uncommitted] badge from index', () => {
+    const out = cli(dir, ['history', '--limit', '5']);
+    assert.match(out, /Recent receipts/);
+    assert.match(out, /\[uncommitted\]/);
+    assert.match(out, /dirty-bot|wip snapshot/);
   });
 
   it('riskAllowlist suppresses package-json-change via config', () => {

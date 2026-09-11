@@ -85,6 +85,7 @@ Usage:
   agent-receipt ls [--limit <N>] [--json]   # alias
 
 Shows newest-first: time, agent, risk counts, short summary.
+Uncommitted (dirty-tree) receipts get a visible [uncommitted] badge.
 '--json' prints a JSON array (prefers .agent-receipt/index.json).
 
 Options:

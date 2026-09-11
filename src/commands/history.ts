@@ -1,4 +1,3 @@
-import { basename } from 'node:path';
 import { listReceipts, parseReceiptGlance } from './compare.js';
 import { color, severityColor } from '../lib/color.js';
 import { loadIndex } from '../lib/receipt-index.js';
@@ -10,14 +9,12 @@ export interface HistoryOptions {
   json?: boolean;
 }
 
-function riskCell(g: {
-  risks: Array<{ severity: string }>;
-  riskTotal?: number;
-}): string {
-  const high = g.risks.filter((r) => r.severity === 'high').length;
-  const medium = g.risks.filter((r) => r.severity === 'medium').length;
-  const low = g.risks.filter((r) => r.severity === 'low').length;
-  const total = g.riskTotal ?? g.risks.length;
+function riskFromCounts(
+  high: number,
+  medium: number,
+  low: number,
+  total: number,
+): string {
   if (total === 0 && high + medium + low === 0) return '—';
   const bits: string[] = [];
   if (high) bits.push(`${high}H`);
@@ -28,6 +25,22 @@ function riskCell(g: {
   if (high) return severityColor('high', text);
   if (medium) return severityColor('medium', text);
   return color.dim(text);
+}
+
+function riskCell(g: {
+  risks: Array<{ severity: string }>;
+  riskTotal?: number;
+}): string {
+  const high = g.risks.filter((r) => r.severity === 'high').length;
+  const medium = g.risks.filter((r) => r.severity === 'medium').length;
+  const low = g.risks.filter((r) => r.severity === 'low').length;
+  const total = g.riskTotal ?? g.risks.length;
+  return riskFromCounts(high, medium, low, total);
+}
+
+/** Visible badge when a receipt is an uncommitted working-tree snapshot. */
+function uncommittedBadge(uncommitted: boolean): string {
+  return uncommitted ? color.yellow('[uncommitted] ') : '';
 }
 
 function shortSummary(g: { message?: string; fileCount?: number; files: string[] }): string {
@@ -98,6 +111,30 @@ export function cmdHistory(cwd: string, opts: HistoryOptions = {}): number {
     return 0;
   }
 
+  // Prefer index for text too — it already carries `uncommitted` (same as --json).
+  const idx = loadIndex(cwd);
+  if (idx.receipts.length) {
+    const slice = idx.receipts.slice(0, limit);
+    const rows = slice.map((e) => {
+      const risk = e.risk ?? { high: 0, medium: 0, low: 0, total: 0 };
+      return {
+        path: e.path,
+        time: e.timestamp ?? '?',
+        agent: e.agent ?? '—',
+        risk: riskFromCounts(risk.high, risk.medium, risk.low, risk.total),
+        files: String(e.files ?? 0),
+        summary: shortSummary({
+          message: e.message ?? undefined,
+          fileCount: e.files,
+          files: [],
+        }),
+        uncommitted: Boolean(e.uncommitted),
+      };
+    });
+    printHistoryTable(rows, idx.receipts.length);
+    return 0;
+  }
+
   const all = listReceipts(cwd);
   if (!all.length) {
     throw new Error(
@@ -110,17 +147,33 @@ export function cmdHistory(cwd: string, opts: HistoryOptions = {}): number {
     const g = parseReceiptGlance(p);
     return {
       path: p,
-      file: basename(p),
       time: g.timestamp ?? '?',
       agent: g.agent ?? '—',
       risk: riskCell(g),
       files: String(g.fileCount ?? g.files.length),
       summary: shortSummary(g),
+      uncommitted: false,
     };
   });
 
+  printHistoryTable(rows, all.length);
+  return 0;
+}
+
+function printHistoryTable(
+  rows: Array<{
+    path: string;
+    time: string;
+    agent: string;
+    risk: string;
+    files: string;
+    summary: string;
+    uncommitted: boolean;
+  }>,
+  total: number,
+): void {
   console.log(
-    color.bold(`Recent receipts`) + color.dim(` (${rows.length} of ${all.length})`),
+    color.bold(`Recent receipts`) + color.dim(` (${rows.length} of ${total})`),
   );
   console.log('');
   const hdr =
@@ -128,7 +181,12 @@ export function cmdHistory(cwd: string, opts: HistoryOptions = {}): number {
   console.log(color.dim(hdr));
   for (const r of rows) {
     console.log(
-      pad(r.time, 28) + pad(r.agent, 14) + pad(r.risk, 10) + pad(r.files, 7) + r.summary,
+      pad(r.time, 28) +
+        pad(r.agent, 14) +
+        pad(r.risk, 10) +
+        pad(r.files, 7) +
+        uncommittedBadge(r.uncommitted) +
+        r.summary,
     );
   }
   console.log('');
@@ -136,5 +194,4 @@ export function cmdHistory(cwd: string, opts: HistoryOptions = {}): number {
   console.log(color.dim('Tip: agent-receipt last    # glance the newest'));
   console.log(color.dim('     agent-receipt show    # full Markdown'));
   console.log(color.dim('     agent-receipt history --json'));
-  return 0;
 }

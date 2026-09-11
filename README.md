@@ -42,7 +42,7 @@ agent-receipt doctor
 # After an agent session (or let the Cursor rule / hook do it):
 agent-receipt capture --agent cursor --message "what changed"
 
-agent-receipt history           # time, agent, risk counts, summary
+agent-receipt history           # time, agent, risk, summary (+ [uncommitted] badge)
 agent-receipt last              # glance the newest
 agent-receipt verify            # integrity
 ```
@@ -82,7 +82,7 @@ npm install -D agent-receipt
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON) |
 | `show [path]` | Pretty-print last / given receipt (full body) |
 | `last` | Path + glance of the most recent receipt |
-| `history` / `ls` | List recent receipts (`--json`; index at `.agent-receipt/index.json`) |
+| `history` / `ls` | List recent receipts (`--json`; `[uncommitted]` badge; index at `.agent-receipt/index.json`) |
 | `watch` | Poll git; auto-capture on commits **or dirty tree** (`--once`, `--commits-only`) |
 | `verify [path]` | Hash-check tamper-evident integrity |
 | `doctor` | Health check: git, repo, hooks, config, Node |
