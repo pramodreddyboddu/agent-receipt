@@ -30,11 +30,15 @@ import {
   type ReceiptData,
 } from '../lib/receipt.js';
 import { updateIndexOnCapture } from '../lib/receipt-index.js';
+import { prepareRedactedBody } from '../lib/redact.js';
+import { appendHashFooter } from '../lib/hash.js';
 import { VERSION } from '../lib/version.js';
 import { color } from '../lib/color.js';
 
 export interface CaptureOptions {
   since?: string;
+  /** Summarize changes vs a base branch/ref (e.g. main); shows commits ahead. */
+  base?: string;
   commits?: number;
   message?: string;
   agent?: string;
@@ -51,6 +55,8 @@ export interface CaptureOptions {
    * a commit range. Labeled **uncommitted** on the receipt.
    */
   uncommitted?: boolean;
+  /** Mask high/secret findings in the written Markdown for safer sharing. */
+  redact?: boolean;
 }
 
 export interface CaptureResult {
@@ -58,6 +64,9 @@ export interface CaptureResult {
   riskSum: RiskSummary;
   failedOn: boolean;
   uncommitted: boolean;
+  /** One-line TL;DR from the written receipt (pre-redaction summary when redacted). */
+  tldr: string;
+  redacted: boolean;
 }
 
 export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
@@ -79,6 +88,15 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
   let rangeLabel: string;
   let base: string;
   let ignored: FileStat[] = [];
+
+  if (uncommitted && (opts.base || opts.since)) {
+    throw new Error(
+      'Cannot combine --uncommitted with --base / --since.\n' +
+        'Omit --uncommitted to capture commits vs a base, or omit --base/--since for a dirty-tree snapshot.',
+    );
+  }
+
+  let commitsAhead: number | undefined;
 
   if (uncommitted) {
     if (!isDirty(cwd)) {
@@ -102,13 +120,18 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
       diffs[f.path] = getWorkingTreeDiff(cwd, f.path, full);
     }
   } else {
-    const range = resolveRange(cwd, { since: opts.since, commits: commitsN });
+    const range = resolveRange(cwd, {
+      since: opts.since,
+      commits: commitsN,
+      base: opts.base,
+    });
     const allFiles = getChangedFiles(cwd, range.base, range.head);
     const filtered = filterIgnored(allFiles, cfg.ignore);
     files = filtered.kept;
     ignored = filtered.ignored;
     rangeLabel = range.label;
     base = range.base;
+    commitsAhead = range.commitsAhead;
     commits = getCommitLog(cwd, range.base, range.head);
     for (const f of files) {
       if (f.binary) {
@@ -147,11 +170,21 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     uncommitted,
   };
 
-  const markdown = formatMarkdown(data, {
+  let markdown = formatMarkdown(data, {
     full,
     diffStat: opts.diffStat,
     topRisks: opts.topRisks,
   });
+  const redacted = Boolean(opts.redact);
+  if (redacted) {
+    markdown = appendHashFooter(prepareRedactedBody(markdown));
+  }
+
+  // TL;DR from the (possibly redacted) receipt blockquote
+  const tldrMatch = markdown.match(/> \*\*TL;DR\*\*\s+(.+)/);
+  const tldr =
+    tldrMatch?.[1]?.trim() ||
+    `${agent || 'agent'} · ${data.files.length} files · range ${rangeLabel}`;
 
   let outPath: string;
   if (opts.out) {
@@ -204,8 +237,17 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
       (riskSum.maxSeverity ? ` [max: ${riskSum.maxSeverity}]` : '') +
       `, range ${scope}`,
   );
+  if (typeof commitsAhead === 'number' && (opts.base || opts.since)) {
+    console.log(
+      `  ${commitsAhead} commit(s) ahead` +
+        (opts.base || opts.since ? ` of ${opts.base || opts.since}` : ''),
+    );
+  }
   if (uncommitted) {
     console.log(color.yellow('  ⚠ Snapshot is uncommitted (working tree, not HEAD).'));
+  }
+  if (redacted) {
+    console.log(color.yellow('  ⚠ Receipt redacted — high/secret findings masked.'));
   }
   if (ignored.length) {
     console.log(
@@ -240,5 +282,5 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     );
   }
 
-  return { path: outPath, riskSum, failedOn, uncommitted };
+  return { path: outPath, riskSum, failedOn, uncommitted, tldr, redacted };
 }

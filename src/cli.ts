@@ -14,6 +14,8 @@ import { cmdDoctor } from './commands/doctor.js';
 import { cmdCompare } from './commands/compare.js';
 import { cmdHistory } from './commands/history.js';
 import { cmdWatch } from './commands/watch.js';
+import { cmdWrap } from './commands/wrap.js';
+import { cmdExport, cmdHtml } from './commands/export.js';
 
 export async function run(argv: string[] = process.argv): Promise<number> {
   const { command, positional, flags } = parseArgs(argv);
@@ -48,6 +50,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         );
         const result = cmdCapture(cwd, {
           since: flagString(flags, 'since'),
+          base: flagString(flags, 'base'),
           commits: flagNumber(flags, 'commits'),
           message: flagString(flags, 'message', 'm'),
           agent: flagString(flags, 'agent', 'a'),
@@ -59,9 +62,42 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           topRisks: flagNumber(flags, 'top-risks'),
           failOn,
           uncommitted: flagBool(flags, 'uncommitted'),
+          redact: flagBool(flags, 'redact'),
         });
         return result.failedOn ? 2 : 0;
       }
+      case 'wrap': {
+        const failOn = parseFailOn(
+          flags['fail-on'] === undefined ? undefined : flags['fail-on'],
+        );
+        const result = cmdWrap(cwd, {
+          agent: flagString(flags, 'agent', 'a'),
+          message: flagString(flags, 'message', 'm'),
+          failOn,
+          base: flagString(flags, 'base'),
+          redact: flagBool(flags, 'redact'),
+          json: flagBool(flags, 'json'),
+          full: flagBool(flags, 'full'),
+          uncommitted: flagBool(flags, 'uncommitted'),
+        });
+        if (result.failedOn) return 2;
+        return result.verified ? 0 : 2;
+      }
+      case 'export': {
+        const fmt = flagString(flags, 'format');
+        cmdExport(cwd, positional[0], {
+          out: flagString(flags, 'out', 'o'),
+          redact: flagBool(flags, 'redact'),
+          format: (fmt as 'html' | 'markdown' | 'md' | undefined) || 'html',
+        });
+        return 0;
+      }
+      case 'html':
+        cmdHtml(cwd, positional[0], {
+          out: flagString(flags, 'out', 'o'),
+          redact: flagBool(flags, 'redact'),
+        });
+        return 0;
       case 'show':
         cmdShow(cwd, positional[0]);
         return 0;

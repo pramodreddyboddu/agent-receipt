@@ -2,6 +2,8 @@ export { run } from './cli.js';
 export { VERSION } from './lib/version.js';
 export { cmdInit, writeCursorRule } from './commands/init.js';
 export { cmdCapture } from './commands/capture.js';
+export { cmdWrap } from './commands/wrap.js';
+export { cmdExport, cmdHtml } from './commands/export.js';
 export { cmdShow, resolveReceiptPath, findLatestReceipt } from './commands/show.js';
 export { cmdLast } from './commands/last.js';
 export { cmdHistory } from './commands/history.js';
@@ -34,6 +36,8 @@ export {
 } from './lib/risk.js';
 export { summarizeNotableChanges, formatDiffStatTable } from './lib/summary.js';
 export { formatMarkdown, formatJson, formatTldr, buildReviewItems } from './lib/receipt.js';
+export { redactSecretsInText, redactMarkdownBody, prepareRedactedBody } from './lib/redact.js';
+export { markdownToHtml } from './lib/html.js';
 export { CURSOR_RULE_MDC, CURSOR_RULE_REL } from './lib/cursor-rule.js';
 export {
   loadConfig,
@@ -59,4 +63,6 @@ export {
   isDirty,
   dirtyFingerprint,
   getWorkingTreeFiles,
+  resolveRange,
+  countCommitsAhead,
 } from './lib/git.js';

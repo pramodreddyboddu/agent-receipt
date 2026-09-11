@@ -26,6 +26,7 @@ Usage:
   agent-receipt capture [options]
 
 Options:
+  --base <ref>           Changes vs a base branch/ref (e.g. main); shows commits ahead
   --since <ref>          Diff range start (e.g. main, HEAD~5, abc123)
   --commits <N>          Last N commits (default: config or 1)
   --uncommitted          Snapshot dirty working tree (staged+unstaged+untracked)
@@ -38,6 +39,7 @@ Options:
   --diff-stat            Include diff-stat overview (default: on)
   --no-diff-stat         Omit the diff-stat overview
   --top-risks <N>        Max risk rows in findings table (default: 20)
+  --redact               Mask high/secret findings for safer sharing (re-hashed)
   --fail-on [high|medium|low]
                          Exit 2 after writing if max severity meets threshold.
                          Bare --fail-on means high. For hooks/CI scripts.
@@ -47,10 +49,73 @@ Each capture updates .agent-receipt/index.json (stable receipt index).
 
 Examples:
   agent-receipt capture --agent cursor --message "ship auth"
+  agent-receipt capture --base main --agent cursor --message "PR branch"
   agent-receipt capture --uncommitted --agent cursor --message "wip"
   agent-receipt capture --since main --full --json --session s-42
   agent-receipt capture --commits 3 --no-diff-stat
+  agent-receipt capture --redact --out share.md
   agent-receipt capture --fail-on high
+`,
+
+  wrap: `agent-receipt wrap — one-shot end-of-session capture + TL;DR + verify
+
+Usage:
+  agent-receipt wrap [options]
+
+If the working tree is dirty (and --base is not set), captures with --uncommitted;
+otherwise captures commits (optionally vs --base). Explicit --base always uses a
+commit range even if the tree is dirty. Prints TL;DR + path, then verifies.
+
+Options:
+  --agent <name>         Agent label (default: wrap)
+  --message <text>       Session message (default: "session wrap")
+  --base <ref>           When clean, capture vs this base branch/ref
+  --uncommitted          Require dirty-tree capture (error if clean)
+  --redact               Mask high/secret findings in the written receipt
+  --fail-on [high|medium|low]
+                         Exit 2 after writing if max severity meets threshold
+  --json                 Also write companion .json
+  --full                 Include full diffs
+  --cwd <path>           Run as if started in this directory
+
+Exit codes: 0 OK, 2 fail-on threshold or verify failure, 1 error.
+
+Examples:
+  agent-receipt wrap --agent cursor --message "done with auth"
+  agent-receipt wrap --agent cursor --base main
+  agent-receipt wrap --fail-on high
+`,
+
+  export: `agent-receipt export — write a shareable HTML (or Markdown) receipt
+
+Usage:
+  agent-receipt export [path] [--out <file>] [--redact] [--format html|markdown]
+
+If path is omitted, exports the newest receipt under outDir.
+Default format is self-contained HTML (no external CSS/JS) — open in a browser
+or share as a single file.
+
+Options:
+  --out <path>           Output path (default: sibling .html next to the receipt)
+  --redact               Mask high/secret findings before writing
+  --format <html|markdown|md>
+                         Output format (default: html)
+  --cwd <path>           Run as if started in this directory
+
+Examples:
+  agent-receipt export
+  agent-receipt export --out share.html --redact
+  agent-receipt export receipt.md --format markdown --redact --out safe.md
+`,
+
+  html: `agent-receipt html — alias for export as self-contained HTML
+
+Usage:
+  agent-receipt html [path] [--out <file>] [--redact]
+
+Examples:
+  agent-receipt html
+  agent-receipt html --out session.html --redact
 `,
 
   show: `agent-receipt show — print a receipt body
@@ -255,6 +320,9 @@ Usage:
 Commands:
   init                   Write .agent-receipt.yml + setup notes
   capture                Capture a git snapshot receipt (Markdown)
+  wrap                   End-of-session: capture + TL;DR + verify
+  export [path]          Write self-contained HTML (or Markdown) receipt
+  html [path]            Alias for export as HTML
   show [path]            Pretty-print last / given receipt (full body)
   last                   Path + glance of the most recent receipt
   history                List recent receipts (time, agent, risk, summary)
@@ -282,8 +350,13 @@ Quickstart (≈ 60 seconds):
 
 Examples:
   agent-receipt init --cursor
-  agent-receipt capture --agent cursor --message "ship v0.5"
+  agent-receipt wrap --agent cursor --message "session done"
+  agent-receipt capture --agent cursor --message "ship v0.6"
+  agent-receipt capture --base main --message "PR vs main"
   agent-receipt capture --uncommitted --message "wip"
+  agent-receipt capture --redact --out share.md
+  agent-receipt export --redact --out share.html
+  agent-receipt html
   agent-receipt capture --fail-on high
   agent-receipt history --json
   agent-receipt watch --once --agent cursor
@@ -294,7 +367,7 @@ Examples:
   agent-receipt doctor
   agent-receipt compare
   agent-receipt install-hooks
-  agent-receipt help watch
+  agent-receipt help wrap
 
 Docs: https://github.com/pramodreddyboddu/agent-receipt
 Agent tips: docs/agents.md · examples/ (Cursor, Claude Code, Aider)

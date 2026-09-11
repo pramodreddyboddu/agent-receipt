@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] — 2026-09-11
+
+### Added
+
+- `wrap` — one-shot end-of-session: capture (with `--uncommitted` if dirty) →
+  print TL;DR + path → verify (`--agent`, `--message`, `--fail-on`, `--base`,
+  `--redact`)
+- `export` / `html` — write a self-contained HTML receipt (or export last) for
+  open/share; `--out`, `--redact`, `--format html|markdown`
+- `capture --base <ref>` — summarize changes vs a base branch (e.g. `main`);
+  range label shows **commits ahead** + file stats
+- `--redact` on capture / wrap / export — mask high/secret findings in
+  Markdown/HTML for safer sharing (re-hashed so verify still passes)
+- README docs for wrap / export / base / redact
+
+### Changed
+
+- Package version bumped to `0.6.0`
+
 ## [0.5.1] — 2026-09-11
 
 ### Added

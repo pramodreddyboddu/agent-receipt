@@ -61,13 +61,67 @@ export interface FileStat {
   binary: boolean;
 }
 
+export interface ResolvedRange {
+  base: string;
+  head: string;
+  label: string;
+  /** When set via --base / --since against a named ref. */
+  baseRef?: string;
+  /** Commits reachable from HEAD but not the base ref (ahead count). */
+  commitsAhead?: number;
+}
+
+/** Count commits on head not in base (`base..head`). */
+export function countCommitsAhead(cwd: string, base: string, head = 'HEAD'): number {
+  try {
+    const out = runGit(['rev-list', '--count', `${base}..${head}`], cwd);
+    const n = parseInt(out, 10);
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Resolve a capture range.
+ * - `--base <ref>`: changes vs a branch/ref (e.g. main); label includes commits ahead
+ * - `--since <ref>`: same diff range, classic `ref..HEAD` label
+ * - `--commits N`: last N commits
+ */
 export function resolveRange(
   cwd: string,
-  opts: { since?: string; commits?: number },
-): { base: string; head: string; label: string } {
+  opts: { since?: string; commits?: number; base?: string },
+): ResolvedRange {
   const head = 'HEAD';
-  if (opts.since) {
-    return { base: opts.since, head, label: `${opts.since}..HEAD` };
+  const baseRef = opts.base || opts.since;
+  if (baseRef) {
+    // Validate ref exists
+    try {
+      runGit(['rev-parse', '--verify', baseRef], cwd);
+    } catch {
+      throw new Error(
+        `Unknown git ref for ${opts.base ? '--base' : '--since'}: ${baseRef}
+` +
+          `Pass a branch, tag, or commit (e.g. main, origin/main, HEAD~3).`,
+      );
+    }
+    const ahead = countCommitsAhead(cwd, baseRef, head);
+    if (opts.base) {
+      return {
+        base: baseRef,
+        head,
+        label: `${ahead} commit${ahead === 1 ? '' : 's'} ahead of ${baseRef}`,
+        baseRef,
+        commitsAhead: ahead,
+      };
+    }
+    return {
+      base: baseRef,
+      head,
+      label: `${baseRef}..HEAD`,
+      baseRef,
+      commitsAhead: ahead,
+    };
   }
   const n = opts.commits && opts.commits > 0 ? opts.commits : 1;
   // Prefer N commits back; fall back to empty tree if shallow/history short
