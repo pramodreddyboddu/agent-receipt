@@ -7,33 +7,41 @@ Markdown receipt with an embedded SHA-256 integrity footer. Verify later that
 nobody edited the receipt.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![npm version](https://img.shields.io/npm/v/agent-receipt.svg)](https://www.npmjs.com/package/agent-receipt)
 
-## Install
+## 30-second path (discover → trust)
 
 ```bash
-# one-shot
-npx agent-receipt help
+# Install from GitHub (works before npm publish)
+npm i -g github:pramodreddyboddu/agent-receipt
 
-# global
-npm install -g agent-receipt
-agent-receipt help
+# Or from a local checkout
+# npm i -g /path/to/agent-receipt
 
-# or project-local
-npm install -D agent-receipt
+cd your-git-repo
+agent-receipt init
+agent-receipt install-hooks
+agent-receipt doctor
+
+# …make a normal commit (hook auto-captures) OR capture manually:
+agent-receipt capture --agent cursor --message "first receipt"
+
+agent-receipt last
+agent-receipt verify
 ```
+
+Example of what you get: [`examples/sample-receipt.md`](examples/sample-receipt.md).
 
 Requires **Node.js ≥ 20** and `git` on `PATH`.
 
-## 30-second quickstart
+### Alternative installs
 
 ```bash
-# from any git repo
-npx agent-receipt init
-npx agent-receipt capture --agent cursor --message "refactor auth helpers"
-npx agent-receipt last
-npx agent-receipt show
-npx agent-receipt verify
+# one-shot without global install
+npx github:pramodreddyboddu/agent-receipt doctor
+
+# after npm publish
+npm install -g agent-receipt
+npm install -D agent-receipt
 ```
 
 ## Commands
@@ -45,8 +53,18 @@ npx agent-receipt verify
 | `show [path]` | Pretty-print last / given receipt (full body) |
 | `last` | Path + glance of the most recent receipt |
 | `verify [path]` | Hash-check tamper-evident integrity |
+| `doctor` | Health check: git, repo, hooks, config, Node |
+| `compare [a] [b]` | Diff two receipts (default: last vs previous) |
+| `diff [a] [b]` | Alias for `compare` |
 | `install-hooks` | Opt-in post-commit auto-capture (`--pre-push` optional) |
 | `uninstall-hooks` | Remove managed hook sections |
+| `help [cmd]` | Global help, or man-page style help for a command |
+
+```bash
+agent-receipt help doctor
+agent-receipt help capture
+agent-receipt compare
+```
 
 ### `capture` flags
 
@@ -60,17 +78,9 @@ npx agent-receipt verify
 | `--out <path>` | Output Markdown path |
 | `--full` | Full diffs (no truncation) |
 | `--json` | Also write companion `.json` |
+| `--diff-stat` / `--no-diff-stat` | Diff-stat overview (default on) |
+| `--top-risks <N>` | Max risk rows in findings table (default 20) |
 | `--cwd <path>` | Run as if started in this directory (global) |
-
-### `last` / hooks
-
-```bash
-agent-receipt last              # path + summary glance
-agent-receipt last --path       # path only (scripting)
-agent-receipt install-hooks     # post-commit capture
-agent-receipt install-hooks --pre-push
-agent-receipt uninstall-hooks
-```
 
 ## What a receipt includes
 
@@ -85,8 +95,12 @@ agent-receipt uninstall-hooks
   manifests, large diffs, binaries, lockfile / CI deletions, broad change sets
 - SHA-256 integrity footer (tamper-evident)
 
+Noise paths (`node_modules/**`, `dist/**`, `coverage/**` by default) are
+excluded from risk / summary / file tables via config `ignore` globs.
+
 See [`examples/sample-receipt.md`](examples/sample-receipt.md),
-[`docs/agents.md`](docs/agents.md), and short recipes under [`examples/`](examples/).
+[`docs/agents.md`](docs/agents.md), [`docs/receipt.schema.json`](docs/receipt.schema.json),
+and short recipes under [`examples/`](examples/).
 
 ## Config (`.agent-receipt.yml`)
 
@@ -95,13 +109,16 @@ outDir: .agent-receipt/receipts
 defaultAgent: agent
 defaultCommits: 1
 fullDiffs: false
+
+# Path globs excluded from risk / summary / file tables
+ignore:
+  - node_modules/**
+  - dist/**
+  - coverage/**
+  # optional lockfile noise:
+  # - "*.lock"
+  # - package-lock.json
 ```
-
-## Outside a git repo
-
-`capture` and hook commands exit non-zero with a clear error if the working
-directory is not a git repository. Point `--cwd` at a repo when invoking from
-elsewhere.
 
 ## Integrity model
 
@@ -121,6 +138,8 @@ npm install
 npm test
 node bin/agent-receipt.js help
 ```
+
+Release playbook (no auto-publish): [`docs/RELEASE.md`](docs/RELEASE.md).
 
 ## License
 

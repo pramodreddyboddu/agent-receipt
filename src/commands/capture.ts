@@ -12,6 +12,7 @@ import {
 } from '../lib/git.js';
 import { analyzeRisks, summarizeRisks } from '../lib/risk.js';
 import { loadConfig, ensureOutDir } from '../lib/config.js';
+import { filterIgnored } from '../lib/ignore.js';
 import {
   formatMarkdown,
   formatJson,
@@ -30,6 +31,8 @@ export interface CaptureOptions {
   out?: string;
   full?: boolean;
   json?: boolean;
+  diffStat?: boolean;
+  topRisks?: number;
 }
 
 export function cmdCapture(cwd: string, opts: CaptureOptions): string {
@@ -45,7 +48,8 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): string {
   const agent = opts.agent ?? cfg.defaultAgent;
 
   const range = resolveRange(cwd, { since: opts.since, commits: commitsN });
-  const files = getChangedFiles(cwd, range.base, range.head);
+  const allFiles = getChangedFiles(cwd, range.base, range.head);
+  const { kept: files, ignored } = filterIgnored(allFiles, cfg.ignore);
   const risks = analyzeRisks(files);
   const riskSum = summarizeRisks(risks);
   const commits = getCommitLog(cwd, range.base, range.head);
@@ -83,7 +87,11 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): string {
     cwd: resolve(cwd),
   };
 
-  const markdown = formatMarkdown(data, { full, diffStat: true });
+  const markdown = formatMarkdown(data, {
+    full,
+    diffStat: opts.diffStat,
+    topRisks: opts.topRisks,
+  });
 
   let outPath: string;
   if (opts.out) {
@@ -114,6 +122,13 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): string {
       (riskSum.maxSeverity ? ` [max: ${riskSum.maxSeverity}]` : '') +
       `, range ${range.label}`,
   );
+  if (ignored.length) {
+    console.log(
+      color.dim(
+        `  ignored ${ignored.length} path(s) via config ignore globs (noise)`,
+      ),
+    );
+  }
   if (riskSum.high > 0) {
     console.log(
       color.yellow(

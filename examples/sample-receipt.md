@@ -11,7 +11,7 @@
 
 ## Session
 
-- **Version**: 0.2.0
+- **Version**: 0.3.0
 - **Timestamp**: 2026-09-11T19:05:12.903Z
 - **Branch**: `main`
 - **HEAD**: `b232a251f710a340884d7a9c0b5ffc09f51f6c64`

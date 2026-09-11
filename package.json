@@ -1,6 +1,6 @@
 {
   "name": "agent-receipt",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Human-readable, tamper-evident git snapshot receipts for AI coding agent sessions",
   "type": "module",
   "bin": {

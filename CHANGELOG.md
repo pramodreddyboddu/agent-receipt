@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] — 2026-09-11
+
+### Added
+
+- `doctor` — environment health check (Node ≥ 20, git, repo, config, hooks, outDir)
+- `compare` / `diff` — show what changed between two receipts (default: last vs previous)
+- Config `ignore` globs — exclude noise paths from risk / summary / file tables
+  (defaults: `node_modules/**`, `dist/**`, `coverage/**`; lockfile options documented)
+- `agent-receipt help <cmd>` — man-page style per-command help
+- `docs/receipt.schema.json` — JSON Schema for `capture --json` companion files
+- `docs/RELEASE.md` — public + npm publish checklist (manual; agents do not publish)
+- Capture flags: `--diff-stat` / `--no-diff-stat`, `--top-risks <N>`
+- `install-hooks --uninstall` compat alias
+
+### Changed
+
+- README leads with a 30-second GitHub install → init → hooks → last/verify path
+- Default `.agent-receipt.yml` from `init` includes `ignore` list
+- Package version bumped to `0.3.0`
+
 ## [0.2.0] — 2026-09-11
 
 ### Added
