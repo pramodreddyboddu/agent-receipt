@@ -24,6 +24,10 @@ Thanks for helping improve `agent-receipt`.
 
 ## CI workflow
 
-The GitHub Actions workflow lives at [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml).
-Copy it to `.github/workflows/ci.yml` with a token that has the `workflow` scope
-(or via the GitHub UI), then commit.
+The GitHub Actions workflow lives at [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml)
+(Node 20/22, `npm run build` + `npm test`).
+
+Copy it to `.github/workflows/ci.yml` with a token that has the `workflow` OAuth
+scope (or via the GitHub UI), then commit — the current OAuth token cannot push
+workflow files.
+

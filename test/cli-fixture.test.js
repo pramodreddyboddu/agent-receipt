@@ -84,4 +84,40 @@ describe('cli fixture', () => {
     const out = cli(dir, ['show', 'receipt.md']);
     assert.match(out, /Agent Receipt/);
   });
+
+  it('fails cleanly outside a git repo', () => {
+    const bare = mkdtempSync(join(tmpdir(), 'agent-receipt-bare-'));
+    try {
+      let failed = false;
+      try {
+        cli(bare, ['capture', '--message', 'nope']);
+      } catch (err) {
+        failed = true;
+        assert.match(String(err.stderr || err.message || err), /Not a git repository/i);
+      }
+      assert.equal(failed, true);
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
+  });
+
+  it('honors --session and --cwd', () => {
+    const out = cli(tmpdir(), [
+      'capture',
+      '--cwd',
+      dir,
+      '--commits',
+      '1',
+      '--agent',
+      'cursor',
+      '--session',
+      'sess-99',
+      '--out',
+      'session-receipt.md',
+    ]);
+    assert.match(out, /Wrote receipt/);
+    const md = readFileSync(join(dir, 'session-receipt.md'), 'utf8');
+    assert.match(md, /sess-99/);
+    assert.match(md, /cursor/);
+  });
 });

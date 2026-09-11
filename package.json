@@ -1,7 +1,7 @@
 {
   "name": "agent-receipt",
   "version": "0.1.0",
-  "description": "Tamper-evident git snapshot receipts for AI/agent coding sessions",
+  "description": "Human-readable, tamper-evident git snapshot receipts for AI coding agent sessions",
   "type": "module",
   "bin": {
     "agent-receipt": "./bin/agent-receipt.js"
@@ -26,7 +26,7 @@
     "start": "node bin/agent-receipt.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "keywords": [
     "cli",

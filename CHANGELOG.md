@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - Initial release of `agent-receipt` CLI
 - Commands: `init`, `capture`, `show`, `verify`
-- Capture flags: `--since`, `--commits`, `--message`, `--agent`, `--out`, `--full`, `--json`
+- Capture flags: `--since`, `--commits`, `--message`, `--agent`, `--session`, `--out`, `--full`, `--json`, `--cwd`
 - Risk hints for secret-looking paths, binaries, lockfile/CI deletions
 - SHA-256 tamper-evident integrity footer
 - TypeScript ESM build, `node:test` suite, GitHub Actions CI

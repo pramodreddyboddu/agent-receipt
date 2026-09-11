@@ -42,9 +42,11 @@ agent-receipt help
 | `--commits <N>` | Last N commits (default: config / 1) |
 | `--message <text>` | Session message |
 | `--agent <name>` | Agent label |
+| `--session <id>` | Session / run id label |
 | `--out <path>` | Output Markdown path |
 | `--full` | Full diffs (no truncation) |
 | `--json` | Also write companion `.json` |
+| `--cwd <path>` | Run as if started in this directory (global) |
 
 ## What a receipt includes
 
@@ -66,6 +68,11 @@ defaultCommits: 1
 fullDiffs: false
 ```
 
+## Outside a git repo
+
+`capture` exits non-zero with a clear error if the working directory is not a
+git repository. Point `--cwd` at a repo when invoking from elsewhere.
+
 ## Integrity model
 
 The Markdown body (everything except the Integrity section / hash marker) is
@@ -85,7 +92,7 @@ npm test
 node bin/agent-receipt.js help
 ```
 
-Requires Node.js ≥ 18 and `git` on `PATH`.
+Requires Node.js ≥ 20 and `git` on `PATH`.
 
 ## License
 
