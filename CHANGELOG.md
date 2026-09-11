@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] — 2026-09-11
+
+### Changed
+
+- Renamed npm package to scoped `@pramodreddyboddu/agent-receipt` (unscoped `agent-receipt` is taken on npm)
+- Package version bumped to `1.0.1`
+- CLI binary name remains `agent-receipt` (UX unchanged)
+- README / `docs/RELEASE.md` install and publish commands updated for the scoped name
+
 ## [1.0.0] — 2026-09-11
 
 First **stable** public-ready release. Same feature surface as 0.6.0; version and

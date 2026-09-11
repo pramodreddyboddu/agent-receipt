@@ -12,7 +12,7 @@ without `verify` failing. It is not cryptographic signing.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 <!-- Optional after public + npm: -->
-<!-- [![npm version](https://img.shields.io/npm/v/agent-receipt.svg)](https://www.npmjs.com/package/agent-receipt) -->
+<!-- [![npm version](https://img.shields.io/npm/v/@pramodreddyboddu/agent-receipt.svg)](https://www.npmjs.com/package/@pramodreddyboddu/agent-receipt) -->
 <!-- [![CI](https://github.com/pramodreddyboddu/agent-receipt/actions/workflows/ci.yml/badge.svg)](https://github.com/pramodreddyboddu/agent-receipt/actions/workflows/ci.yml) -->
 
 ## Install
@@ -21,7 +21,7 @@ Requires **Node.js ≥ 20** and `git` on `PATH`.
 
 ```bash
 # Once the package is public on npm:
-npm install -g agent-receipt
+npm i -g @pramodreddyboddu/agent-receipt
 
 # Or from GitHub (works before / without npm publish):
 npm install -g github:pramodreddyboddu/agent-receipt
@@ -33,7 +33,7 @@ npx github:pramodreddyboddu/agent-receipt doctor
 Dev dependency in a repo:
 
 ```bash
-npm install -D agent-receipt
+npm install -D @pramodreddyboddu/agent-receipt
 # or: npm install -D github:pramodreddyboddu/agent-receipt
 ```
 
