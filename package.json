@@ -1,0 +1,62 @@
+{
+  "name": "agent-receipt",
+  "version": "0.3.1",
+  "description": "Human-readable, tamper-evident git snapshot receipts for AI coding agent sessions",
+  "type": "module",
+  "bin": {
+    "agent-receipt": "./bin/agent-receipt.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "bin",
+    "dist",
+    "docs",
+    "examples",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "test": "npm run build && node --test test/*.test.js",
+    "prepublishOnly": "npm test",
+    "start": "node bin/agent-receipt.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "cli",
+    "git",
+    "agent",
+    "receipt",
+    "audit",
+    "tamper-evident",
+    "ai",
+    "cursor",
+    "claude",
+    "aider"
+  ],
+  "author": "Pramod Reddy Boddu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pramodreddyboddu/agent-receipt.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pramodreddyboddu/agent-receipt/issues"
+  },
+  "homepage": "https://github.com/pramodreddyboddu/agent-receipt#readme",
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}

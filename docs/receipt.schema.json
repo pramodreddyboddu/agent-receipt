@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/receipt.schema.json",
+  "title": "AgentReceipt",
+  "description": "JSON companion written by `agent-receipt capture --json`. The Markdown receipt is canonical; this schema documents the structured export.",
+  "type": "object",
+  "required": [
+    "version",
+    "timestamp",
+    "branch",
+    "head",
+    "range",
+    "summary",
+    "commits",
+    "files",
+    "risks",
+    "integrity"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "agent-receipt CLI version that produced the receipt"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "branch": { "type": "string" },
+    "head": {
+      "type": "string",
+      "description": "Full HEAD commit SHA (or placeholder if no commits)"
+    },
+    "remote": {
+      "type": ["string", "null"],
+      "description": "origin remote URL if configured"
+    },
+    "range": {
+      "type": "object",
+      "required": ["label", "base", "head"],
+      "properties": {
+        "label": { "type": "string" },
+        "base": { "type": "string" },
+        "head": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "agent": { "type": ["string", "null"] },
+    "session": { "type": ["string", "null"] },
+    "message": { "type": ["string", "null"] },
+    "workspace": {
+      "type": "string",
+      "description": "Absolute cwd where capture ran"
+    },
+    "summary": {
+      "type": "object",
+      "required": ["files", "insertions", "deletions", "commits", "risk"],
+      "properties": {
+        "files": { "type": "integer", "minimum": 0 },
+        "insertions": { "type": "integer", "minimum": 0 },
+        "deletions": { "type": "integer", "minimum": 0 },
+        "commits": { "type": "integer", "minimum": 0 },
+        "risk": {
+          "type": "object",
+          "required": ["high", "medium", "low", "total", "maxSeverity"],
+          "properties": {
+            "high": { "type": "integer", "minimum": 0 },
+            "medium": { "type": "integer", "minimum": 0 },
+            "low": { "type": "integer", "minimum": 0 },
+            "total": { "type": "integer", "minimum": 0 },
+            "maxSeverity": {
+              "type": ["string", "null"],
+              "enum": ["high", "medium", "low", null]
+            }
+          },
+          "additionalProperties": false
+        },
+        "notable": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "path", "status", "note"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "package",
+                  "lockfile",
+                  "workflow",
+                  "dependency-manifest"
+                ]
+              },
+              "path": { "type": "string" },
+              "status": { "type": "string" },
+              "note": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "commits": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Short log lines: `<hash> <subject>`"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "status", "insertions", "deletions", "binary"],
+        "properties": {
+          "path": { "type": "string" },
+          "status": {
+            "type": "string",
+            "description": "Git status letter: A/M/D/R/C/…"
+          },
+          "insertions": { "type": "integer", "minimum": 0 },
+          "deletions": { "type": "integer", "minimum": 0 },
+          "binary": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "code", "message"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["high", "medium", "low"] },
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "path": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "required": ["algorithm", "sha256"],
+      "properties": {
+        "algorithm": { "type": "string", "const": "sha256" },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "SHA-256 of the Markdown canonical body (excludes Integrity footer)"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}
