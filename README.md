@@ -102,6 +102,19 @@ See [`examples/sample-receipt.md`](examples/sample-receipt.md),
 [`docs/agents.md`](docs/agents.md), [`docs/receipt.schema.json`](docs/receipt.schema.json),
 and short recipes under [`examples/`](examples/).
 
+
+## Git hooks (local / global install)
+
+`install-hooks` embeds **this package's** `bin/agent-receipt.js` (via `node` +
+absolute path) so auto-capture works after `npm i -g` / local install **without**
+npm publish. At hook runtime the order is:
+
+1. `AGENT_RECEIPT_BIN` — absolute path to the CLI (optional override)
+2. Embedded absolute bin from install time
+3. `npx --yes agent-receipt` — last resort only
+
+See [`examples/hooks.md`](examples/hooks.md).
+
 ## Config (`.agent-receipt.yml`)
 
 ```yaml

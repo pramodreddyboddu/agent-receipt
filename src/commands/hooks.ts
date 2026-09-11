@@ -5,8 +5,10 @@ import {
   writeFileSync,
   chmodSync,
   unlinkSync,
+  realpathSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isGitRepo, runGit } from '../lib/git.js';
 import { color } from '../lib/color.js';
 
@@ -29,40 +31,144 @@ function hooksDir(cwd: string): string {
   }
 }
 
-function resolveCliInvocation(): string {
-  const binHint = process.env.AGENT_RECEIPT_BIN;
-  if (binHint) return `"${binHint}"`;
-  return 'npx --yes agent-receipt';
+/** POSIX single-quote a path for embedding in shell hooks. */
+function shQuote(p: string): string {
+  return `'${p.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Resolve absolute path to this package's bin/agent-receipt.js.
+ * Prefers the running argv script, then package layout next to dist/.
+ */
+export function resolvePackageBinPath(): string | null {
+  const argv1 = process.argv[1];
+  if (argv1) {
+    try {
+      const resolved = realpathSync(argv1);
+      const base = resolved.split(/[/\\]/).pop() ?? '';
+      if (
+        (base === 'agent-receipt.js' || base === 'agent-receipt') &&
+        existsSync(resolved)
+      ) {
+        return resolved;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const candidate = resolve(here, '../../bin/agent-receipt.js');
+    if (existsSync(candidate)) return realpathSync(candidate);
+  } catch {
+    /* ignore */
+  }
+
+  return null;
+}
+
+/**
+ * Build the shell command used inside installed hooks.
+ * Fallback order (also mirrored at hook runtime for AGENT_RECEIPT_BIN):
+ *   1. AGENT_RECEIPT_BIN at install time (embedded as default)
+ *   2. Absolute path: node + this package's bin
+ *   3. npx --yes agent-receipt (last resort; needs registry publish)
+ */
+export function resolveCliInvocation(): {
+  primary: string;
+  kind: 'env' | 'bin' | 'npx';
+  binPath: string | null;
+} {
+  const binHint = process.env.AGENT_RECEIPT_BIN?.trim();
+  if (binHint) {
+    return {
+      primary: shQuote(binHint),
+      kind: 'env',
+      binPath: binHint,
+    };
+  }
+
+  const binPath = resolvePackageBinPath();
+  if (binPath) {
+    return {
+      primary: `${shQuote(process.execPath)} ${shQuote(binPath)}`,
+      kind: 'bin',
+      binPath,
+    };
+  }
+
+  return {
+    primary: 'npx --yes agent-receipt',
+    kind: 'npx',
+    binPath: null,
+  };
+}
+
+/**
+ * Shell snippet that picks CLI at hook runtime:
+ * AGENT_RECEIPT_BIN → embedded absolute bin → npx last.
+ */
+function hookCliSnippet(resolved: ReturnType<typeof resolveCliInvocation>): string {
+  const lines: string[] = [
+    '# Resolve CLI: AGENT_RECEIPT_BIN → installed bin → npx (last resort)',
+    'agent_receipt_run() {',
+    '  if [ -n "${AGENT_RECEIPT_BIN:-}" ]; then',
+    '    "${AGENT_RECEIPT_BIN}" "$@"',
+  ];
+
+  if (resolved.kind === 'bin' && resolved.binPath) {
+    lines.push(
+      `  elif [ -f ${shQuote(resolved.binPath)} ]; then`,
+      `    ${resolved.primary} "$@"`,
+    );
+  } else if (resolved.kind === 'env' && resolved.binPath) {
+    lines.push(
+      `  elif [ -f ${shQuote(resolved.binPath)} ] || [ -x ${shQuote(resolved.binPath)} ]; then`,
+      `    ${shQuote(resolved.binPath)} "$@"`,
+    );
+  }
+
+  lines.push(
+    '  elif command -v npx >/dev/null 2>&1; then',
+    '    npx --yes agent-receipt "$@"',
+    '  else',
+    '    return 0',
+    '  fi',
+    '}',
+  );
+
+  return lines.join('\n');
 }
 
 function postCommitBody(): string {
-  const cli = resolveCliInvocation();
+  const resolved = resolveCliInvocation();
+  const runner = hookCliSnippet(resolved);
   return `${MARKER_BEGIN}
 # Auto-installed by \`agent-receipt install-hooks\`.
 # Captures a receipt for the commit that just landed (skips if capture fails).
-if command -v npx >/dev/null 2>&1 || [ -n "\${AGENT_RECEIPT_BIN:-}" ]; then
-  ${cli} capture \\
-    --commits 1 \\
-    --agent "\${AGENT_RECEIPT_AGENT:-git-hook}" \\
-    --message "post-commit \$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \\
-    >/dev/null 2>&1 || true
-fi
+${runner}
+agent_receipt_run capture \\
+  --commits 1 \\
+  --agent "\${AGENT_RECEIPT_AGENT:-git-hook}" \\
+  --message "post-commit \$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \\
+  >/dev/null 2>&1 || true
 ${MARKER_END}
 `;
 }
 
 function prePushBody(): string {
-  const cli = resolveCliInvocation();
+  const resolved = resolveCliInvocation();
+  const runner = hookCliSnippet(resolved);
   return `${MARKER_BEGIN}
 # Auto-installed by \`agent-receipt install-hooks --pre-push\`.
 # Captures a receipt before push (non-blocking on failure).
-if command -v npx >/dev/null 2>&1 || [ -n "\${AGENT_RECEIPT_BIN:-}" ]; then
-  ${cli} capture \\
-    --commits 5 \\
-    --agent "\${AGENT_RECEIPT_AGENT:-git-hook}" \\
-    --message "pre-push \$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)" \\
-    >/dev/null 2>&1 || true
-fi
+${runner}
+agent_receipt_run capture \\
+  --commits 5 \\
+  --agent "\${AGENT_RECEIPT_AGENT:-git-hook}" \\
+  --message "pre-push \$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)" \\
+  >/dev/null 2>&1 || true
 ${MARKER_END}
 `;
 }
@@ -130,6 +236,8 @@ export function cmdInstallHooks(cwd: string, opts: InstallHooksOptions = {}): vo
   const dir = hooksDir(cwd);
   mkdirSync(dir, { recursive: true });
 
+  const resolved = resolveCliInvocation();
+
   const postPath = join(dir, 'post-commit');
   const postResult = upsertHook(postPath, postCommitBody(), Boolean(opts.force));
   console.log(color.green('✓') + ` post-commit hook ${postResult}: ${postPath}`);
@@ -141,8 +249,20 @@ export function cmdInstallHooks(cwd: string, opts: InstallHooksOptions = {}): vo
   }
 
   console.log('');
-  console.log('Hooks call `npx --yes agent-receipt capture` with sensible defaults.');
-  console.log('Override the binary with AGENT_RECEIPT_BIN=/path/to/agent-receipt.js');
+  if (resolved.kind === 'bin' && resolved.binPath) {
+    console.log(
+      `Hooks prefer this install: ${process.execPath} ${resolved.binPath}`,
+    );
+  } else if (resolved.kind === 'env' && resolved.binPath) {
+    console.log(`Hooks prefer AGENT_RECEIPT_BIN=${resolved.binPath}`);
+  } else {
+    console.log(
+      'Hooks fall back to `npx --yes agent-receipt` (set AGENT_RECEIPT_BIN or install locally).',
+    );
+  }
+  console.log(
+    'Runtime override: AGENT_RECEIPT_BIN=/path/to/agent-receipt.js (checked first).',
+  );
   console.log('Override agent label with AGENT_RECEIPT_AGENT=cursor');
   console.log('');
   console.log(

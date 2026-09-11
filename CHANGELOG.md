@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] — 2026-09-11
+
+### Fixed
+
+- `install-hooks` embeds `node` + absolute path to this package's bin so local/global
+  installs work without npm publish (`npx` is last resort only)
+- Hook runtime prefers `AGENT_RECEIPT_BIN` → embedded bin → `npx`
+
+### Changed
+
+- Documented `AGENT_RECEIPT_BIN` and default hook resolution in README + `examples/hooks.md`
+
 ## [0.3.0] — 2026-09-11
 
 ### Added

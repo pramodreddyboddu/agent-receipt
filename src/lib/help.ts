@@ -129,7 +129,8 @@ Options:
   --force                Refresh managed section
   --uninstall            Same as uninstall-hooks (compat)
 
-Hooks call \`npx --yes agent-receipt capture\` (override with AGENT_RECEIPT_BIN).
+Hooks embed this package's bin (node + absolute path) when installable locally/globally.
+Fallback order at runtime: AGENT_RECEIPT_BIN → embedded bin path → npx (last resort).
 Failure inside the hook is non-blocking (\`|| true\`).
 
 Examples:

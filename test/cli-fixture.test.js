@@ -52,9 +52,9 @@ describe('cli fixture', () => {
     assert.match(out, /compare/);
   });
 
-  it('version is 0.3.0', () => {
+  it('version is 0.3.1', () => {
     const out = cli(dir, ['version']);
-    assert.match(out, /0\.3\.0/);
+    assert.match(out, /0\.3\.1/);
   });
 
   it('init writes config', () => {
@@ -85,7 +85,7 @@ describe('cli fixture', () => {
     assert.match(md, /## Summary/);
     assert.match(md, /test-bot/);
     assert.match(md, /fixture run/);
-    assert.match(md, /0\.3\.0/);
+    assert.match(md, /0\.3\.1/);
     assert.match(md, /agent-receipt-sha256/);
     const json = JSON.parse(readFileSync(join(dir, 'receipt.json'), 'utf8'));
     assert.ok(json.summary);

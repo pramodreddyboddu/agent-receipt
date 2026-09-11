@@ -3,12 +3,21 @@
 ## Install
 
 ```bash
-# post-commit only
-npx agent-receipt install-hooks
+# After a local or global install (preferred — works without npm publish)
+npm i -g github:pramodreddyboddu/agent-receipt
+# or: npm i -g /path/to/agent-receipt
+# or: npm i -D /path/to/agent-receipt
+
+cd your-git-repo
+agent-receipt install-hooks
 
 # post-commit + pre-push
-npx agent-receipt install-hooks --pre-push
+agent-receipt install-hooks --pre-push
 ```
+
+`install-hooks` resolves this package's `bin/agent-receipt.js` and embeds
+`node` + that absolute path into the hook so capture works offline / without
+registry publish. `npx` is only a last-resort fallback.
 
 Hooks are written under `.git/hooks/` with managed markers:
 
@@ -20,26 +29,37 @@ Hooks are written under `.git/hooks/` with managed markers:
 
 Existing hook content is preserved; only the managed section is added/updated.
 
+## How the hook picks a binary
+
+At **hook runtime**, resolution order is:
+
+1. **`AGENT_RECEIPT_BIN`** — if set, run that path
+2. **Embedded absolute bin** — `node` + path to this install's `bin/agent-receipt.js` (written at `install-hooks` time)
+3. **`npx --yes agent-receipt`** — last resort (needs the package on a registry)
+
 ## Environment
 
 | Variable | Purpose |
 |----------|---------|
-| `AGENT_RECEIPT_BIN` | Absolute path to `agent-receipt.js` (skips `npx`) |
+| `AGENT_RECEIPT_BIN` | Absolute path to `agent-receipt` / `agent-receipt.js` (checked first at hook runtime; if set when running `install-hooks`, also becomes the embedded default) |
 | `AGENT_RECEIPT_AGENT` | Agent label written into the receipt (default `git-hook`) |
 
-Example using a local checkout:
+Example forcing a specific checkout:
 
 ```bash
 export AGENT_RECEIPT_BIN="$PWD/node_modules/agent-receipt/bin/agent-receipt.js"
 # or after cloning this repo:
 export AGENT_RECEIPT_BIN="/path/to/agent-receipt/bin/agent-receipt.js"
-npx agent-receipt install-hooks
+agent-receipt install-hooks
 ```
+
+You can also set `AGENT_RECEIPT_BIN` only in the environment where commits run
+(without reinstalling hooks); the managed section always prefers it when set.
 
 ## Uninstall
 
 ```bash
-npx agent-receipt uninstall-hooks
+agent-receipt uninstall-hooks
 # also strips a managed pre-push section if present
 ```
 

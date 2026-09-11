@@ -12,7 +12,13 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { MARKER_BEGIN, MARKER_END } from '../dist/commands/hooks.js';
+import {
+  MARKER_BEGIN,
+  MARKER_END,
+  resolveCliInvocation,
+  resolvePackageBinPath,
+  postCommitBody,
+} from '../dist/commands/hooks.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, 'bin', 'agent-receipt.js');
@@ -110,6 +116,63 @@ describe('hooks + last', () => {
     assert.match(out, /Agent Receipt/);
     assert.match(out, /for-last/);
     assert.match(out, /latest:/);
+  });
+
+
+  it('install-hooks embeds absolute bin path (not only npx)', () => {
+    // Fresh install into a clean hooks dir state
+    const hook = join(dir, '.git', 'hooks', 'post-commit');
+    if (existsSync(hook)) {
+      // force rewrite via uninstall + install
+      cli(dir, ['uninstall-hooks']);
+    }
+    const out = cli(dir, ['install-hooks']);
+    assert.match(out, /post-commit hook/);
+    const body = readFileSync(hook, 'utf8');
+    assert.ok(body.includes(MARKER_BEGIN));
+    // Must embed real path to agent-receipt.js OR AGENT_RECEIPT_BIN fallback logic
+    assert.match(body, /agent-receipt\.js/);
+    assert.match(body, /AGENT_RECEIPT_BIN/);
+    assert.match(body, /agent_receipt_run/);
+    // Should not be npx-only: either absolute path present, or env-first with embedded path
+    const hasAbsBin = /['"]\/[^'"]*agent-receipt\.js['"]/.test(body);
+    const hasEnvFallback = body.includes('AGENT_RECEIPT_BIN');
+    assert.ok(hasAbsBin || hasEnvFallback, 'hook must embed abs path or env fallback');
+    assert.ok(
+      hasAbsBin,
+      'expected embedded absolute path to bin/agent-receipt.js for local dogfood',
+    );
+    // npx may appear as last resort but must not be the only invocation
+    if (body.includes('npx --yes agent-receipt')) {
+      assert.ok(hasAbsBin, 'npx present only as fallback alongside embedded bin');
+    }
+  });
+
+  it('resolveCliInvocation prefers AGENT_RECEIPT_BIN then package bin', () => {
+    const prev = process.env.AGENT_RECEIPT_BIN;
+    try {
+      process.env.AGENT_RECEIPT_BIN = '/tmp/custom-agent-receipt.js';
+      const viaEnv = resolveCliInvocation();
+      assert.equal(viaEnv.kind, 'env');
+      assert.match(viaEnv.primary, /custom-agent-receipt\.js/);
+
+      delete process.env.AGENT_RECEIPT_BIN;
+      const viaBin = resolveCliInvocation();
+      assert.equal(viaBin.kind, 'bin');
+      assert.ok(viaBin.binPath && viaBin.binPath.includes('agent-receipt.js'));
+      assert.match(viaBin.primary, /agent-receipt\.js/);
+      assert.ok(!viaBin.primary.includes('npx'));
+
+      const pkgBin = resolvePackageBinPath();
+      assert.ok(pkgBin && pkgBin.endsWith('agent-receipt.js'));
+
+      const body = postCommitBody();
+      assert.match(body, /agent_receipt_run/);
+      assert.ok(body.includes(pkgBin));
+    } finally {
+      if (prev === undefined) delete process.env.AGENT_RECEIPT_BIN;
+      else process.env.AGENT_RECEIPT_BIN = prev;
+    }
   });
 
   it('install-hooks fails outside git repo', () => {
