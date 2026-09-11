@@ -8,9 +8,9 @@ want a public release. This checklist is the playbook when you are ready.
 - [x] `npm test` green locally — **automated** (`npm test` / CI)
 - [ ] `node bin/agent-receipt.js doctor` clean (or only expected WARNs) in a sample repo
 - [x] Version bump consistent across — **automated on this release branch**:
-  - [x] `package.json` → `"version"` (`1.0.0`)
+  - [x] `package.json` → `"version"` (`1.0.1`) + scoped name `@pramodreddyboddu/agent-receipt`
   - [x] `src/lib/version.ts` → `VERSION`
-  - [x] `CHANGELOG.md` → dated `1.0.0` section
+  - [x] `CHANGELOG.md` → dated `1.0.1` section
 - [x] `npm run pack:check` — **automated** (`npm pack --dry-run` asserts `bin` + `dist`)
 - [ ] README 60-second path still works from a fresh clone / GitHub install
 - [ ] `docs/receipt.schema.json` matches current `--json` shape
@@ -30,33 +30,37 @@ npm login
 npm whoami
 npm run pack:check   # or: npm pack --dry-run
 npm publish --access public
+# equivalent (publishConfig.access=public already set):
+# npm publish
 ```
 
 Notes:
 
+- Package name is scoped: `@pramodreddyboddu/agent-receipt` (unscoped `agent-receipt` is taken)
+- CLI binary remains `agent-receipt`
 - `prepublishOnly` runs `npm test`
 - `files` allowlist in `package.json` controls the tarball (`bin`, `dist`, `docs`, `examples`, `SECURITY.md`, …)
-- `publishConfig.access` is `public` (scoped packages would need it; harmless for unscoped)
-- After publish: `npm view agent-receipt version`
+- `publishConfig.access` is `public` (required for scoped packages)
+- After publish: `npm view @pramodreddyboddu/agent-receipt version`
 
 ## GitHub install (works before npm publish)
 
 ```bash
 npm i -g github:pramodreddyboddu/agent-receipt
 # or a branch/ref:
-npm i -g github:pramodreddyboddu/agent-receipt#v1.0.0
+npm i -g github:pramodreddyboddu/agent-receipt#v1.0.1
 ```
 
-## Tag + GitHub Release (v1.0.0)
+## Tag + GitHub Release (v1.0.1)
 
 After this PR is merged to `main` (Release QA gates):
 
 ```bash
 git checkout main
 git pull
-git tag -a v1.0.0 -m "agent-receipt v1.0.0"
-git push origin v1.0.0
-gh release create v1.0.0 --title "v1.0.0" --notes-file CHANGELOG.md
+git tag -a v1.0.1 -m "agent-receipt v1.0.1"
+git push origin v1.0.1
+gh release create v1.0.1 --title "v1.0.1" --notes-file CHANGELOG.md
 ```
 
 ## CI workflow
@@ -73,13 +77,13 @@ git commit -m "ci: enable GitHub Actions"
 git push
 ```
 
-On the v1.0.0 publish-ready branch we attempt to add `.github/workflows/ci.yml`;
+On the v1.0.1 publish-ready branch we attempt to add `.github/workflows/ci.yml`;
 if push/PR is rejected for workflow scope, leave docs-only and note it on the PR.
 
 ## Post-release smoke
 
 ```bash
-npm i -g agent-receipt@1.0.0   # or github:…#v1.0.0
+npm i -g @pramodreddyboddu/agent-receipt@1.0.1   # or github:…#v1.0.1
 cd $(mktemp -d) && git init
 echo hi > README.md && git add . && git commit -m init
 agent-receipt init
