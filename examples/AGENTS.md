@@ -1,10 +1,10 @@
 # Agent receipt (project convention)
 
-After finishing a coding session that touched the git working tree, capture a
-tamper-evident receipt:
+After finishing a coding session that touched the git working tree, **run**
+capture (do not only suggest it):
 
 ```bash
-npx agent-receipt capture --agent <your-agent> --message "<short session summary>"
+agent-receipt capture --agent <your-agent> --message "<short session summary>"
 # until published on npm:
 # npx github:pramodreddyboddu/agent-receipt -- capture --agent <your-agent> -m "<summary>"
 ```
@@ -12,13 +12,20 @@ npx agent-receipt capture --agent <your-agent> --message "<short session summary
 Optional one-time setup in this repo:
 
 ```bash
-npx agent-receipt init
-npx agent-receipt install-hooks   # post-commit capture
+agent-receipt init --cursor      # Cursor rule that runs capture on wrap-up
+agent-receipt install-hooks      # post-commit capture
 ```
 
-Show / verify the newest receipt:
+Wait for the next commit, capture once:
 
 ```bash
-npx agent-receipt last
-npx agent-receipt verify
+agent-receipt watch --once --agent <your-agent> --message "session wrap-up"
+```
+
+Show / list / verify:
+
+```bash
+agent-receipt history
+agent-receipt last
+agent-receipt verify
 ```

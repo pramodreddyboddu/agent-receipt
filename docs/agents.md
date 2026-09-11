@@ -4,15 +4,21 @@ Short, practical recipes for capturing receipts after AI coding sessions.
 All commands assume Node.js ≥ 20 and `git` on `PATH`.
 
 ```bash
-npm install -g agent-receipt   # or: npx agent-receipt …
+npm i -g github:pramodreddyboddu/agent-receipt
 # optional one-time setup in the repo
-agent-receipt init
+agent-receipt init --cursor
+agent-receipt install-hooks
 ```
 
 Also see the short copies under [`examples/`](../examples/) (`AGENTS.md`,
 `claude-code.md`, `aider.md`, `hooks.md`, `.cursor/rules/`).
 
 ## Cursor
+
+**Best path:** `agent-receipt init --cursor` drops
+[`.cursor/rules/agent-receipt.mdc`](../examples/.cursor/rules/agent-receipt.mdc)
+with `alwaysApply: true`. The rule tells the agent to **run capture itself**
+when the session finishes — not merely remind you.
 
 After a Cursor agent / Composer session that touched the working tree:
 
@@ -22,12 +28,24 @@ agent-receipt capture --agent cursor --message "composer: auth refactor" --json
 # Whole-branch review
 agent-receipt capture --agent cursor --since main --message "PR prep" --full
 
+agent-receipt history
 agent-receipt last
 agent-receipt verify
 ```
 
-Optional project rule: copy [`examples/.cursor/rules/agent-receipt.mdc`](../examples/.cursor/rules/agent-receipt.mdc)
-into your repo’s `.cursor/rules/`.
+### Run after session (`watch --once`)
+
+If you (or the agent) are about to commit, wait for that commit, capture, exit:
+
+```bash
+agent-receipt watch --once --interval 2 --agent cursor --message "session wrap-up"
+```
+
+Long session — leave a terminal running:
+
+```bash
+agent-receipt watch --interval 5 --agent cursor
+```
 
 **Optional hooks:**
 
@@ -49,6 +67,13 @@ agent-receipt capture \
   --json
 
 agent-receipt last --path
+agent-receipt history
+```
+
+Run after the next commit:
+
+```bash
+agent-receipt watch --once --agent claude-code --message "session wrap-up"
 ```
 
 For frequent commits, prefer `agent-receipt install-hooks` (set
@@ -70,6 +95,7 @@ Inside Aider:
 
 ```text
 /run agent-receipt capture --agent aider --message "wrap up" --json
+/run agent-receipt watch --once --agent aider
 ```
 
 ## General tips
@@ -77,10 +103,14 @@ Inside Aider:
 | Goal | Command |
 |------|---------|
 | Newest receipt path | `agent-receipt last --path` |
+| Recent sessions | `agent-receipt history` |
 | Full Markdown dump | `agent-receipt show` |
 | Integrity check | `agent-receipt verify` |
 | Whole-branch review | `agent-receipt capture --since main --full` |
+| Fail CI on secrets | `agent-receipt capture --fail-on high` |
+| After next commit | `agent-receipt watch --once --agent <name>` |
 | Scripting cwd | `agent-receipt capture --cwd /path/to/repo …` |
 
 Receipts are **tamper-evident**, not signed. Treat high-severity risk hints
-(secrets, lockfile/CI deletions) as a review checklist, not a security boundary.
+(secrets, `.env`, private keys, lockfile/CI deletions) as a review checklist,
+not a security boundary.

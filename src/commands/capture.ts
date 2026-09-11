@@ -10,7 +10,13 @@ import {
   getFileDiffSummary,
   getCommitLog,
 } from '../lib/git.js';
-import { analyzeRisks, summarizeRisks } from '../lib/risk.js';
+import {
+  analyzeRisks,
+  summarizeRisks,
+  meetsFailOn,
+  type FailOnThreshold,
+  type RiskSummary,
+} from '../lib/risk.js';
 import { loadConfig, ensureOutDir } from '../lib/config.js';
 import { filterIgnored } from '../lib/ignore.js';
 import {
@@ -33,9 +39,17 @@ export interface CaptureOptions {
   json?: boolean;
   diffStat?: boolean;
   topRisks?: number;
+  /** Exit 2 after writing if max severity meets this threshold. */
+  failOn?: FailOnThreshold;
 }
 
-export function cmdCapture(cwd: string, opts: CaptureOptions): string {
+export interface CaptureResult {
+  path: string;
+  riskSum: RiskSummary;
+  failedOn: boolean;
+}
+
+export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
   if (!isGitRepo(cwd)) {
     throw new Error(
       'Not a git repository. Run inside a git repo, or pass --cwd <path> to one.',
@@ -50,9 +64,6 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): string {
   const range = resolveRange(cwd, { since: opts.since, commits: commitsN });
   const allFiles = getChangedFiles(cwd, range.base, range.head);
   const { kept: files, ignored } = filterIgnored(allFiles, cfg.ignore);
-  const risks = analyzeRisks(files);
-  const riskSum = summarizeRisks(risks);
-  const commits = getCommitLog(cwd, range.base, range.head);
 
   const diffs: Record<string, string> = {};
   for (const f of files) {
@@ -68,6 +79,10 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): string {
       full,
     );
   }
+
+  const risks = analyzeRisks(files, diffs);
+  const riskSum = summarizeRisks(risks);
+  const commits = getCommitLog(cwd, range.base, range.head);
 
   const data: ReceiptData = {
     version: VERSION,
@@ -136,5 +151,17 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): string {
       ),
     );
   }
-  return outPath;
+
+  const failedOn = Boolean(
+    opts.failOn && meetsFailOn(riskSum.maxSeverity, opts.failOn),
+  );
+  if (failedOn && opts.failOn) {
+    console.error(
+      color.red('✗') +
+        ` fail-on ${opts.failOn}: max severity is ${riskSum.maxSeverity}` +
+        ` (${riskSum.high}H/${riskSum.medium}M/${riskSum.low}L) — receipt written, exiting 2`,
+    );
+  }
+
+  return { path: outPath, riskSum, failedOn };
 }

@@ -38,11 +38,12 @@ export function cmdLast(cwd: string, opts: LastOptions = {}): string {
     if (!inBody) continue;
     if (line.startsWith('## Files changed') || line.startsWith('## Diff')) break;
     previewLines.push(line);
-    if (previewLines.length > 40) break;
+    if (previewLines.length > 50) break;
   }
   console.log(previewLines.join('\n').trimEnd());
   console.log('');
-  console.log(color.dim('Tip: agent-receipt show    # full Markdown'));
+  console.log(color.dim('Tip: agent-receipt history # list recent receipts'));
+  console.log(color.dim('     agent-receipt show    # full Markdown'));
   console.log(color.dim('     agent-receipt verify  # integrity check'));
   return path;
 }

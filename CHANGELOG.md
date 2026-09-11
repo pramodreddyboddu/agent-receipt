@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] — 2026-09-11
+
+### Added
+
+- `history` / `ls` — list recent receipts (time, agent, risk counts, short summary)
+- `watch` — poll git HEAD and auto-capture on new commits
+  - default interval 5s; `--interval <sec>`; `--once` waits for the next commit then exits
+  - captures `--since` the previous HEAD so the whole interval is in the receipt
+  - documented as the Cursor / agent “run after session” path
+- `init --cursor` — drops `.cursor/rules/agent-receipt.mdc` (`alwaysApply: true`)
+  that instructs the agent to **run** capture (not only remind)
+- `capture --fail-on [high|medium|low]` — write the receipt, then exit 2 if max
+  severity meets the threshold (bare `--fail-on` = high). For CI scripts.
+- Smarter risk engine:
+  - high-signal **diff content**: AWS access key ids, AWS secret assignments,
+    private key PEM/blocks, GitHub tokens, Slack tokens
+  - dedicated `env-file` for committed `.env` / `.env.local` / `.env.production`
+  - severity ranking (high → low) on the receipt and in `--fail-on`
+- Receipt polish: one-screen **TL;DR** at top + **What to review** checklist
+- JSON `summary.tldr` and `summary.review`
+
+### Changed
+
+- Risk false-positive trim: `src/auth/*.ts` is no longer a medium “auth-path”;
+  only secret-store filenames (`tokens.json`, `htpasswd`, …) flag
+- `.env.example` / `.env.sample` / `.env.template` are low `env-template`, not high
+- `id_rsa.pub` is not treated as an SSH private key; common image/font binaries
+  are low instead of medium
+- README leads with “why this exists” + a 60-second best path
+- Cursor example rule is `alwaysApply: true` and requires the agent to run capture
+- Package version bumped to `0.4.0`
+
 ## [0.3.1] — 2026-09-11
 
 ### Fixed

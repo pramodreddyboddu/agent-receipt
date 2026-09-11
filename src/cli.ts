@@ -3,6 +3,7 @@ import { parseArgs, flagString, flagBool, flagNumber } from './lib/args.js';
 import { VERSION } from './lib/version.js';
 import { color } from './lib/color.js';
 import { helpFor, globalHelp } from './lib/help.js';
+import { parseFailOn } from './lib/risk.js';
 import { cmdInit } from './commands/init.js';
 import { cmdCapture } from './commands/capture.js';
 import { cmdShow } from './commands/show.js';
@@ -11,8 +12,10 @@ import { cmdLast } from './commands/last.js';
 import { cmdInstallHooks, cmdUninstallHooks } from './commands/hooks.js';
 import { cmdDoctor } from './commands/doctor.js';
 import { cmdCompare } from './commands/compare.js';
+import { cmdHistory } from './commands/history.js';
+import { cmdWatch } from './commands/watch.js';
 
-export function run(argv: string[] = process.argv): number {
+export async function run(argv: string[] = process.argv): Promise<number> {
   const { command, positional, flags } = parseArgs(argv);
   const cwdFlag = flagString(flags, 'cwd');
   const cwd = cwdFlag ? resolve(cwdFlag) : process.cwd();
@@ -36,11 +39,14 @@ export function run(argv: string[] = process.argv): number {
   try {
     switch (command) {
       case 'init':
-        cmdInit(cwd);
+        cmdInit(cwd, { cursor: flagBool(flags, 'cursor') });
         return 0;
       case 'capture': {
         const noDiffStat = flagBool(flags, 'no-diff-stat');
-        cmdCapture(cwd, {
+        const failOn = parseFailOn(
+          flags['fail-on'] === undefined ? undefined : flags['fail-on'],
+        );
+        const result = cmdCapture(cwd, {
           since: flagString(flags, 'since'),
           commits: flagNumber(flags, 'commits'),
           message: flagString(flags, 'message', 'm'),
@@ -51,8 +57,9 @@ export function run(argv: string[] = process.argv): number {
           json: flagBool(flags, 'json'),
           diffStat: noDiffStat ? false : undefined,
           topRisks: flagNumber(flags, 'top-risks'),
+          failOn,
         });
-        return 0;
+        return result.failedOn ? 2 : 0;
       }
       case 'show':
         cmdShow(cwd, positional[0]);
@@ -60,6 +67,22 @@ export function run(argv: string[] = process.argv): number {
       case 'last':
         cmdLast(cwd, { pathOnly: flagBool(flags, 'path') });
         return 0;
+      case 'history':
+      case 'ls':
+        return cmdHistory(cwd, { limit: flagNumber(flags, 'limit') });
+      case 'watch': {
+        const failOn = parseFailOn(
+          flags['fail-on'] === undefined ? undefined : flags['fail-on'],
+        );
+        return await cmdWatch(cwd, {
+          interval: flagNumber(flags, 'interval'),
+          once: flagBool(flags, 'once'),
+          agent: flagString(flags, 'agent', 'a'),
+          message: flagString(flags, 'message', 'm'),
+          failOn,
+          json: flagBool(flags, 'json'),
+        });
+      }
       case 'verify': {
         const ok = cmdVerify(cwd, positional[0]);
         return ok ? 0 : 2;
