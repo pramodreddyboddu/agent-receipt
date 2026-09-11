@@ -69,3 +69,21 @@ agent-receipt uninstall-hooks
 - `post-commit` captures `--commits 1`.
 - `pre-push` captures `--commits 5`.
 - Receipts land in `.agent-receipt/receipts/` by default.
+
+## CI vs hooks
+
+Hooks stay **non-blocking** (`|| true`) so a capture failure never rejects a
+commit. For CI / a script that *should* fail on high-severity findings:
+
+```bash
+agent-receipt capture --fail-on high
+# exit 2 if max severity is high (receipt is still written)
+```
+
+Continuous capture without hooks (poll git HEAD):
+
+```bash
+agent-receipt watch --interval 5 --agent git-hook
+agent-receipt watch --once --interval 2   # next commit only
+```
+

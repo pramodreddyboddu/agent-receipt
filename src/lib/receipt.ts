@@ -1,6 +1,6 @@
 import { appendHashFooter, sha256Hex, canonicalBody } from './hash.js';
 import type { FileStat } from './git.js';
-import { summarizeRisks, type RiskHint } from './risk.js';
+import { summarizeRisks, sortRisks, type RiskHint } from './risk.js';
 import { summarizeNotableChanges, formatDiffStatTable } from './summary.js';
 
 export interface ReceiptData {
@@ -29,6 +29,13 @@ export interface FormatOptions {
   topRisks?: number;
 }
 
+export interface ReviewItem {
+  severity: 'high' | 'medium' | 'low' | 'notable';
+  code: string;
+  text: string;
+  path?: string;
+}
+
 function statusCounts(files: FileStat[]): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const f of files) {
@@ -36,6 +43,53 @@ function statusCounts(files: FileStat[]): Record<string, number> {
     counts[s] = (counts[s] || 0) + 1;
   }
   return counts;
+}
+
+export function formatTldr(data: ReceiptData): string {
+  const totalIns = data.files.reduce((a, f) => a + f.insertions, 0);
+  const totalDel = data.files.reduce((a, f) => a + f.deletions, 0);
+  const riskSum = summarizeRisks(data.risks);
+  const shortHead = data.head.length > 12 ? data.head.slice(0, 12) : data.head;
+  const agent = data.agent || 'agent';
+  const riskBit =
+    riskSum.total === 0
+      ? 'risk none'
+      : `risk ${riskSum.total} (${riskSum.high} high)`;
+  return (
+    `${agent} · ${data.timestamp} · ${data.branch} @ ${shortHead}` +
+    ` · ${data.files.length} files · +${totalIns}/−${totalDel} · ${riskBit}`
+  );
+}
+
+/** High-signal review checklist: high/medium risks first, then notable files. */
+export function buildReviewItems(data: ReceiptData, limit = 8): ReviewItem[] {
+  const items: ReviewItem[] = [];
+  const seenPaths = new Set<string>();
+  const sorted = sortRisks(data.risks).filter((r) => r.severity !== 'low');
+  for (const r of sorted) {
+    if (items.length >= limit) break;
+    items.push({
+      severity: r.severity,
+      code: r.code,
+      text: r.message,
+      path: r.path,
+    });
+    if (r.path) seenPaths.add(r.path);
+  }
+  if (items.length >= limit) return items;
+  const notable = summarizeNotableChanges(data.files);
+  for (const n of notable) {
+    if (items.length >= limit) break;
+    if (seenPaths.has(n.path)) continue;
+    items.push({
+      severity: 'notable',
+      code: n.kind,
+      text: n.note,
+      path: n.path,
+    });
+    seenPaths.add(n.path);
+  }
+  return items;
 }
 
 export function formatMarkdown(
@@ -57,9 +111,34 @@ export function formatMarkdown(
     .map(([k, v]) => `${v}${k}`)
     .join(' ');
   const notable = summarizeNotableChanges(data.files);
+  const tldr = formatTldr(data);
+  const review = buildReviewItems(data);
 
   lines.push('# Agent Receipt');
   lines.push('');
+  lines.push(`> **TL;DR** ${tldr}`);
+  if (data.message) {
+    lines.push('>');
+    lines.push(`> ${data.message}`);
+  }
+  lines.push('');
+
+  lines.push('## What to review');
+  lines.push('');
+  if (!review.length) {
+    lines.push(
+      '_Nothing flagged. Skim the file list if this session should have been a no-op._',
+    );
+    lines.push('');
+  } else {
+    let i = 1;
+    for (const r of review) {
+      const label = r.severity === 'notable' ? 'notable' : r.severity;
+      lines.push(`${i}. **${label}** \`${r.code}\` — ${r.text}`);
+      i++;
+    }
+    lines.push('');
+  }
 
   lines.push('## Summary');
   lines.push('');
@@ -138,10 +217,7 @@ export function formatMarkdown(
   lines.push('## Risk findings');
   lines.push('');
   if (data.risks.length) {
-    const order = { high: 0, medium: 1, low: 2 } as const;
-    const sorted = [...data.risks].sort(
-      (a, b) => order[a.severity] - order[b.severity],
-    );
+    const sorted = sortRisks(data.risks);
     const shown = sorted.slice(0, topRisks);
     lines.push('| Sev | Code | Detail |');
     lines.push('|-----|------|--------|');
@@ -184,6 +260,7 @@ export function formatJson(data: ReceiptData, markdown: string): object {
   const totalIns = data.files.reduce((a, f) => a + f.insertions, 0);
   const totalDel = data.files.reduce((a, f) => a + f.deletions, 0);
   const riskSum = summarizeRisks(data.risks);
+  const review = buildReviewItems(data);
   return {
     version: data.version,
     timestamp: data.timestamp,
@@ -202,6 +279,8 @@ export function formatJson(data: ReceiptData, markdown: string): object {
       commits: data.commits.length,
       risk: riskSum,
       notable: summarizeNotableChanges(data.files),
+      tldr: formatTldr(data),
+      review,
     },
     commits: data.commits,
     files: data.files,

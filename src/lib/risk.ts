@@ -1,7 +1,9 @@
 import type { FileStat } from './git.js';
 
+export type Severity = 'high' | 'medium' | 'low';
+
 export interface RiskHint {
-  severity: 'high' | 'medium' | 'low';
+  severity: Severity;
   code: string;
   message: string;
   path?: string;
@@ -13,18 +15,29 @@ export interface RiskSummary {
   low: number;
   total: number;
   /** Highest severity present, or null if none. */
-  maxSeverity: 'high' | 'medium' | 'low' | null;
+  maxSeverity: Severity | null;
 }
 
-const SECRET_PATTERNS: Array<{ re: RegExp; label: string }> = [
-  { re: /(^|\/)\.env(\.|$)/i, label: 'dotenv / env file' },
-  { re: /(^|\/)(secrets?|credentials?)\.(json|ya?ml|toml|env)$/i, label: 'credentials file' },
-  { re: /(^|\/).*\.(pem|p12|pfx|key)$/i, label: 'key / cert material' },
-  { re: /(^|\/)id_rsa(\.pub)?$/i, label: 'SSH key' },
-  { re: /(^|\/)\.npmrc$/i, label: 'npmrc (may contain tokens)' },
-  { re: /(^|\/)aws[_-]?credentials$/i, label: 'AWS credentials' },
-  { re: /(^|\/)\.netrc$/i, label: 'netrc (may contain tokens)' },
+export type FailOnThreshold = Severity;
+
+const SECRET_PATTERNS: Array<{ re: RegExp; label: string; code: string }> = [
+  { re: /(^|\/)(secrets?|credentials?)\.(json|ya?ml|toml|env)$/i, label: 'credentials file', code: 'secret-looking-path' },
+  { re: /(^|\/).*\.(pem|p12|pfx)$/i, label: 'key / cert material', code: 'secret-looking-path' },
+  { re: /(^|\/).*(?<!\.pub)\.key$/i, label: 'key material', code: 'secret-looking-path' },
+  { re: /(^|\/)id_rsa$/i, label: 'SSH private key', code: 'secret-looking-path' },
+  { re: /(^|\/)\.npmrc$/i, label: 'npmrc (may contain tokens)', code: 'secret-looking-path' },
+  { re: /(^|\/)aws[_-]?credentials$/i, label: 'AWS credentials', code: 'secret-looking-path' },
+  { re: /(^|\/)\.netrc$/i, label: 'netrc (may contain tokens)', code: 'secret-looking-path' },
 ];
+
+/** Real env files (committed .env / .env.local / .env.production, …). */
+const ENV_FILE_RE = /(^|\/)\.env(?:$|\.(?:local|development|dev|production|prod|staging|ci|sandbox))/i;
+const ENV_TEMPLATE_RE =
+  /(^|\/)\.env\.(example|sample|template|test|default)(?:\.|$)/i;
+
+/** Secret-store filenames — not source like src/auth/login.ts. */
+const AUTH_SECRET_FILE_RE =
+  /(^|\/)(\.htpasswd|htpasswd|passwd|shadow)$|(^|\/).*(password|secret|token)s?\.(json|ya?ml|toml|env|txt|csv)$/i;
 
 const LOCKFILES = new Set([
   'package-lock.json',
@@ -48,9 +61,6 @@ const DEPENDENCY_MANIFESTS = new Set([
   'composer.json',
 ]);
 
-const AUTH_PATH_RE =
-  /(^|\/)(auth|oauth|jwt|session|passwd|password|token)s?([./_-]|$)/i;
-
 const CI_PATTERNS = [
   /^\.github\/workflows\//i,
   /^\.gitlab-ci\.ya?ml$/i,
@@ -59,22 +69,67 @@ const CI_PATTERNS = [
   /^\.travis\.ya?ml$/i,
 ];
 
+/** Common media / font assets — low signal as binaries. */
+const MEDIA_EXT_RE =
+  /\.(png|jpe?g|gif|svg|ico|webp|avif|bmp|mp3|mp4|wav|ogg|woff2?|ttf|eot|otf)$/i;
+
+/** High-signal content in diffs (not path heuristics). */
+const CONTENT_PATTERNS: Array<{
+  re: RegExp;
+  code: string;
+  label: string;
+}> = [
+  {
+    re: /\bAKIA[0-9A-Z]{16}\b/,
+    code: 'aws-access-key',
+    label: 'AWS access key id',
+  },
+  {
+    re: /-----BEGIN (?:RSA |OPENSSH |EC |DSA |ENCRYPTED )?PRIVATE KEY-----/,
+    code: 'private-key-block',
+    label: 'private key block',
+  },
+  {
+    re: /\baws[_-]?secret[_-]?access[_-]?key\s*[:=]/i,
+    code: 'aws-secret-key',
+    label: 'AWS secret access key assignment',
+  },
+  {
+    re: /\bghp_[A-Za-z0-9]{36}\b/,
+    code: 'github-token',
+    label: 'GitHub personal access token',
+  },
+  {
+    re: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/,
+    code: 'github-token',
+    label: 'GitHub fine-grained PAT',
+  },
+  {
+    re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
+    code: 'slack-token',
+    label: 'Slack API token',
+  },
+];
+
 /** Lines changed threshold for "large diff" signal. */
 const LARGE_DIFF_LINES = 400;
 /** File count threshold for "broad change" signal. */
 const BROAD_CHANGE_FILES = 25;
 
-
-const SEVERITY_RANK: Record<RiskHint['severity'], number> = {
-  high: 0,
-  medium: 1,
-  low: 2,
+const SEVERITY_RANK: Record<Severity, number> = {
+  high: 3,
+  medium: 2,
+  low: 1,
 };
+
+export function severityRank(s: Severity): number {
+  return SEVERITY_RANK[s];
+}
 
 /** Sort by severity (high → low), then code/path. */
 export function sortRisks(hints: RiskHint[]): RiskHint[] {
   return [...hints].sort((a, b) => {
-    const sr = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
+    const sr = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
     if (sr !== 0) return sr;
     return a.code.localeCompare(b.code) || (a.path || '').localeCompare(b.path || '');
   });
@@ -100,18 +155,68 @@ export function summarizeRisks(hints: RiskHint[]): RiskSummary {
   return { high, medium, low, total, maxSeverity };
 }
 
-export function analyzeRisks(files: FileStat[]): RiskHint[] {
+export function parseFailOn(value: string | boolean | undefined): FailOnThreshold | undefined {
+  if (value === undefined || value === false) return undefined;
+  if (value === true) return 'high';
+  const v = String(value).toLowerCase().trim();
+  if (v === 'high' || v === 'medium' || v === 'low') return v;
+  throw new Error('--fail-on must be high, medium, or low (bare --fail-on means high)');
+}
+
+/** True when the session's max severity is at least the --fail-on threshold. */
+export function meetsFailOn(
+  maxSeverity: RiskSummary['maxSeverity'],
+  threshold: FailOnThreshold,
+): boolean {
+  if (!maxSeverity) return false;
+  return SEVERITY_RANK[maxSeverity] >= SEVERITY_RANK[threshold];
+}
+
+function scanDiffContent(path: string, diff: string, hints: RiskHint[]): void {
+  if (!diff) return;
+  for (const pat of CONTENT_PATTERNS) {
+    if (pat.re.test(diff)) {
+      hints.push({
+        severity: 'high',
+        code: pat.code,
+        message: `${pat.label} appears in diff: ${path}`,
+        path,
+      });
+    }
+  }
+}
+
+export function analyzeRisks(
+  files: FileStat[],
+  diffs: Record<string, string> = {},
+): RiskHint[] {
   const hints: RiskHint[] = [];
 
   let totalLines = 0;
   for (const f of files) {
     totalLines += f.insertions + f.deletions;
 
+    if (ENV_TEMPLATE_RE.test(f.path)) {
+      hints.push({
+        severity: 'low',
+        code: 'env-template',
+        message: `Env template changed (usually safe): ${f.path}`,
+        path: f.path,
+      });
+    } else if (ENV_FILE_RE.test(f.path) || /(^|\/)\.env$/i.test(f.path)) {
+      hints.push({
+        severity: 'high',
+        code: 'env-file',
+        message: `.env file committed or changed: ${f.path}`,
+        path: f.path,
+      });
+    }
+
     for (const sp of SECRET_PATTERNS) {
       if (sp.re.test(f.path)) {
         hints.push({
           severity: 'high',
-          code: 'secret-looking-path',
+          code: sp.code,
           message: `Secret-looking path (${sp.label}): ${f.path}`,
           path: f.path,
         });
@@ -119,10 +224,13 @@ export function analyzeRisks(files: FileStat[]): RiskHint[] {
     }
 
     if (f.binary) {
+      const media = MEDIA_EXT_RE.test(f.path);
       hints.push({
-        severity: f.status === 'A' || f.status === 'M' ? 'medium' : 'low',
+        severity: media ? 'low' : f.status === 'A' || f.status === 'M' ? 'medium' : 'low',
         code: 'binary-change',
-        message: `Binary file changed: ${f.path}`,
+        message: media
+          ? `Media/font binary changed: ${f.path}`
+          : `Binary file changed: ${f.path}`,
         path: f.path,
       });
     }
@@ -160,11 +268,11 @@ export function analyzeRisks(files: FileStat[]): RiskHint[] {
       });
     }
 
-    if (AUTH_PATH_RE.test(f.path) && !SECRET_PATTERNS.some((sp) => sp.re.test(f.path))) {
+    if (AUTH_SECRET_FILE_RE.test(f.path) && !SECRET_PATTERNS.some((sp) => sp.re.test(f.path))) {
       hints.push({
         severity: 'medium',
-        code: 'auth-path',
-        message: `Auth / session related path changed: ${f.path}`,
+        code: 'auth-secret-file',
+        message: `Auth / secret-store file changed: ${f.path}`,
         path: f.path,
       });
     }
@@ -202,6 +310,11 @@ export function analyzeRisks(files: FileStat[]): RiskHint[] {
         path: f.path,
       });
     }
+
+    const diff = diffs[f.path];
+    if (diff && !f.binary) {
+      scanDiffContent(f.path, diff, hints);
+    }
   }
 
   if (files.length >= BROAD_CHANGE_FILES) {
@@ -220,7 +333,6 @@ export function analyzeRisks(files: FileStat[]): RiskHint[] {
     });
   }
 
-  // Deduplicate by code+path, then severity-sort
   const seen = new Set<string>();
   const deduped = hints.filter((h) => {
     const k = `${h.code}:${h.path || ''}:${h.message}`;

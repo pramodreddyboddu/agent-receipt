@@ -42,7 +42,7 @@ describe('cli fixture', () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('help exits 0 and lists v0.3 commands', () => {
+  it('help exits 0 and lists v0.4 commands', () => {
     const out = cli(dir, ['help']);
     assert.match(out, /agent-receipt/);
     assert.match(out, /capture/);
@@ -50,11 +50,13 @@ describe('cli fixture', () => {
     assert.match(out, /install-hooks/);
     assert.match(out, /doctor/);
     assert.match(out, /compare/);
+    assert.match(out, /history/);
+    assert.match(out, /watch/);
   });
 
-  it('version is 0.3.1', () => {
+  it('version is 0.4.0', () => {
     const out = cli(dir, ['version']);
-    assert.match(out, /0\.3\.1/);
+    assert.match(out, /0\.4\.0/);
   });
 
   it('init writes config', () => {
@@ -83,9 +85,11 @@ describe('cli fixture', () => {
     const md = readFileSync(join(dir, 'receipt.md'), 'utf8');
     assert.match(md, /Agent Receipt/);
     assert.match(md, /## Summary/);
+    assert.match(md, /## What to review/);
+    assert.match(md, /TL;DR/);
     assert.match(md, /test-bot/);
     assert.match(md, /fixture run/);
-    assert.match(md, /0\.3\.1/);
+    assert.match(md, /0\.4\.0/);
     assert.match(md, /agent-receipt-sha256/);
     const json = JSON.parse(readFileSync(join(dir, 'receipt.json'), 'utf8'));
     assert.ok(json.summary);

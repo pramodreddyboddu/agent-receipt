@@ -2,36 +2,65 @@
 
 **Tamper-evident git snapshot receipts for AI / agent coding sessions.**
 
-Capture what an agent changed (branch, HEAD, files, diffs, risk hints) into a
-Markdown receipt with an embedded SHA-256 integrity footer. Verify later that
-nobody edited the receipt.
+Agents change your repo faster than you can review. `agent-receipt` writes a
+one-screen, hash-checked snapshot of what just happened — files, diffs, and
+high-signal risk hints — so you can glance a session, list recent ones, and
+catch `.env` / AWS keys / private keys before they ship.
+
+This is **tamper-evident**, not a signature. Nobody can quietly edit a receipt
+without `verify` failing. It is not cryptographic signing.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## 30-second path (discover → trust)
+## Why this exists
+
+A coding agent can touch twenty files, bump a lockfile, and accidentally stage
+`.env` in the time it takes you to refill coffee. Git history tells you *what
+landed*. It does not give you a **session-shaped** artifact: who (agent), why
+(message), what to review, and a checksum you can re-check later.
+
+`agent-receipt` is that artifact. Use it when:
+
+- You want a **TL;DR + “what to review”** at the top of a Markdown file
+- You want **history** of recent agent sessions, not only `git log`
+- You want **hooks / `watch`** so capture is not a forgotten extra step
+- You want CI to **fail on high-severity** findings (`--fail-on high`)
+
+## 60-second best path
+
+Requires **Node.js ≥ 20** and `git` on `PATH`.
 
 ```bash
 # Install from GitHub (works before npm publish)
 npm i -g github:pramodreddyboddu/agent-receipt
 
-# Or from a local checkout
-# npm i -g /path/to/agent-receipt
-
 cd your-git-repo
-agent-receipt init
-agent-receipt install-hooks
+agent-receipt init --cursor     # config + Cursor rule that actually runs capture
+agent-receipt install-hooks     # optional: auto-capture on every commit
 agent-receipt doctor
 
-# …make a normal commit (hook auto-captures) OR capture manually:
-agent-receipt capture --agent cursor --message "first receipt"
+# After an agent session (or let the Cursor rule / hook do it):
+agent-receipt capture --agent cursor --message "what changed"
 
-agent-receipt last
-agent-receipt verify
+agent-receipt history           # time, agent, risk counts, summary
+agent-receipt last              # glance the newest
+agent-receipt verify            # integrity
 ```
 
-Example of what you get: [`examples/sample-receipt.md`](examples/sample-receipt.md).
+Wait for the **next** commit, capture once, exit — the Cursor / agent
+“run after session” path:
 
-Requires **Node.js ≥ 20** and `git` on `PATH`.
+```bash
+agent-receipt watch --once --interval 2 --agent cursor --message "session wrap-up"
+```
+
+Leave a terminal running during a long session:
+
+```bash
+agent-receipt watch --interval 5 --agent cursor
+```
+
+Example receipt: [`examples/sample-receipt.md`](examples/sample-receipt.md).
 
 ### Alternative installs
 
@@ -48,10 +77,12 @@ npm install -D agent-receipt
 
 | Command | Purpose |
 |---------|---------|
-| `init` | Write `.agent-receipt.yml` + short setup notes |
+| `init [--cursor]` | Write `.agent-receipt.yml` + notes; `--cursor` drops the Cursor rule |
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON) |
 | `show [path]` | Pretty-print last / given receipt (full body) |
 | `last` | Path + glance of the most recent receipt |
+| `history` / `ls` | List recent receipts: time, agent, risk, short summary |
+| `watch` | Poll git HEAD; auto-capture on new commits (`--once`, `--interval`) |
 | `verify [path]` | Hash-check tamper-evident integrity |
 | `doctor` | Health check: git, repo, hooks, config, Node |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
@@ -61,9 +92,10 @@ npm install -D agent-receipt
 | `help [cmd]` | Global help, or man-page style help for a command |
 
 ```bash
-agent-receipt help doctor
+agent-receipt help watch
 agent-receipt help capture
-agent-receipt compare
+agent-receipt history
+agent-receipt ls --limit 5
 ```
 
 ### `capture` flags
@@ -80,19 +112,34 @@ agent-receipt compare
 | `--json` | Also write companion `.json` |
 | `--diff-stat` / `--no-diff-stat` | Diff-stat overview (default on) |
 | `--top-risks <N>` | Max risk rows in findings table (default 20) |
+| `--fail-on [high\|medium\|low]` | Exit 2 after writing if max severity meets threshold. Bare `--fail-on` = high. For CI scripts. |
 | `--cwd <path>` | Run as if started in this directory (global) |
+
+### `watch` flags
+
+| Flag | Description |
+|------|-------------|
+| `--interval <sec>` | Poll interval (default **5**, min 1, max 3600) |
+| `--once` | Wait for the next HEAD change, capture, exit |
+| `--agent` / `--message` | Passed through to capture |
+| `--fail-on …` | With `--once`, exit 2 when the threshold is met |
+
+When HEAD moves `A → B`, watch captures `--since A` so every commit in the
+interval is in the receipt.
 
 ## What a receipt includes
 
-- **Summary rollup** — files, line +/- totals, risk counts / max severity
+- **TL;DR** — one-line: agent, time, branch, HEAD, files, +/−, risk
+- **What to review** — ranked high/medium findings + notable files
+- **Summary** rollup — files, line totals, risk counts / max severity
 - **Notable changes** — package / lockfile / CI workflow highlights
 - **Diff stat** — compact git-style overview
 - Timestamp, branch, HEAD, optional agent / message / session
 - Commit list for the range
 - Files changed with insertions / deletions / binary flag
 - Per-file diff summary (`--full` for complete diffs)
-- **Risk findings** table: secret-looking paths, auth paths, dependency
-  manifests, large diffs, binaries, lockfile / CI deletions, broad change sets
+- **Risk findings** table, severity-sorted: `.env` commits, AWS keys in diffs,
+  private key blocks, secret-looking paths, lockfile / CI deletions, …
 - SHA-256 integrity footer (tamper-evident)
 
 Noise paths (`node_modules/**`, `dist/**`, `coverage/**` by default) are
@@ -102,6 +149,24 @@ See [`examples/sample-receipt.md`](examples/sample-receipt.md),
 [`docs/agents.md`](docs/agents.md), [`docs/receipt.schema.json`](docs/receipt.schema.json),
 and short recipes under [`examples/`](examples/).
 
+## Cursor / agent wrap-up
+
+`init --cursor` writes [`.cursor/rules/agent-receipt.mdc`](examples/.cursor/rules/agent-receipt.mdc)
+with `alwaysApply: true`. The rule tells the agent to **run** capture (not
+merely remind you) at session end.
+
+Copy from examples if you already ran `init` without `--cursor`:
+
+```bash
+mkdir -p .cursor/rules
+cp path/to/agent-receipt/examples/.cursor/rules/agent-receipt.mdc .cursor/rules/
+```
+
+**Run after session** (next commit → one receipt → exit):
+
+```bash
+agent-receipt watch --once --interval 2 --agent cursor --message "session wrap-up"
+```
 
 ## Git hooks (local / global install)
 
@@ -112,6 +177,12 @@ npm publish. At hook runtime the order is:
 1. `AGENT_RECEIPT_BIN` — absolute path to the CLI (optional override)
 2. Embedded absolute bin from install time
 3. `npx --yes agent-receipt` — last resort only
+
+Hooks stay **non-blocking**. For CI that should fail on secrets:
+
+```bash
+agent-receipt capture --fail-on high
+```
 
 See [`examples/hooks.md`](examples/hooks.md).
 

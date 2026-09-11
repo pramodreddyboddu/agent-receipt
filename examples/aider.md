@@ -3,19 +3,31 @@
 Run after an Aider session:
 
 ```bash
-npx agent-receipt capture --agent aider --message "aider session"
+agent-receipt capture --agent aider --message "aider session"
+```
+
+Wait for the next commit:
+
+```bash
+agent-receipt watch --once --agent aider --message "aider wrap-up"
 ```
 
 Or wire a shell alias:
 
 ```bash
-alias ar-capture='npx agent-receipt capture --agent aider'
+alias ar-capture='agent-receipt capture --agent aider'
 ar-capture -m "refactored auth"
 ```
 
 Optional post-commit hook so every commit gets a receipt:
 
 ```bash
-npx agent-receipt install-hooks
+agent-receipt install-hooks
 export AGENT_RECEIPT_AGENT=aider
+```
+
+Inside Aider:
+
+```text
+/run agent-receipt capture --agent aider --message "wrap up" --json
 ```

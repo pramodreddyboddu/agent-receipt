@@ -4,14 +4,19 @@ const TOPICS: Record<string, string> = {
   init: `agent-receipt init — write config + setup notes
 
 Usage:
-  agent-receipt init [--cwd <path>]
+  agent-receipt init [--cursor] [--cwd <path>]
+
+Options:
+  --cursor               Drop .cursor/rules/agent-receipt.mdc (agent runs capture)
 
 Creates:
   .agent-receipt.yml          config (outDir, agent, ignore globs, …)
   .agent-receipt/SETUP.md     short next-steps
+  .cursor/rules/…             only with --cursor
 
 Examples:
   agent-receipt init
+  agent-receipt init --cursor
   agent-receipt init --cwd ~/code/my-app
 `,
 
@@ -32,12 +37,16 @@ Options:
   --diff-stat            Include diff-stat overview (default: on)
   --no-diff-stat         Omit the diff-stat overview
   --top-risks <N>        Max risk rows in findings table (default: 20)
+  --fail-on [high|medium|low]
+                         Exit 2 after writing if max severity meets threshold.
+                         Bare --fail-on means high. For hooks/CI scripts.
   --cwd <path>           Run as if started in this directory
 
 Examples:
   agent-receipt capture --agent cursor --message "ship auth"
   agent-receipt capture --since main --full --json --session s-42
   agent-receipt capture --commits 3 --no-diff-stat
+  agent-receipt capture --fail-on high
 `,
 
   show: `agent-receipt show — print a receipt body
@@ -63,6 +72,56 @@ Options:
 Examples:
   agent-receipt last
   agent-receipt last --path | xargs agent-receipt verify
+`,
+
+  history: `agent-receipt history — list recent receipts
+
+Usage:
+  agent-receipt history [--limit <N>]
+  agent-receipt ls [--limit <N>]          # alias
+
+Shows newest-first: time, agent, risk counts, short summary.
+
+Options:
+  --limit <N>            Max rows (default: 20)
+
+Examples:
+  agent-receipt history
+  agent-receipt ls --limit 5
+`,
+
+  ls: `See: agent-receipt help history`,
+
+  watch: `agent-receipt watch — poll git HEAD and auto-capture on new commits
+
+Usage:
+  agent-receipt watch [--interval <sec>] [--once] [--agent <name>] [--message <text>] [--fail-on …]
+
+Defaults: poll every 5 seconds until Ctrl+C.
+--once: wait for the next HEAD change, capture once, exit (Cursor / agent “run after session”).
+
+Options:
+  --interval <sec>       Poll interval (default: 5, min 1, max 3600)
+  --once                 Capture after the next commit, then exit
+  --agent <name>         Agent label (default: watch)
+  --message <text>       Session message (default: watch <short-sha>)
+  --fail-on [high|medium|low]
+                         After capture, exit 2 when --once if threshold met
+  --json                 Also write companion .json on each capture
+  --cwd <path>           Run as if started in this directory
+
+When HEAD moves A → B, capture uses --since A so all commits in the interval are included.
+
+Cursor / agent wrap-up:
+  agent-receipt watch --once --interval 2 --agent cursor --message "session wrap-up"
+
+Long session (leave a terminal running):
+  agent-receipt watch --interval 5 --agent cursor
+
+Examples:
+  agent-receipt watch
+  agent-receipt watch --once --agent cursor
+  agent-receipt watch --interval 10 --fail-on high
 `,
 
   verify: `agent-receipt verify — hash-check tamper-evident integrity
@@ -133,6 +192,9 @@ Hooks embed this package's bin (node + absolute path) when installable locally/g
 Fallback order at runtime: AGENT_RECEIPT_BIN → embedded bin path → npx (last resort).
 Failure inside the hook is non-blocking (\`|| true\`).
 
+For CI that should fail on secrets, run capture with --fail-on high in the job
+(not in the git hook — hooks stay non-blocking).
+
 Examples:
   agent-receipt install-hooks
   agent-receipt install-hooks --pre-push
@@ -160,7 +222,7 @@ Usage:
 Examples:
   agent-receipt help
   agent-receipt help capture
-  agent-receipt help doctor
+  agent-receipt help watch
 `,
 
   version: `agent-receipt version — print version
@@ -182,6 +244,9 @@ Commands:
   capture                Capture a git snapshot receipt (Markdown)
   show [path]            Pretty-print last / given receipt (full body)
   last                   Path + glance of the most recent receipt
+  history                List recent receipts (time, agent, risk, summary)
+  ls                     Alias for history
+  watch                  Poll git HEAD; auto-capture on new commits
   verify [path]          Hash-check tamper-evident integrity
   doctor                 Environment health check (git, hooks, config, node)
   compare [a] [b]        Diff two receipts (default: last vs previous)
@@ -196,26 +261,25 @@ Global options:
   -h, --help             Show help
   -V, --version          Show version
 
-Quickstart (≈ 5 minutes):
+Quickstart (≈ 60 seconds):
   npm i -g github:pramodreddyboddu/agent-receipt
-  cd your-repo && agent-receipt init && agent-receipt install-hooks
-  # …make a commit…
-  agent-receipt last && agent-receipt verify && agent-receipt doctor
+  cd your-repo && agent-receipt init --cursor && agent-receipt install-hooks
+  agent-receipt capture --agent cursor --message "first receipt"
+  agent-receipt history && agent-receipt last && agent-receipt verify
 
 Examples:
-  agent-receipt init
-  agent-receipt capture --agent cursor --message "ship v0.3"
-  agent-receipt capture --since main --full --json --session s-42
+  agent-receipt init --cursor
+  agent-receipt capture --agent cursor --message "ship v0.4"
+  agent-receipt capture --fail-on high
+  agent-receipt history
+  agent-receipt watch --once --agent cursor
+  agent-receipt watch --interval 5
   agent-receipt last
-  agent-receipt last --path
-  agent-receipt show
   agent-receipt verify
   agent-receipt doctor
   agent-receipt compare
   agent-receipt install-hooks
-  agent-receipt install-hooks --pre-push
-  agent-receipt uninstall-hooks
-  agent-receipt help doctor
+  agent-receipt help watch
 
 Docs: https://github.com/pramodreddyboddu/agent-receipt
 Agent tips: docs/agents.md · examples/ (Cursor, Claude Code, Aider)

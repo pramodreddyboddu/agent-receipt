@@ -1,5 +1,13 @@
 # Agent Receipt
 
+> **TL;DR** demo · 2026-09-11T19:52:00.000Z · main @ b232a251f710 · 2 files · +3/−0 · risk none
+>
+> example session for docs
+
+## What to review
+
+_Nothing flagged. Skim the file list if this session should have been a no-op._
+
 ## Summary
 
 | Metric | Value |
@@ -11,8 +19,8 @@
 
 ## Session
 
-- **Version**: 0.3.0
-- **Timestamp**: 2026-09-11T19:05:12.903Z
+- **Version**: 0.4.0
+- **Timestamp**: 2026-09-11T19:52:00.000Z
 - **Branch**: `main`
 - **HEAD**: `b232a251f710a340884d7a9c0b5ffc09f51f6c64`
 - **Range**: `HEAD~1..HEAD` (`013d97b57c6e` → HEAD)
@@ -36,8 +44,8 @@
 ## Diff stat
 
 ```
-README.md | M    2    0 ++
-src.ts    | A    1    0 +
+README.md    | M    2    0 ++
+src.ts       | A    1    0 +
 2 files changed, 3 insertions(+), 0 deletions(-)
 ```
 
@@ -74,6 +82,6 @@ index 0000000..09b76aa
 
 ## Integrity
 
-<!-- agent-receipt-sha256:d9418db1a0d4f38aa348232dd166730040bc7c31723af74fe6acfb077e591d5a -->
+<!-- agent-receipt-sha256:8f4c414bc33e84b1e60c0724435ced904125975359b7fc52431236f4971a17c2 -->
 
-SHA-256 of canonical body: `d9418db1a0d4f38aa348232dd166730040bc7c31723af74fe6acfb077e591d5a`
+SHA-256 of canonical body: `8f4c414bc33e84b1e60c0724435ced904125975359b7fc52431236f4971a17c2`

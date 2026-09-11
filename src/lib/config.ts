@@ -188,7 +188,8 @@ ignore:
 3. Capture a receipt after an agent session:
 
    \`\`\`bash
-   agent-receipt capture --agent claude --message "refactor auth"
+   agent-receipt capture --agent cursor --message "refactor auth"
+   agent-receipt history
    agent-receipt last
    agent-receipt verify
    \`\`\`
@@ -199,16 +200,27 @@ ignore:
    agent-receipt install-hooks
    \`\`\`
 
-5. Health check:
+5. Wait for the next commit, capture once (Cursor / agent wrap-up):
 
    \`\`\`bash
-   agent-receipt doctor
+   agent-receipt watch --once --agent cursor --message "session wrap-up"
    \`\`\`
 
-6. Agent-specific tips: see \`docs/agents.md\` in the package / repo.
+6. Cursor: \`agent-receipt init --cursor\` drops \`.cursor/rules/agent-receipt.mdc\`
+   so the agent runs capture itself at session end.
 
-7. Add \`.agent-receipt/receipts/\` to git if you want receipts committed,
-   or keep them local / artifact-only.
+7. Health check: \`agent-receipt doctor\`
+
+8. CI / hooks that should fail on secrets:
+
+   \`\`\`bash
+   agent-receipt capture --fail-on high
+   \`\`\`
+
+9. Agent-specific tips: see \`docs/agents.md\` in the package / repo.
+
+10. Add \`.agent-receipt/receipts/\` to git if you want receipts committed,
+    or keep them local / artifact-only.
 `;
   writeFileSync(notesFile, notes, 'utf8');
   return { configFile, notesFile };

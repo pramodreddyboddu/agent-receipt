@@ -70,6 +70,8 @@ describe('summary + risk table', () => {
       },
       { full: false, diffStat: true, topRisks: 10 },
     );
+    assert.match(md, /> \*\*TL;DR\*\*/);
+    assert.match(md, /## What to review/);
     assert.match(md, /## Notable changes/);
     assert.match(md, /## Diff stat/);
     assert.match(md, /## Risk findings/);

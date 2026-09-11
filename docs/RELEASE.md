@@ -11,7 +11,7 @@ want a public release. This checklist is the playbook when you are ready.
   - [ ] `package.json` → `"version"`
   - [ ] `src/lib/version.ts` → `VERSION`
   - [ ] `CHANGELOG.md` → new section with date
-- [ ] README 30-second path still works from a fresh clone / GitHub install
+- [ ] README 60-second path still works from a fresh clone / GitHub install
 - [ ] `docs/receipt.schema.json` matches current `--json` shape
 - [ ] Example receipt under `examples/` still looks sane
 
@@ -42,7 +42,7 @@ Notes:
 ```bash
 npm i -g github:pramodreddyboddu/agent-receipt
 # or a branch/ref:
-npm i -g github:pramodreddyboddu/agent-receipt#v0.3.0
+npm i -g github:pramodreddyboddu/agent-receipt#v0.4.0
 ```
 
 ## Tag + GitHub Release
@@ -50,9 +50,9 @@ npm i -g github:pramodreddyboddu/agent-receipt#v0.3.0
 ```bash
 git checkout main
 git pull
-git tag -a v0.3.0 -m "agent-receipt v0.3.0"
-git push origin v0.3.0
-gh release create v0.3.0 --title "v0.3.0" --notes-file CHANGELOG.md
+git tag -a v0.4.0 -m "agent-receipt v0.4.0"
+git push origin v0.4.0
+gh release create v0.4.0 --title "v0.4.0" --notes-file CHANGELOG.md
 ```
 
 ## CI workflow
@@ -72,7 +72,7 @@ git push
 ## Post-release smoke
 
 ```bash
-npm i -g agent-receipt@0.3.0   # or github:…#v0.3.0
+npm i -g agent-receipt@0.4.0   # or github:…#v0.4.0
 cd $(mktemp -d) && git init
 echo hi > README.md && git add . && git commit -m init
 agent-receipt init
@@ -80,8 +80,10 @@ agent-receipt install-hooks
 agent-receipt doctor
 echo bye >> README.md && git add . && git commit -m tweak
 agent-receipt last
+agent-receipt history
 agent-receipt verify
 agent-receipt compare   # after a second capture
+agent-receipt capture --fail-on high || true
 ```
 
 ## Do not

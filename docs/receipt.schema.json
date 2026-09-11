@@ -95,6 +95,28 @@
             },
             "additionalProperties": false
           }
+        },
+        "tldr": {
+          "type": "string",
+          "description": "One-line session TL;DR (agent, time, branch, files, risk)"
+        },
+        "review": {
+          "type": "array",
+          "description": "What to review: high/medium risks then notable files",
+          "items": {
+            "type": "object",
+            "required": ["severity", "code", "text"],
+            "properties": {
+              "severity": {
+                "type": "string",
+                "enum": ["high", "medium", "low", "notable"]
+              },
+              "code": { "type": "string" },
+              "text": { "type": "string" },
+              "path": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": true
