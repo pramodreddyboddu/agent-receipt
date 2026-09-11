@@ -151,9 +151,9 @@ describe('wrap + export + base + redact CLI', () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('version is 0.6.0', () => {
+  it('version is 1.0.0', () => {
     const out = cli(dir, ['version']);
-    assert.match(out, /0\.6\.0/);
+    assert.match(out, /1\.0\.0/);
   });
 
   it('help lists wrap and export', () => {

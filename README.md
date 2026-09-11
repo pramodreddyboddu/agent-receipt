@@ -1,6 +1,6 @@
 # agent-receipt
 
-**Tamper-evident git snapshot receipts for AI / agent coding sessions.**
+**One-shot, tamper-evident git receipts for AI coding agent sessions.**
 
 Agents change your repo faster than you can review. `agent-receipt` writes a
 one-screen, hash-checked snapshot of what just happened — files, diffs, and
@@ -11,45 +11,64 @@ This is **tamper-evident**, not a signature. Nobody can quietly edit a receipt
 without `verify` failing. It is not cryptographic signing.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<!-- Optional after public + npm: -->
+<!-- [![npm version](https://img.shields.io/npm/v/agent-receipt.svg)](https://www.npmjs.com/package/agent-receipt) -->
+<!-- [![CI](https://github.com/pramodreddyboddu/agent-receipt/actions/workflows/ci.yml/badge.svg)](https://github.com/pramodreddyboddu/agent-receipt/actions/workflows/ci.yml) -->
 
-## Why this exists
-
-A coding agent can touch twenty files, bump a lockfile, and accidentally stage
-`.env` in the time it takes you to refill coffee. Git history tells you *what
-landed*. It does not give you a **session-shaped** artifact: who (agent), why
-(message), what to review, and a checksum you can re-check later.
-
-`agent-receipt` is that artifact. Use it when:
-
-- You want a **TL;DR + “what to review”** at the top of a Markdown file
-- You want **history** of recent agent sessions, not only `git log`
-- You want **hooks / `watch`** so capture is not a forgotten extra step
-- You want CI to **fail on high-severity** findings (`--fail-on high`)
-- You want a **one-shot wrap** at session end, or an **HTML export** you can share
-
-## 60-second best path
+## Install
 
 Requires **Node.js ≥ 20** and `git` on `PATH`.
 
 ```bash
-# Install from GitHub (works before npm publish)
-npm i -g github:pramodreddyboddu/agent-receipt
+# Once the package is public on npm:
+npm install -g agent-receipt
 
+# Or from GitHub (works before / without npm publish):
+npm install -g github:pramodreddyboddu/agent-receipt
+
+# One-shot without a global install:
+npx github:pramodreddyboddu/agent-receipt doctor
+```
+
+Dev dependency in a repo:
+
+```bash
+npm install -D agent-receipt
+# or: npm install -D github:pramodreddyboddu/agent-receipt
+```
+
+## Hero path: `wrap` at session end
+
+```bash
 cd your-git-repo
 agent-receipt init --cursor     # config + Cursor rule that actually runs capture
 agent-receipt install-hooks     # optional: auto-capture on every commit
 agent-receipt doctor
 
-# After an agent session — one shot (dirty → --uncommitted, then verify):
+# End of an agent session — one shot (dirty → --uncommitted, then verify):
 agent-receipt wrap --agent cursor --message "what changed"
+```
 
-# Or capture explicitly (e.g. vs main on a PR branch):
+That prints **TL;DR** + receipt path and runs `verify`. Example:
+
+```text
+TL;DR  cursor · 2026-09-11T… · main @ a1b2c3d4e5f6 · 4 files · +42/−7 · risk none
+Wrote  .agent-receipt/receipts/….md
+verify OK
+```
+
+Or capture vs `main` on a PR branch and share HTML:
+
+```bash
 agent-receipt capture --base main --agent cursor --message "PR work"
-agent-receipt export --redact --out share.html   # self-contained HTML to open/share
+agent-receipt export --redact --out share.html
+```
 
+```bash
 agent-receipt history           # time, agent, risk, summary (+ [uncommitted] badge)
 agent-receipt last              # glance the newest
 agent-receipt verify            # integrity
+agent-receipt --version
 ```
 
 Wait for the **next** commit, capture once, exit — the Cursor / agent
@@ -68,16 +87,20 @@ agent-receipt watch --interval 5 --agent cursor
 
 Example receipt: [`examples/sample-receipt.md`](examples/sample-receipt.md).
 
-### Alternative installs
+## Why this exists
 
-```bash
-# one-shot without global install
-npx github:pramodreddyboddu/agent-receipt doctor
+A coding agent can touch twenty files, bump a lockfile, and accidentally stage
+`.env` in the time it takes you to refill coffee. Git history tells you *what
+landed*. It does not give you a **session-shaped** artifact: who (agent), why
+(message), what to review, and a checksum you can re-check later.
 
-# after npm publish
-npm install -g agent-receipt
-npm install -D agent-receipt
-```
+`agent-receipt` is that artifact. Use it when:
+
+- You want a **TL;DR + “what to review”** at the top of a Markdown file
+- You want **history** of recent agent sessions, not only `git log`
+- You want **hooks / `watch`** so capture is not a forgotten extra step
+- You want CI to **fail on high-severity** findings (`--fail-on high`)
+- You want a **one-shot wrap** at session end, or an **HTML export** you can share
 
 ## Commands
 
@@ -324,6 +347,8 @@ marker. Any edit to the body fails verification.
 This is **tamper-evident**, not cryptographic signing. For signatures, wrap the
 receipt with your own signing flow (e.g. `minisign`, GPG).
 
+Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
+
 ## Development
 
 ```bash
@@ -331,7 +356,9 @@ git clone https://github.com/pramodreddyboddu/agent-receipt.git
 cd agent-receipt
 npm install
 npm test
+npm run pack:check
 node bin/agent-receipt.js help
+node bin/agent-receipt.js --version
 ```
 
 Release playbook (no auto-publish): [`docs/RELEASE.md`](docs/RELEASE.md).

@@ -19,7 +19,7 @@ _Nothing flagged. Skim the file list if this session should have been a no-op._
 
 ## Session
 
-- **Version**: 0.5.1
+- **Version**: 1.0.0
 - **Timestamp**: 2026-09-11T19:52:00.000Z
 - **Branch**: `main`
 - **HEAD**: `b232a251f710a340884d7a9c0b5ffc09f51f6c64`
@@ -82,6 +82,6 @@ index 0000000..09b76aa
 
 ## Integrity
 
-<!-- agent-receipt-sha256:8f4c414bc33e84b1e60c0724435ced904125975359b7fc52431236f4971a17c2 -->
+<!-- agent-receipt-sha256:19d6f34e9b5b494af621d3507470b39d4964b437e236df9140e0eaae34823a5d -->
 
-SHA-256 of canonical body: `8f4c414bc33e84b1e60c0724435ced904125975359b7fc52431236f4971a17c2`
+SHA-256 of canonical body: `19d6f34e9b5b494af621d3507470b39d4964b437e236df9140e0eaae34823a5d`

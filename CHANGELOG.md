@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0] — 2026-09-11
+
+First **stable** public-ready release. Same feature surface as 0.6.0; version and
+packaging polish for npm strangers.
+
+### Highlights (0.1 → 0.6 → 1.0)
+
+- **Core**: `init`, `capture`, `show`, `verify` with SHA-256 tamper-evident receipts
+- **Session UX**: TL;DR + “What to review”, `last`, `history` / `ls`, `compare` / `diff`
+- **Automation**: `install-hooks`, `watch` (commits + dirty tree), Cursor rule via `init --cursor`
+- **Risk**: high-signal diff/path heuristics, `--fail-on`, `riskAllowlist`, high-entropy scan
+- **v0.6**: `wrap` (end-of-session one-shot), `export` / `html`, `--base`, `--redact`
+- **Ops**: `doctor`, config `ignore` globs, JSON schema, GitHub install path
+
+### Changed
+
+- Package version bumped to `1.0.0`
+- npm metadata: punchier description, expanded keywords, `publishConfig.access=public`
+- README aimed at npm / GitHub installers; `wrap` as the hero command
+- `SECURITY.md` added (reporting + heuristic scanner limits)
+- `docs/RELEASE.md` updated for v1.0.0 tag / publish commands
+- `npm run pack:check` asserts `npm pack --dry-run` includes `bin` + `dist`
+
 ## [0.6.0] — 2026-09-11
 
 ### Added
