@@ -28,6 +28,9 @@ export {
   sortRisks,
   parseFailOn,
   meetsFailOn,
+  parseRiskAllowlist,
+  applyRiskAllowlist,
+  shannonEntropy,
 } from './lib/risk.js';
 export { summarizeNotableChanges, formatDiffStatTable } from './lib/summary.js';
 export { formatMarkdown, formatJson, formatTldr, buildReviewItems } from './lib/receipt.js';
@@ -45,3 +48,15 @@ export {
   filterIgnored,
 } from './lib/ignore.js';
 export { helpFor, globalHelp } from './lib/help.js';
+
+export {
+  loadIndex,
+  updateIndexOnCapture,
+  indexPath,
+  INDEX_REL,
+} from './lib/receipt-index.js';
+export {
+  isDirty,
+  dirtyFingerprint,
+  getWorkingTreeFiles,
+} from './lib/git.js';

@@ -47,6 +47,10 @@
     "agent": { "type": ["string", "null"] },
     "session": { "type": ["string", "null"] },
     "message": { "type": ["string", "null"] },
+    "uncommitted": {
+      "type": "boolean",
+      "description": "True when the receipt snapshots the dirty working tree"
+    },
     "workspace": {
       "type": "string",
       "description": "Absolute cwd where capture ran"

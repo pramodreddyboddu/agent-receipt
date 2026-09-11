@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export function runGit(args: string[], cwd: string): string {
@@ -200,4 +200,183 @@ export function getCommitLog(
   } catch {
     return [];
   }
+}
+
+/** Porcelain status of the working tree (tracked + untracked, exclude-standard). */
+export function getPorcelainStatus(cwd: string): string {
+  try {
+    return runGit(['status', '--porcelain=v1', '-uall'], cwd);
+  } catch {
+    return '';
+  }
+}
+
+/** True when there are staged, unstaged, or untracked changes. */
+export function isDirty(cwd: string): boolean {
+  return getPorcelainStatus(cwd).trim().length > 0;
+}
+
+/**
+ * Stable fingerprint of the dirty tree for watch polling.
+ * Empty string when clean.
+ */
+export function dirtyFingerprint(cwd: string): string {
+  const p = getPorcelainStatus(cwd);
+  if (!p.trim()) return '';
+  let num = '';
+  try {
+    num = runGit(['diff', '--numstat', 'HEAD'], cwd);
+  } catch {
+    num = '';
+  }
+  let untracked = '';
+  try {
+    untracked = runGit(['ls-files', '--others', '--exclude-standard'], cwd);
+  } catch {
+    untracked = '';
+  }
+  return `${p}\n--\n${num}\n--\n${untracked}`;
+}
+
+function truncateDiff(diff: string, full: boolean, maxLines: number): string {
+  if (!diff) return '(no textual diff)';
+  const lines = diff.split('\n');
+  if (full || lines.length <= maxLines) return diff;
+  return `${lines.slice(0, maxLines).join('\n')}\n… (${lines.length - maxLines} more lines truncated; use --full)`;
+}
+
+function countLinesAndBinary(cwd: string, filePath: string): { ins: number; binary: boolean } {
+  try {
+    const buf = readFileSync(join(cwd, filePath));
+    if (buf.includes(0)) return { ins: 0, binary: true };
+    const text = buf.toString('utf8');
+    const n = text.length ? text.split(/\r?\n/).length : 0;
+    return { ins: n, binary: false };
+  } catch {
+    return { ins: 0, binary: false };
+  }
+}
+
+/**
+ * Working-tree changes vs HEAD (staged + unstaged tracked) plus untracked files.
+ * Used for uncommitted captures / dirty watch.
+ */
+export function getWorkingTreeFiles(cwd: string): FileStat[] {
+  const head = getHead(cwd);
+  const files: FileStat[] = [];
+  const seen = new Set<string>();
+
+  if (head !== '(no commits)') {
+    let nameStatus = '';
+    try {
+      nameStatus = runGit(['diff', '--name-status', '--find-renames', 'HEAD'], cwd);
+    } catch {
+      nameStatus = '';
+    }
+    let numstatRaw = '';
+    try {
+      numstatRaw = runGit(['diff', '--numstat', '--find-renames', 'HEAD'], cwd);
+    } catch {
+      numstatRaw = '';
+    }
+
+    const numMap = new Map<string, { ins: number; del: number; binary: boolean }>();
+    for (const line of numstatRaw.split('\n').filter(Boolean)) {
+      const parts = line.split('\t');
+      if (parts.length < 3) continue;
+      const [insS, delS, ...pathParts] = parts;
+      const path = pathParts.join('\t');
+      const finalPath = path.includes('=>')
+        ? path
+            .replace(/\{(.+?)\s*=>\s*(.+?)\}/, '$2')
+            .replace(/(.+)\s*=>\s*(.+)/, '$2')
+            .trim()
+        : path;
+      const binary = insS === '-' && delS === '-';
+      numMap.set(finalPath, {
+        ins: binary ? 0 : parseInt(insS, 10) || 0,
+        del: binary ? 0 : parseInt(delS, 10) || 0,
+        binary,
+      });
+    }
+
+    for (const line of nameStatus.split('\n').filter(Boolean)) {
+      const tab = line.indexOf('\t');
+      if (tab < 0) continue;
+      const status = line.slice(0, tab).trim();
+      const rest = line.slice(tab + 1);
+      let path: string;
+      if (status.startsWith('R') || status.startsWith('C')) {
+        const bits = rest.split('\t');
+        path = bits[bits.length - 1];
+      } else {
+        path = rest.split('\t')[0];
+      }
+      const stats = numMap.get(path) || { ins: 0, del: 0, binary: false };
+      files.push({
+        path,
+        status: status[0],
+        insertions: stats.ins,
+        deletions: stats.del,
+        binary: stats.binary,
+      });
+      seen.add(path);
+    }
+  }
+
+  let untracked = '';
+  try {
+    untracked = runGit(['ls-files', '--others', '--exclude-standard'], cwd);
+  } catch {
+    untracked = '';
+  }
+  for (const path of untracked.split('\n').filter(Boolean)) {
+    if (seen.has(path)) continue;
+    const { ins, binary } = countLinesAndBinary(cwd, path);
+    files.push({
+      path,
+      status: 'A',
+      insertions: ins,
+      deletions: 0,
+      binary,
+    });
+    seen.add(path);
+  }
+
+  return files;
+}
+
+/**
+ * Diff text for a path in the working tree vs HEAD (or full file for untracked).
+ */
+export function getWorkingTreeDiff(
+  cwd: string,
+  filePath: string,
+  full: boolean,
+  maxLines = 40,
+): string {
+  const head = getHead(cwd);
+  if (head !== '(no commits)') {
+    try {
+      const diff = runGit(['diff', '--find-renames', 'HEAD', '--', filePath], cwd);
+      if (diff) return truncateDiff(diff, full, maxLines);
+    } catch {
+      /* fall through */
+    }
+  }
+  try {
+    execFileSync('git', ['diff', '--no-index', '--', '/dev/null', filePath], {
+      cwd,
+      encoding: 'utf8',
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 32 * 1024 * 1024,
+    });
+  } catch (err) {
+    const e = err as { stdout?: string };
+    if (typeof e.stdout === 'string' && e.stdout.length) {
+      return truncateDiff(e.stdout.trimEnd(), full, maxLines);
+    }
+  }
+  return '(no textual diff)';
 }

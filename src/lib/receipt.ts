@@ -19,6 +19,8 @@ export interface ReceiptData {
   diffs: Record<string, string>;
   risks: RiskHint[];
   cwd: string;
+  /** True when this receipt snapshots the dirty working tree (not commits). */
+  uncommitted?: boolean;
 }
 
 export interface FormatOptions {
@@ -55,8 +57,9 @@ export function formatTldr(data: ReceiptData): string {
     riskSum.total === 0
       ? 'risk none'
       : `risk ${riskSum.total} (${riskSum.high} high)`;
+  const scope = data.uncommitted ? 'uncommitted' : shortHead;
   return (
-    `${agent} · ${data.timestamp} · ${data.branch} @ ${shortHead}` +
+    `${agent} · ${data.timestamp} · ${data.branch} @ ${scope}` +
     ` · ${data.files.length} files · +${totalIns}/−${totalDel} · ${riskBit}`
   );
 }
@@ -164,9 +167,14 @@ export function formatMarkdown(
   lines.push(`- **Branch**: \`${data.branch}\``);
   lines.push(`- **HEAD**: \`${data.head}\``);
   if (data.remote) lines.push(`- **Remote**: ${data.remote}`);
-  lines.push(
-    `- **Range**: \`${data.rangeLabel}\` (\`${data.base.slice(0, 12)}\` → HEAD)`,
-  );
+  if (data.uncommitted) {
+    lines.push(`- **Range**: \`${data.rangeLabel}\` _(working tree; not committed)_`);
+    lines.push(`- **Snapshot**: **uncommitted** (staged + unstaged + untracked)`);
+  } else {
+    lines.push(
+      `- **Range**: \`${data.rangeLabel}\` (\`${data.base.slice(0, 12)}\` → HEAD)`,
+    );
+  }
   if (data.agent) lines.push(`- **Agent**: ${data.agent}`);
   if (data.session) lines.push(`- **Session**: ${data.session}`);
   if (data.message) lines.push(`- **Message**: ${data.message}`);
@@ -182,7 +190,12 @@ export function formatMarkdown(
     lines.push('');
   }
 
-  if (data.commits.length) {
+  if (data.uncommitted) {
+    lines.push('## Commits');
+    lines.push('');
+    lines.push('_Uncommitted working tree — no commits in this snapshot._');
+    lines.push('');
+  } else if (data.commits.length) {
     lines.push('## Commits');
     lines.push('');
     for (const c of data.commits) lines.push(`- ${c}`);
@@ -271,6 +284,7 @@ export function formatJson(data: ReceiptData, markdown: string): object {
     agent: data.agent ?? null,
     session: data.session ?? null,
     message: data.message ?? null,
+    uncommitted: Boolean(data.uncommitted),
     workspace: data.cwd,
     summary: {
       files: data.files.length,

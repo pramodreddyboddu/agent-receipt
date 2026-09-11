@@ -28,6 +28,7 @@ Usage:
 Options:
   --since <ref>          Diff range start (e.g. main, HEAD~5, abc123)
   --commits <N>          Last N commits (default: config or 1)
+  --uncommitted          Snapshot dirty working tree (staged+unstaged+untracked)
   --message <text>       Human/agent session message
   --agent <name>         Agent label (default: config or "agent")
   --session <id>         Session / run id label
@@ -42,8 +43,11 @@ Options:
                          Bare --fail-on means high. For hooks/CI scripts.
   --cwd <path>           Run as if started in this directory
 
+Each capture updates .agent-receipt/index.json (stable receipt index).
+
 Examples:
   agent-receipt capture --agent cursor --message "ship auth"
+  agent-receipt capture --uncommitted --agent cursor --message "wip"
   agent-receipt capture --since main --full --json --session s-42
   agent-receipt capture --commits 3 --no-diff-stat
   agent-receipt capture --fail-on high
@@ -77,40 +81,47 @@ Examples:
   history: `agent-receipt history — list recent receipts
 
 Usage:
-  agent-receipt history [--limit <N>]
-  agent-receipt ls [--limit <N>]          # alias
+  agent-receipt history [--limit <N>] [--json]
+  agent-receipt ls [--limit <N>] [--json]   # alias
 
 Shows newest-first: time, agent, risk counts, short summary.
+'--json' prints a JSON array (prefers .agent-receipt/index.json).
 
 Options:
   --limit <N>            Max rows (default: 20)
+  --json                 Machine-readable JSON array
 
 Examples:
   agent-receipt history
+  agent-receipt history --json --limit 5
   agent-receipt ls --limit 5
 `,
 
   ls: `See: agent-receipt help history`,
 
-  watch: `agent-receipt watch — poll git HEAD and auto-capture on new commits
+  watch: `agent-receipt watch — poll git and auto-capture on commits or dirty tree
 
 Usage:
-  agent-receipt watch [--interval <sec>] [--once] [--agent <name>] [--message <text>] [--fail-on …]
+  agent-receipt watch [--interval <sec>] [--once] [--commits-only] [--agent <name>] [--message <text>] [--fail-on …]
 
-Defaults: poll every 5 seconds until Ctrl+C.
---once: wait for the next HEAD change, capture once, exit (Cursor / agent “run after session”).
+Defaults: poll every 5 seconds; watch **commits + dirty tree** until Ctrl+C.
+Dirty-tree captures are labeled **uncommitted**.
+--commits-only: restore v0.4 HEAD-only behavior.
+--once: wait for the next change, capture once, exit (Cursor / agent “run after session”).
 
 Options:
   --interval <sec>       Poll interval (default: 5, min 1, max 3600)
-  --once                 Capture after the next commit, then exit
+  --once                 Capture after the next change, then exit
+  --commits-only         Only watch HEAD commits (ignore dirty tree)
   --agent <name>         Agent label (default: watch)
-  --message <text>       Session message (default: watch <short-sha>)
+  --message <text>       Session message
   --fail-on [high|medium|low]
                          After capture, exit 2 when --once if threshold met
   --json                 Also write companion .json on each capture
   --cwd <path>           Run as if started in this directory
 
 When HEAD moves A → B, capture uses --since A so all commits in the interval are included.
+When the working tree changes (and HEAD did not), capture uses --uncommitted.
 
 Cursor / agent wrap-up:
   agent-receipt watch --once --interval 2 --agent cursor --message "session wrap-up"
@@ -121,6 +132,7 @@ Long session (leave a terminal running):
 Examples:
   agent-receipt watch
   agent-receipt watch --once --agent cursor
+  agent-receipt watch --commits-only --once
   agent-receipt watch --interval 10 --fail-on high
 `,
 
@@ -246,7 +258,7 @@ Commands:
   last                   Path + glance of the most recent receipt
   history                List recent receipts (time, agent, risk, summary)
   ls                     Alias for history
-  watch                  Poll git HEAD; auto-capture on new commits
+  watch                  Poll git; auto-capture on commits or dirty tree
   verify [path]          Hash-check tamper-evident integrity
   doctor                 Environment health check (git, hooks, config, node)
   compare [a] [b]        Diff two receipts (default: last vs previous)
@@ -269,10 +281,12 @@ Quickstart (≈ 60 seconds):
 
 Examples:
   agent-receipt init --cursor
-  agent-receipt capture --agent cursor --message "ship v0.4"
+  agent-receipt capture --agent cursor --message "ship v0.5"
+  agent-receipt capture --uncommitted --message "wip"
   agent-receipt capture --fail-on high
-  agent-receipt history
+  agent-receipt history --json
   agent-receipt watch --once --agent cursor
+  agent-receipt watch --commits-only --once
   agent-receipt watch --interval 5
   agent-receipt last
   agent-receipt verify

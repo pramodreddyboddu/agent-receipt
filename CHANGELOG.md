@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] — 2026-09-11
+
+### Added
+
+- `watch` dirty-tree detection — auto-capture staged/unstaged/untracked changes
+  (labeled **uncommitted**); `--commits-only` restores v0.4 HEAD-only behavior
+- `capture --uncommitted` — snapshot the dirty working tree explicitly
+- Config `riskAllowlist` — suppress findings by rule id and/or path glob
+  (`code`, `code:pathGlob`, `*:pathGlob`); documented in README
+- Light **high-entropy** token scan on added diff lines (`high-entropy-secret`)
+  to reduce secret false negatives without pulling gitleaks
+- `history --json` — machine-readable receipt list
+- Stable receipt index at `.agent-receipt/index.json` (updated on every capture)
+
+### Changed
+
+- Default `watch` now monitors commits **and** dirty tree
+- Package version bumped to `0.5.0`
+
 ## [0.4.0] — 2026-09-11
 
 ### Added

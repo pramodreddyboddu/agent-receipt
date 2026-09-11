@@ -8,6 +8,11 @@ export interface AgentReceiptConfig {
   fullDiffs: boolean;
   /** Path globs excluded from risk / summary / file tables (noise). */
   ignore: string[];
+  /**
+   * Risk findings to ignore: `code`, `code:pathGlob`, or `*:pathGlob`.
+   * Example: `package-json-change`, `lockfile-change:*.lock`, `*:docs/**`
+   */
+  riskAllowlist: string[];
 }
 
 const DEFAULTS: AgentReceiptConfig = {
@@ -16,6 +21,7 @@ const DEFAULTS: AgentReceiptConfig = {
   defaultCommits: 1,
   fullDiffs: false,
   ignore: ['node_modules/**', 'dist/**', 'coverage/**'],
+  riskAllowlist: [],
 };
 
 const CONFIG_NAME = '.agent-receipt.yml';
@@ -84,7 +90,7 @@ export function parseSimpleYaml(text: string): Record<string, YamlValue> {
     if (val === 'true') out[key] = true;
     else if (val === 'false') out[key] = false;
     else if (/^-?\d+$/.test(val)) out[key] = parseInt(val, 10);
-    else if (val.includes(',') && (key === 'ignore' || key.endsWith('Ignore'))) {
+    else if (val.includes(',') && (key === 'ignore' || key === 'riskAllowlist' || key.endsWith('Ignore'))) {
       out[key] = val.split(',').map((s) => s.trim()).filter(Boolean);
     } else if (val.startsWith('[') && val.endsWith(']')) {
       const inner = val.slice(1, -1).trim();
@@ -117,7 +123,13 @@ function asStringList(v: YamlValue | undefined, fallback: string[]): string[] {
 
 export function loadConfig(cwd: string): AgentReceiptConfig {
   const path = configPath(cwd);
-  if (!existsSync(path)) return { ...DEFAULTS, ignore: [...DEFAULTS.ignore] };
+  if (!existsSync(path)) {
+    return {
+      ...DEFAULTS,
+      ignore: [...DEFAULTS.ignore],
+      riskAllowlist: [...DEFAULTS.riskAllowlist],
+    };
+  }
   const parsed = parseSimpleYaml(readFileSync(path, 'utf8'));
   return {
     outDir: String(parsed.outDir ?? DEFAULTS.outDir),
@@ -129,6 +141,7 @@ export function loadConfig(cwd: string): AgentReceiptConfig {
     fullDiffs:
       typeof parsed.fullDiffs === 'boolean' ? parsed.fullDiffs : DEFAULTS.fullDiffs,
     ignore: asStringList(parsed.ignore, DEFAULTS.ignore),
+    riskAllowlist: asStringList(parsed.riskAllowlist, DEFAULTS.riskAllowlist),
   };
 }
 
@@ -154,6 +167,16 @@ export function validateConfig(cfg: AgentReceiptConfig): string[] {
       }
     }
   }
+  if (!Array.isArray(cfg.riskAllowlist)) {
+    problems.push('riskAllowlist must be a list of strings');
+  } else {
+    for (const g of cfg.riskAllowlist) {
+      if (typeof g !== 'string' || !g.trim()) {
+        problems.push('riskAllowlist entries must be non-empty strings');
+        break;
+      }
+    }
+  }
   return problems;
 }
 
@@ -175,6 +198,13 @@ ignore:
   - node_modules/**
   - dist/**
   - coverage/**
+
+# Risk findings to suppress (code, code:pathGlob, or *:pathGlob).
+# Examples:
+#   - package-json-change
+#   - "lockfile-change:*.lock"
+#   - "*:docs/**"
+riskAllowlist: []
 `;
   writeFileSync(configFile, yaml, 'utf8');
 
