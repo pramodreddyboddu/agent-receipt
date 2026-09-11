@@ -42,7 +42,7 @@ describe('cli fixture', () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('help exits 0 and lists v0.4 commands', () => {
+  it('help exits 0 and lists core commands', () => {
     const out = cli(dir, ['help']);
     assert.match(out, /agent-receipt/);
     assert.match(out, /capture/);
@@ -54,9 +54,9 @@ describe('cli fixture', () => {
     assert.match(out, /watch/);
   });
 
-  it('version is 0.4.0', () => {
+  it('version is 0.5.0', () => {
     const out = cli(dir, ['version']);
-    assert.match(out, /0\.4\.0/);
+    assert.match(out, /0\.5\.0/);
   });
 
   it('init writes config', () => {
@@ -89,7 +89,7 @@ describe('cli fixture', () => {
     assert.match(md, /TL;DR/);
     assert.match(md, /test-bot/);
     assert.match(md, /fixture run/);
-    assert.match(md, /0\.4\.0/);
+    assert.match(md, /0\.5\.0/);
     assert.match(md, /agent-receipt-sha256/);
     const json = JSON.parse(readFileSync(join(dir, 'receipt.json'), 'utf8'));
     assert.ok(json.summary);

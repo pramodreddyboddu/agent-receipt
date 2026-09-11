@@ -9,6 +9,10 @@ import {
   getChangedFiles,
   getFileDiffSummary,
   getCommitLog,
+  getWorkingTreeFiles,
+  getWorkingTreeDiff,
+  isDirty,
+  type FileStat,
 } from '../lib/git.js';
 import {
   analyzeRisks,
@@ -25,6 +29,7 @@ import {
   defaultReceiptFilename,
   type ReceiptData,
 } from '../lib/receipt.js';
+import { updateIndexOnCapture } from '../lib/receipt-index.js';
 import { VERSION } from '../lib/version.js';
 import { color } from '../lib/color.js';
 
@@ -41,12 +46,18 @@ export interface CaptureOptions {
   topRisks?: number;
   /** Exit 2 after writing if max severity meets this threshold. */
   failOn?: FailOnThreshold;
+  /**
+   * Snapshot the dirty working tree (staged + unstaged + untracked) instead of
+   * a commit range. Labeled **uncommitted** on the receipt.
+   */
+  uncommitted?: boolean;
 }
 
 export interface CaptureResult {
   path: string;
   riskSum: RiskSummary;
   failedOn: boolean;
+  uncommitted: boolean;
 }
 
 export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
@@ -60,29 +71,62 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
   const commitsN = opts.commits ?? cfg.defaultCommits;
   const full = opts.full ?? cfg.fullDiffs;
   const agent = opts.agent ?? cfg.defaultAgent;
+  const uncommitted = Boolean(opts.uncommitted);
 
-  const range = resolveRange(cwd, { since: opts.since, commits: commitsN });
-  const allFiles = getChangedFiles(cwd, range.base, range.head);
-  const { kept: files, ignored } = filterIgnored(allFiles, cfg.ignore);
+  let files: FileStat[];
+  let diffs: Record<string, string> = {};
+  let commits: string[] = [];
+  let rangeLabel: string;
+  let base: string;
+  let ignored: FileStat[] = [];
 
-  const diffs: Record<string, string> = {};
-  for (const f of files) {
-    if (f.binary) {
-      diffs[f.path] = '(binary file — content omitted)';
-      continue;
+  if (uncommitted) {
+    if (!isDirty(cwd)) {
+      throw new Error(
+        'Working tree is clean — nothing uncommitted to capture.\n' +
+          'Make edits / stage files, or omit --uncommitted to capture commits.',
+      );
     }
-    diffs[f.path] = getFileDiffSummary(
-      cwd,
-      range.base,
-      range.head,
-      f.path,
-      full,
-    );
+    const allFiles = getWorkingTreeFiles(cwd);
+    const filtered = filterIgnored(allFiles, cfg.ignore);
+    files = filtered.kept;
+    ignored = filtered.ignored;
+    rangeLabel = 'uncommitted (working tree)';
+    base = 'uncommitted';
+    commits = [];
+    for (const f of files) {
+      if (f.binary) {
+        diffs[f.path] = '(binary file — content omitted)';
+        continue;
+      }
+      diffs[f.path] = getWorkingTreeDiff(cwd, f.path, full);
+    }
+  } else {
+    const range = resolveRange(cwd, { since: opts.since, commits: commitsN });
+    const allFiles = getChangedFiles(cwd, range.base, range.head);
+    const filtered = filterIgnored(allFiles, cfg.ignore);
+    files = filtered.kept;
+    ignored = filtered.ignored;
+    rangeLabel = range.label;
+    base = range.base;
+    commits = getCommitLog(cwd, range.base, range.head);
+    for (const f of files) {
+      if (f.binary) {
+        diffs[f.path] = '(binary file — content omitted)';
+        continue;
+      }
+      diffs[f.path] = getFileDiffSummary(
+        cwd,
+        range.base,
+        range.head,
+        f.path,
+        full,
+      );
+    }
   }
 
-  const risks = analyzeRisks(files, diffs);
+  const risks = analyzeRisks(files, diffs, cfg.riskAllowlist);
   const riskSum = summarizeRisks(risks);
-  const commits = getCommitLog(cwd, range.base, range.head);
 
   const data: ReceiptData = {
     version: VERSION,
@@ -90,8 +134,8 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     branch: getBranch(cwd),
     head: getHead(cwd),
     remote: getRemoteUrl(cwd),
-    rangeLabel: range.label,
-    base: range.base,
+    rangeLabel,
+    base,
     agent,
     session: opts.session,
     message: opts.message,
@@ -100,6 +144,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     diffs,
     risks,
     cwd: resolve(cwd),
+    uncommitted,
   };
 
   const markdown = formatMarkdown(data, {
@@ -131,16 +176,48 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
 
   const ins = files.reduce((a, f) => a + f.insertions, 0);
   const del = files.reduce((a, f) => a + f.deletions, 0);
+
+  try {
+    updateIndexOnCapture(cwd, {
+      outPath,
+      timestamp: data.timestamp,
+      agent: data.agent,
+      message: data.message,
+      head: data.head,
+      branch: data.branch,
+      uncommitted,
+      files: files.length,
+      insertions: ins,
+      deletions: del,
+      risks,
+      markdown,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(color.dim(`  (index update skipped: ${msg})`));
+  }
+
   console.log(color.green('✓') + ` Wrote receipt: ${outPath}`);
+  const scope = uncommitted ? 'uncommitted' : rangeLabel;
   console.log(
     `  ${files.length} file(s), +${ins}/−${del}, ${risks.length} risk hint(s)` +
       (riskSum.maxSeverity ? ` [max: ${riskSum.maxSeverity}]` : '') +
-      `, range ${range.label}`,
+      `, range ${scope}`,
   );
+  if (uncommitted) {
+    console.log(color.yellow('  ⚠ Snapshot is uncommitted (working tree, not HEAD).'));
+  }
   if (ignored.length) {
     console.log(
       color.dim(
         `  ignored ${ignored.length} path(s) via config ignore globs (noise)`,
+      ),
+    );
+  }
+  if (cfg.riskAllowlist.length) {
+    console.log(
+      color.dim(
+        `  riskAllowlist active (${cfg.riskAllowlist.length} rule(s))`,
       ),
     );
   }
@@ -163,5 +240,5 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     );
   }
 
-  return { path: outPath, riskSum, failedOn };
+  return { path: outPath, riskSum, failedOn, uncommitted };
 }

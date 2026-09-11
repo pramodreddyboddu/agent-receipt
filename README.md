@@ -54,10 +54,11 @@ Wait for the **next** commit, capture once, exit — the Cursor / agent
 agent-receipt watch --once --interval 2 --agent cursor --message "session wrap-up"
 ```
 
-Leave a terminal running during a long session:
+Leave a terminal running during a long session (commits **and** dirty tree):
 
 ```bash
 agent-receipt watch --interval 5 --agent cursor
+# HEAD-only (v0.4): agent-receipt watch --commits-only --interval 5
 ```
 
 Example receipt: [`examples/sample-receipt.md`](examples/sample-receipt.md).
@@ -81,8 +82,8 @@ npm install -D agent-receipt
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON) |
 | `show [path]` | Pretty-print last / given receipt (full body) |
 | `last` | Path + glance of the most recent receipt |
-| `history` / `ls` | List recent receipts: time, agent, risk, short summary |
-| `watch` | Poll git HEAD; auto-capture on new commits (`--once`, `--interval`) |
+| `history` / `ls` | List recent receipts (`--json`; index at `.agent-receipt/index.json`) |
+| `watch` | Poll git; auto-capture on commits **or dirty tree** (`--once`, `--commits-only`) |
 | `verify [path]` | Hash-check tamper-evident integrity |
 | `doctor` | Health check: git, repo, hooks, config, Node |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
@@ -95,6 +96,7 @@ npm install -D agent-receipt
 agent-receipt help watch
 agent-receipt help capture
 agent-receipt history
+agent-receipt history --json --limit 5
 agent-receipt ls --limit 5
 ```
 
@@ -104,6 +106,7 @@ agent-receipt ls --limit 5
 |------|-------------|
 | `--since <ref>` | Diff from ref (e.g. `main`, `HEAD~5`) |
 | `--commits <N>` | Last N commits (default: config / 1) |
+| `--uncommitted` | Snapshot dirty working tree (labeled **uncommitted**) |
 | `--message <text>` | Session message |
 | `--agent <name>` | Agent label |
 | `--session <id>` | Session / run id label |
@@ -120,12 +123,25 @@ agent-receipt ls --limit 5
 | Flag | Description |
 |------|-------------|
 | `--interval <sec>` | Poll interval (default **5**, min 1, max 3600) |
-| `--once` | Wait for the next HEAD change, capture, exit |
+| `--once` | Wait for the next change (commit **or** dirty tree), capture, exit |
+| `--commits-only` | Restore v0.4 behavior: only watch HEAD commits |
 | `--agent` / `--message` | Passed through to capture |
 | `--fail-on …` | With `--once`, exit 2 when the threshold is met |
 
+By default watch detects **dirty trees** (staged / unstaged / untracked) as well
+as new commits. Dirty captures are labeled **uncommitted** on the receipt.
+
+```bash
+# Try dirty watch (edit a file, wait one poll):
+agent-receipt watch --once --interval 2 --agent cursor --message "dirty wrap-up"
+
+# Old HEAD-only behavior:
+agent-receipt watch --commits-only --once --interval 2
+```
+
 When HEAD moves `A → B`, watch captures `--since A` so every commit in the
-interval is in the receipt.
+interval is in the receipt. When only the working tree changes, it captures
+with `--uncommitted`.
 
 ## What a receipt includes
 
@@ -139,8 +155,10 @@ interval is in the receipt.
 - Files changed with insertions / deletions / binary flag
 - Per-file diff summary (`--full` for complete diffs)
 - **Risk findings** table, severity-sorted: `.env` commits, AWS keys in diffs,
-  private key blocks, secret-looking paths, lockfile / CI deletions, …
+  private key blocks, high-entropy tokens, secret-looking paths, lockfile / CI deletions, …
+- Optional **uncommitted** snapshot (dirty working tree)
 - SHA-256 integrity footer (tamper-evident)
+- Stable index at `.agent-receipt/index.json` (updated on every capture)
 
 Noise paths (`node_modules/**`, `dist/**`, `coverage/**` by default) are
 excluded from risk / summary / file tables via config `ignore` globs.
@@ -202,6 +220,32 @@ ignore:
   # optional lockfile noise:
   # - "*.lock"
   # - package-lock.json
+
+# Suppress specific risk findings (code, code:pathGlob, or *:pathGlob)
+riskAllowlist:
+  # - package-json-change
+  # - "lockfile-change:*.lock"
+  # - "*:docs/**"
+```
+
+### Risk allowlist
+
+`riskAllowlist` entries suppress matching findings after analysis:
+
+| Entry | Meaning |
+|-------|---------|
+| `package-json-change` | Ignore that rule everywhere |
+| `lockfile-change:*.lock` | Ignore that rule only on matching paths |
+| `*:docs/**` | Ignore **all** risk codes under `docs/` |
+
+```bash
+# Example: ignore noisy package.json bumps, still catch secrets
+cat >> .agent-receipt.yml <<'YAML'
+riskAllowlist:
+  - package-json-change
+  - "lockfile-change:package-lock.json"
+YAML
+agent-receipt capture --commits 1
 ```
 
 ## Integrity model

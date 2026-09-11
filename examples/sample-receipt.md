@@ -19,7 +19,7 @@ _Nothing flagged. Skim the file list if this session should have been a no-op._
 
 ## Session
 
-- **Version**: 0.4.0
+- **Version**: 0.5.0
 - **Timestamp**: 2026-09-11T19:52:00.000Z
 - **Branch**: `main`
 - **HEAD**: `b232a251f710a340884d7a9c0b5ffc09f51f6c64`

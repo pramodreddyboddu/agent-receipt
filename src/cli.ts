@@ -58,6 +58,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           diffStat: noDiffStat ? false : undefined,
           topRisks: flagNumber(flags, 'top-risks'),
           failOn,
+          uncommitted: flagBool(flags, 'uncommitted'),
         });
         return result.failedOn ? 2 : 0;
       }
@@ -69,7 +70,10 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         return 0;
       case 'history':
       case 'ls':
-        return cmdHistory(cwd, { limit: flagNumber(flags, 'limit') });
+        return cmdHistory(cwd, {
+          limit: flagNumber(flags, 'limit'),
+          json: flagBool(flags, 'json'),
+        });
       case 'watch': {
         const failOn = parseFailOn(
           flags['fail-on'] === undefined ? undefined : flags['fail-on'],
@@ -81,6 +85,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           message: flagString(flags, 'message', 'm'),
           failOn,
           json: flagBool(flags, 'json'),
+          commitsOnly: flagBool(flags, 'commits-only'),
         });
       }
       case 'verify': {
