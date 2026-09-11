@@ -1,6 +1,17 @@
 # Agent Receipt
 
-- **Version**: 0.1.0
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Files | 2 (1M 1A) |
+| Lines | +3 / −0 |
+| Commits | 1 |
+| Risk | none |
+
+## Session
+
+- **Version**: 0.2.0
 - **Timestamp**: 2026-09-11T19:05:12.903Z
 - **Branch**: `main`
 - **HEAD**: `b232a251f710a340884d7a9c0b5ffc09f51f6c64`
@@ -22,7 +33,15 @@
 
 **Totals**: 2 files, +3 / −0
 
-## Risk hints
+## Diff stat
+
+```
+README.md | M    2    0 ++
+src.ts    | A    1    0 +
+2 files changed, 3 insertions(+), 0 deletions(-)
+```
+
+## Risk findings
 
 _None detected._
 
@@ -55,6 +74,6 @@ index 0000000..09b76aa
 
 ## Integrity
 
-<!-- agent-receipt-sha256:90d74145579d3c7aa3fbe5a2e4f58082b056f2162c8bafa67039eb167f76d88d -->
+<!-- agent-receipt-sha256:d9418db1a0d4f38aa348232dd166730040bc7c31723af74fe6acfb077e591d5a -->
 
-SHA-256 of canonical body: `90d74145579d3c7aa3fbe5a2e4f58082b056f2162c8bafa67039eb167f76d88d`
+SHA-256 of canonical body: `d9418db1a0d4f38aa348232dd166730040bc7c31723af74fe6acfb077e591d5a`

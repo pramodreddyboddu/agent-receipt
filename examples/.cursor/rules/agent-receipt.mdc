@@ -1,0 +1,22 @@
+---
+description: Capture an agent-receipt after sessions that change git state
+globs:
+alwaysApply: false
+---
+
+# agent-receipt
+
+When you finish a substantive coding session that modified tracked files,
+remind the user (or run, if they asked) to capture a receipt:
+
+```bash
+npx agent-receipt capture --agent cursor --message "<one-line summary of what changed>"
+```
+
+Until the package is on the public npm registry:
+
+```bash
+npx github:pramodreddyboddu/agent-receipt -- capture --agent cursor -m "<summary>"
+```
+
+Do not commit secrets. Prefer `agent-receipt last` / `verify` when auditing.

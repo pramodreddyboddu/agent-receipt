@@ -16,5 +16,6 @@ export function cmdVerify(cwd: string, pathArg?: string): boolean {
   console.error('✗ FAIL — ' + result.reason);
   if (result.expected) console.error(`  expected: ${result.expected}`);
   console.error(`  actual:   ${result.actual}`);
+  console.error('The Markdown body no longer matches the embedded hash.');
   return false;
 }

@@ -10,7 +10,7 @@ import {
   getFileDiffSummary,
   getCommitLog,
 } from '../lib/git.js';
-import { analyzeRisks } from '../lib/risk.js';
+import { analyzeRisks, summarizeRisks } from '../lib/risk.js';
 import { loadConfig, ensureOutDir } from '../lib/config.js';
 import {
   formatMarkdown,
@@ -18,6 +18,8 @@ import {
   defaultReceiptFilename,
   type ReceiptData,
 } from '../lib/receipt.js';
+import { VERSION } from '../lib/version.js';
+import { color } from '../lib/color.js';
 
 export interface CaptureOptions {
   since?: string;
@@ -32,7 +34,9 @@ export interface CaptureOptions {
 
 export function cmdCapture(cwd: string, opts: CaptureOptions): string {
   if (!isGitRepo(cwd)) {
-    throw new Error('Not a git repository. Run inside a git repo or git init first.');
+    throw new Error(
+      'Not a git repository. Run inside a git repo, or pass --cwd <path> to one.',
+    );
   }
 
   const cfg = loadConfig(cwd);
@@ -43,6 +47,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): string {
   const range = resolveRange(cwd, { since: opts.since, commits: commitsN });
   const files = getChangedFiles(cwd, range.base, range.head);
   const risks = analyzeRisks(files);
+  const riskSum = summarizeRisks(risks);
   const commits = getCommitLog(cwd, range.base, range.head);
 
   const diffs: Record<string, string> = {};
@@ -61,7 +66,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): string {
   }
 
   const data: ReceiptData = {
-    version: '0.1.0',
+    version: VERSION,
     timestamp: new Date().toISOString(),
     branch: getBranch(cwd),
     head: getHead(cwd),
@@ -78,7 +83,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): string {
     cwd: resolve(cwd),
   };
 
-  const markdown = formatMarkdown(data, full);
+  const markdown = formatMarkdown(data, { full, diffStat: true });
 
   let outPath: string;
   if (opts.out) {
@@ -98,12 +103,23 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): string {
       JSON.stringify(formatJson(data, markdown), null, 2) + '\n',
       'utf8',
     );
-    console.log(`Wrote JSON: ${jsonPath}`);
+    console.log(color.dim(`Wrote JSON:    ${jsonPath}`));
   }
 
-  console.log(`Wrote receipt: ${outPath}`);
+  const ins = files.reduce((a, f) => a + f.insertions, 0);
+  const del = files.reduce((a, f) => a + f.deletions, 0);
+  console.log(color.green('✓') + ` Wrote receipt: ${outPath}`);
   console.log(
-    `  ${files.length} files, ${risks.length} risk hint(s), range ${range.label}`,
+    `  ${files.length} file(s), +${ins}/−${del}, ${risks.length} risk hint(s)` +
+      (riskSum.maxSeverity ? ` [max: ${riskSum.maxSeverity}]` : '') +
+      `, range ${range.label}`,
   );
+  if (riskSum.high > 0) {
+    console.log(
+      color.yellow(
+        `  ⚠ ${riskSum.high} high-severity risk hint(s) — review before trusting this session.`,
+      ),
+    );
+  }
   return outPath;
 }

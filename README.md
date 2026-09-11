@@ -7,6 +7,23 @@ Markdown receipt with an embedded SHA-256 integrity footer. Verify later that
 nobody edited the receipt.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/agent-receipt.svg)](https://www.npmjs.com/package/agent-receipt)
+
+## Install
+
+```bash
+# one-shot
+npx agent-receipt help
+
+# global
+npm install -g agent-receipt
+agent-receipt help
+
+# or project-local
+npm install -D agent-receipt
+```
+
+Requires **Node.js ≥ 20** and `git` on `PATH`.
 
 ## 30-second quickstart
 
@@ -14,15 +31,9 @@ nobody edited the receipt.
 # from any git repo
 npx agent-receipt init
 npx agent-receipt capture --agent cursor --message "refactor auth helpers"
+npx agent-receipt last
 npx agent-receipt show
 npx agent-receipt verify
-```
-
-Or install globally / locally:
-
-```bash
-npm install -g agent-receipt
-agent-receipt help
 ```
 
 ## Commands
@@ -31,8 +42,11 @@ agent-receipt help
 |---------|---------|
 | `init` | Write `.agent-receipt.yml` + short setup notes |
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON) |
-| `show [path]` | Pretty-print last / given receipt |
+| `show [path]` | Pretty-print last / given receipt (full body) |
+| `last` | Path + glance of the most recent receipt |
 | `verify [path]` | Hash-check tamper-evident integrity |
+| `install-hooks` | Opt-in post-commit auto-capture (`--pre-push` optional) |
+| `uninstall-hooks` | Remove managed hook sections |
 
 ### `capture` flags
 
@@ -48,16 +62,31 @@ agent-receipt help
 | `--json` | Also write companion `.json` |
 | `--cwd <path>` | Run as if started in this directory (global) |
 
+### `last` / hooks
+
+```bash
+agent-receipt last              # path + summary glance
+agent-receipt last --path       # path only (scripting)
+agent-receipt install-hooks     # post-commit capture
+agent-receipt install-hooks --pre-push
+agent-receipt uninstall-hooks
+```
+
 ## What a receipt includes
 
-- Timestamp, branch, HEAD, optional agent / message
+- **Summary rollup** — files, line +/- totals, risk counts / max severity
+- **Notable changes** — package / lockfile / CI workflow highlights
+- **Diff stat** — compact git-style overview
+- Timestamp, branch, HEAD, optional agent / message / session
 - Commit list for the range
 - Files changed with insertions / deletions / binary flag
 - Per-file diff summary (`--full` for complete diffs)
-- Risk hints: secret-looking paths, large binaries, lockfile / CI deletions
+- **Risk findings** table: secret-looking paths, auth paths, dependency
+  manifests, large diffs, binaries, lockfile / CI deletions, broad change sets
 - SHA-256 integrity footer (tamper-evident)
 
-See [`examples/sample-receipt.md`](examples/sample-receipt.md).
+See [`examples/sample-receipt.md`](examples/sample-receipt.md),
+[`docs/agents.md`](docs/agents.md), and short recipes under [`examples/`](examples/).
 
 ## Config (`.agent-receipt.yml`)
 
@@ -70,8 +99,9 @@ fullDiffs: false
 
 ## Outside a git repo
 
-`capture` exits non-zero with a clear error if the working directory is not a
-git repository. Point `--cwd` at a repo when invoking from elsewhere.
+`capture` and hook commands exit non-zero with a clear error if the working
+directory is not a git repository. Point `--cwd` at a repo when invoking from
+elsewhere.
 
 ## Integrity model
 
@@ -91,8 +121,6 @@ npm install
 npm test
 node bin/agent-receipt.js help
 ```
-
-Requires Node.js ≥ 20 and `git` on `PATH`.
 
 ## License
 

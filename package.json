@@ -1,18 +1,23 @@
 {
   "name": "agent-receipt",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Human-readable, tamper-evident git snapshot receipts for AI coding agent sessions",
   "type": "module",
   "bin": {
     "agent-receipt": "./bin/agent-receipt.js"
   },
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "files": [
     "bin",
     "dist",
+    "docs",
     "examples",
     "README.md",
     "LICENSE",
@@ -35,7 +40,10 @@
     "receipt",
     "audit",
     "tamper-evident",
-    "ai"
+    "ai",
+    "cursor",
+    "claude",
+    "aider"
   ],
   "author": "Pramod Reddy Boddu",
   "license": "MIT",

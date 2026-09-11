@@ -3,14 +3,20 @@ import { join } from 'node:path';
 import { loadConfig } from '../lib/config.js';
 import { extractEmbeddedHash } from '../lib/hash.js';
 
-function findLatestReceipt(cwd: string): string | null {
+export function findLatestReceipt(cwd: string): string | null {
   const cfg = loadConfig(cwd);
   const dir = join(cwd, cfg.outDir);
   if (!existsSync(dir)) return null;
   const files = readdirSync(dir)
     .filter((f) => f.endsWith('.md'))
     .map((f) => join(dir, f))
-    .filter((p) => statSync(p).isFile())
+    .filter((p) => {
+      try {
+        return statSync(p).isFile();
+      } catch {
+        return false;
+      }
+    })
     .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
   return files[0] ?? null;
 }
@@ -18,13 +24,18 @@ function findLatestReceipt(cwd: string): string | null {
 export function resolveReceiptPath(cwd: string, pathArg?: string): string {
   if (pathArg) {
     const p = pathArg.startsWith('/') ? pathArg : join(cwd, pathArg);
-    if (!existsSync(p)) throw new Error(`Receipt not found: ${p}`);
+    if (!existsSync(p)) {
+      throw new Error(
+        `Receipt not found: ${p}\nRun \`agent-receipt last\` to see the newest receipt, or \`capture\` first.`,
+      );
+    }
     return p;
   }
   const latest = findLatestReceipt(cwd);
   if (!latest) {
     throw new Error(
-      'No receipt found. Pass a path or run `agent-receipt capture` first.',
+      'No receipt found under the configured outDir.\n' +
+        'Run `agent-receipt capture` first, or pass an explicit path.',
     );
   }
   return latest;

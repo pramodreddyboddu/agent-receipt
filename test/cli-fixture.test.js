@@ -42,10 +42,17 @@ describe('cli fixture', () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('help exits 0', () => {
+  it('help exits 0 and lists v0.2 commands', () => {
     const out = cli(dir, ['help']);
     assert.match(out, /agent-receipt/);
     assert.match(out, /capture/);
+    assert.match(out, /last/);
+    assert.match(out, /install-hooks/);
+  });
+
+  it('version is 0.2.0', () => {
+    const out = cli(dir, ['version']);
+    assert.match(out, /0\.2\.0/);
   });
 
   it('init writes config', () => {
@@ -55,7 +62,7 @@ describe('cli fixture', () => {
     assert.ok(existsSync(join(dir, '.agent-receipt', 'SETUP.md')));
   });
 
-  it('capture + verify roundtrip', () => {
+  it('capture + verify roundtrip with summary', () => {
     const out = cli(dir, [
       'capture',
       '--commits',
@@ -73,9 +80,14 @@ describe('cli fixture', () => {
     assert.ok(existsSync(join(dir, 'receipt.json')));
     const md = readFileSync(join(dir, 'receipt.md'), 'utf8');
     assert.match(md, /Agent Receipt/);
+    assert.match(md, /## Summary/);
     assert.match(md, /test-bot/);
     assert.match(md, /fixture run/);
+    assert.match(md, /0\.2\.0/);
     assert.match(md, /agent-receipt-sha256/);
+    const json = JSON.parse(readFileSync(join(dir, 'receipt.json'), 'utf8'));
+    assert.ok(json.summary);
+    assert.equal(typeof json.summary.files, 'number');
     const v = cli(dir, ['verify', 'receipt.md']);
     assert.match(v, /OK/);
   });
@@ -83,6 +95,39 @@ describe('cli fixture', () => {
   it('show prints receipt', () => {
     const out = cli(dir, ['show', 'receipt.md']);
     assert.match(out, /Agent Receipt/);
+  });
+
+  it('last reports newest receipt under outDir', () => {
+    // seed default outDir receipt
+    cli(dir, [
+      'capture',
+      '--commits',
+      '1',
+      '--agent',
+      'last-bot',
+      '--message',
+      'for last',
+    ]);
+    const out = cli(dir, ['last']);
+    assert.match(out, /latest:/);
+    assert.match(out, /\.agent-receipt\/receipts\/receipt-/);
+    const pathOnly = cli(dir, ['last', '--path']).trim();
+    assert.ok(pathOnly.endsWith('.md'));
+    assert.ok(existsSync(pathOnly));
+  });
+
+  it('install-hooks installs and uninstall-hooks removes post-commit hook', () => {
+    const out = cli(dir, ['install-hooks']);
+    assert.match(out, /post-commit hook (created|updated)/);
+    const gitDir = git(dir, ['rev-parse', '--git-dir']);
+    const hookPath = join(dir, gitDir, 'hooks', 'post-commit');
+    assert.ok(existsSync(hookPath));
+    const hook = readFileSync(hookPath, 'utf8');
+    assert.match(hook, /agent-receipt/);
+    assert.match(hook, /capture/);
+
+    const out2 = cli(dir, ['uninstall-hooks']);
+    assert.match(out2, /removed/i);
   });
 
   it('fails cleanly outside a git repo', () => {
@@ -119,5 +164,17 @@ describe('cli fixture', () => {
     const md = readFileSync(join(dir, 'session-receipt.md'), 'utf8');
     assert.match(md, /sess-99/);
     assert.match(md, /cursor/);
+    assert.match(md, /## Summary/);
+  });
+
+  it('unknown command exits non-zero', () => {
+    let failed = false;
+    try {
+      cli(dir, ['not-a-command']);
+    } catch (err) {
+      failed = true;
+      assert.match(String(err.stderr || err.message || err), /Unknown command/i);
+    }
+    assert.equal(failed, true);
   });
 });

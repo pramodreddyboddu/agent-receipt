@@ -84,15 +84,24 @@ fullDiffs: false
 
    \`\`\`bash
    npx agent-receipt capture --agent claude --message "refactor auth"
+   npx agent-receipt last
    \`\`\`
 
-4. Verify integrity later:
+4. Optional: auto-capture on every commit (safe, uninstallable):
+
+   \`\`\`bash
+   npx agent-receipt install-hooks
+   \`\`\`
+
+5. Verify integrity later:
 
    \`\`\`bash
    npx agent-receipt verify
    \`\`\`
 
-5. Add \`.agent-receipt/receipts/\` to git if you want receipts committed,
+6. Agent-specific tips: see \`docs/agents.md\` in the package / repo.
+
+7. Add \`.agent-receipt/receipts/\` to git if you want receipts committed,
    or keep them local / artifact-only.
 `;
   writeFileSync(notesFile, notes, 'utf8');

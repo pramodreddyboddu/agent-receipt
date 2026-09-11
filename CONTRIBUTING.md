@@ -14,13 +14,14 @@ Thanks for helping improve `agent-receipt`.
 - Prefer small, focused PRs with tests for new behavior.
 - Match existing TypeScript ESM style (`NodeNext`).
 - Do not commit secrets, `.env`, or real production receipts with sensitive diffs.
+- Keep `src/lib/version.ts` in sync with `package.json` version.
 
 ## Release checklist
 
-- Bump `version` in `package.json`
+- Bump `version` in `package.json` **and** `src/lib/version.ts`
 - Update `CHANGELOG.md`
 - `npm test`
-- Tag and publish (maintainers)
+- Tag and publish (maintainers) — do not publish unless explicitly requested
 
 ## CI workflow
 
@@ -28,6 +29,5 @@ The GitHub Actions workflow lives at [`docs/github-actions-ci.yml`](docs/github-
 (Node 20/22, `npm run build` + `npm test`).
 
 Copy it to `.github/workflows/ci.yml` with a token that has the `workflow` OAuth
-scope (or via the GitHub UI), then commit — the current OAuth token cannot push
+scope (or via the GitHub UI), then commit — some OAuth tokens cannot push
 workflow files.
-
