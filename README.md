@@ -25,6 +25,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 - You want **history** of recent agent sessions, not only `git log`
 - You want **hooks / `watch`** so capture is not a forgotten extra step
 - You want CI to **fail on high-severity** findings (`--fail-on high`)
+- You want a **one-shot wrap** at session end, or an **HTML export** you can share
 
 ## 60-second best path
 
@@ -39,8 +40,12 @@ agent-receipt init --cursor     # config + Cursor rule that actually runs captur
 agent-receipt install-hooks     # optional: auto-capture on every commit
 agent-receipt doctor
 
-# After an agent session (or let the Cursor rule / hook do it):
-agent-receipt capture --agent cursor --message "what changed"
+# After an agent session — one shot (dirty → --uncommitted, then verify):
+agent-receipt wrap --agent cursor --message "what changed"
+
+# Or capture explicitly (e.g. vs main on a PR branch):
+agent-receipt capture --base main --agent cursor --message "PR work"
+agent-receipt export --redact --out share.html   # self-contained HTML to open/share
 
 agent-receipt history           # time, agent, risk, summary (+ [uncommitted] badge)
 agent-receipt last              # glance the newest
@@ -80,6 +85,8 @@ npm install -D agent-receipt
 |---------|---------|
 | `init [--cursor]` | Write `.agent-receipt.yml` + notes; `--cursor` drops the Cursor rule |
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON) |
+| `wrap` | End of session: capture (+ `--uncommitted` if dirty) → TL;DR + path → verify |
+| `export` / `html` | Self-contained HTML receipt (or export last); `--out`, `--redact` |
 | `show [path]` | Pretty-print last / given receipt (full body) |
 | `last` | Path + glance of the most recent receipt |
 | `history` / `ls` | List recent receipts (`--json`; `[uncommitted]` badge; index at `.agent-receipt/index.json`) |
@@ -93,17 +100,20 @@ npm install -D agent-receipt
 | `help [cmd]` | Global help, or man-page style help for a command |
 
 ```bash
-agent-receipt help watch
+agent-receipt help wrap
 agent-receipt help capture
+agent-receipt wrap --agent cursor --message "done"
 agent-receipt history
 agent-receipt history --json --limit 5
 agent-receipt ls --limit 5
+agent-receipt html --redact --out share.html
 ```
 
 ### `capture` flags
 
 | Flag | Description |
 |------|-------------|
+| `--base <ref>` | Changes vs a base branch/ref (e.g. `main`); receipt shows **commits ahead** + file stats |
 | `--since <ref>` | Diff from ref (e.g. `main`, `HEAD~5`) |
 | `--commits <N>` | Last N commits (default: config / 1) |
 | `--uncommitted` | Snapshot dirty working tree (labeled **uncommitted**) |
@@ -115,8 +125,62 @@ agent-receipt ls --limit 5
 | `--json` | Also write companion `.json` |
 | `--diff-stat` / `--no-diff-stat` | Diff-stat overview (default on) |
 | `--top-risks <N>` | Max risk rows in findings table (default 20) |
+| `--redact` | Mask high/secret findings for safer sharing (re-hashed) |
 | `--fail-on [high\|medium\|low]` | Exit 2 after writing if max severity meets threshold. Bare `--fail-on` = high. For CI scripts. |
 | `--cwd <path>` | Run as if started in this directory (global) |
+
+
+### `wrap` (end of session)
+
+One shot for the end of an agent session:
+
+1. If the tree is **dirty** and `--base` is not set → `capture --uncommitted`
+2. Else → `capture` (with `--base <ref>` when provided)
+3. Print **TL;DR** + receipt path
+4. `verify`
+
+```bash
+agent-receipt wrap --agent cursor --message "session done"
+agent-receipt wrap --agent cursor --base main --fail-on high
+```
+
+Flags: `--agent`, `--message`, `--fail-on`, `--base`, `--redact`, `--uncommitted`, `--json`, `--full`.
+
+### `export` / `html` (shareable receipt)
+
+Write a **self-contained HTML** file (or Markdown) people can open in a browser
+or attach to a PR / chat. Defaults to the newest receipt; pass a path to export
+a specific one.
+
+```bash
+agent-receipt export                         # → sibling .html next to last receipt
+agent-receipt html --out session.html
+agent-receipt export --redact --out share.html
+agent-receipt export receipt.md --format markdown --redact --out safe.md
+```
+
+### `--base` vs last N commits
+
+On a feature branch, summarize everything since `main` (commits ahead + files):
+
+```bash
+agent-receipt capture --base main --agent cursor --message "PR vs main"
+# Range label looks like: "5 commits ahead of main"
+```
+
+`--since main` still works for the same diff range with a classic `main..HEAD` label.
+
+### `--redact` (safer sharing)
+
+Masks high-signal secrets (AWS keys, GitHub/Slack tokens, private key blocks,
+secret assignment values) and high/secret risk detail in Markdown/HTML, then
+**re-hashes** so `verify` still passes on the redacted artifact.
+
+```bash
+agent-receipt capture --redact --out share.md
+agent-receipt wrap --redact --agent cursor
+agent-receipt html --redact --out share.html
+```
 
 ### `watch` flags
 
@@ -157,7 +221,10 @@ with `--uncommitted`.
 - **Risk findings** table, severity-sorted: `.env` commits, AWS keys in diffs,
   private key blocks, high-entropy tokens, secret-looking paths, lockfile / CI deletions, …
 - Optional **uncommitted** snapshot (dirty working tree)
+- Optional **`--base`** range (“N commits ahead of main”)
+- Optional **redacted** sharing mode (`--redact`)
 - SHA-256 integrity footer (tamper-evident)
+- Optional **HTML export** (`export` / `html`) for open/share
 - Stable index at `.agent-receipt/index.json` (updated on every capture)
 
 Noise paths (`node_modules/**`, `dist/**`, `coverage/**` by default) are
