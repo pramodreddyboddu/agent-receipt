@@ -83,7 +83,7 @@ if push/PR is rejected for workflow scope, leave docs-only and note it on the PR
 ## Post-release smoke
 
 ```bash
-npm i -g @pramodreddyboddu/agent-receipt@1.0.1   # or github:…#v1.0.1
+npm i -g @pramodreddyboddu/agent-receipt@1.0.2   # or github:…#v1.0.1
 cd $(mktemp -d) && git init
 echo hi > README.md && git add . && git commit -m init
 agent-receipt init
