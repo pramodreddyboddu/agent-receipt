@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.0.2
+
+- Republish after 1.0.1 version was reserved/yanked on npm (installs 404'd; same version cannot be restaged).
+- Keep scoped name `@pramodreddyboddu/agent-receipt`.
+
 ## [1.0.1] — 2026-09-11
 
 ### Changed
