@@ -7,6 +7,7 @@ export function runGit(args: string[], cwd: string): string {
     return execFileSync('git', args, {
       cwd,
       encoding: 'utf8',
+      shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
       maxBuffer: 32 * 1024 * 1024,
     }).trim();

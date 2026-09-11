@@ -24,6 +24,7 @@ export interface CaptureOptions {
   commits?: number;
   message?: string;
   agent?: string;
+  session?: string;
   out?: string;
   full?: boolean;
   json?: boolean;
@@ -68,6 +69,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): string {
     rangeLabel: range.label,
     base: range.base,
     agent,
+    session: opts.session,
     message: opts.message,
     commits,
     files,

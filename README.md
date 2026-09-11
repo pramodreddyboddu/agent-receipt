@@ -6,7 +6,6 @@ Capture what an agent changed (branch, HEAD, files, diffs, risk hints) into a
 Markdown receipt with an embedded SHA-256 integrity footer. Verify later that
 nobody edited the receipt.
 
-[![CI](https://github.com/pramodreddyboddu/agent-receipt/actions/workflows/ci.yml/badge.svg)](https://github.com/pramodreddyboddu/agent-receipt/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## 30-second quickstart

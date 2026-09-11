@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { parseArgs, flagString, flagBool, flagNumber } from './lib/args.js';
 import { cmdInit } from './commands/init.js';
 import { cmdCapture } from './commands/capture.js';
@@ -17,11 +18,15 @@ Commands:
   help                 Show this help
   version              Show version
 
+Global options:
+  --cwd <path>         Run as if started in this directory
+
 capture options:
   --since <ref>        Diff range start (e.g. main, HEAD~5, abc123)
   --commits <N>        Last N commits (default: config or 1)
   --message <text>     Human/agent session message
   --agent <name>       Agent label (default: config or "agent")
+  --session <id>       Session / run id label
   --out <path>         Output Markdown path
   --full               Include full diffs (no truncation)
   --json               Also write companion .json
@@ -29,14 +34,16 @@ capture options:
 Examples:
   agent-receipt init
   agent-receipt capture --agent cursor --message "ship v0.1"
-  agent-receipt capture --since main --full --json
+  agent-receipt capture --since main --full --json --session s-42
+  agent-receipt capture --cwd ../other-repo --out receipt.md
   agent-receipt show
   agent-receipt verify .agent-receipt/receipts/receipt-....md
 `;
 
 export function run(argv: string[] = process.argv): number {
   const { command, positional, flags } = parseArgs(argv);
-  const cwd = process.cwd();
+  const cwdFlag = flagString(flags, 'cwd');
+  const cwd = cwdFlag ? resolve(cwdFlag) : process.cwd();
 
   if (flagBool(flags, 'help', 'h') || command === 'help') {
     console.log(HELP);
@@ -58,6 +65,7 @@ export function run(argv: string[] = process.argv): number {
           commits: flagNumber(flags, 'commits'),
           message: flagString(flags, 'message', 'm'),
           agent: flagString(flags, 'agent', 'a'),
+          session: flagString(flags, 'session'),
           out: flagString(flags, 'out', 'o'),
           full: flagBool(flags, 'full'),
           json: flagBool(flags, 'json'),

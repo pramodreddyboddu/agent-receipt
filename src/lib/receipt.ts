@@ -11,6 +11,7 @@ export interface ReceiptData {
   rangeLabel: string;
   base: string;
   agent?: string;
+  session?: string;
   message?: string;
   commits: string[];
   files: FileStat[];
@@ -30,6 +31,7 @@ export function formatMarkdown(data: ReceiptData, full: boolean): string {
   if (data.remote) lines.push(`- **Remote**: ${data.remote}`);
   lines.push(`- **Range**: \`${data.rangeLabel}\` (\`${data.base.slice(0, 12)}\` → HEAD)`);
   if (data.agent) lines.push(`- **Agent**: ${data.agent}`);
+  if (data.session) lines.push(`- **Session**: ${data.session}`);
   if (data.message) lines.push(`- **Message**: ${data.message}`);
   lines.push(`- **Workspace**: \`${data.cwd}\``);
   lines.push('');
@@ -105,6 +107,7 @@ export function formatJson(data: ReceiptData, markdown: string): object {
     remote: data.remote,
     range: { label: data.rangeLabel, base: data.base, head: data.head },
     agent: data.agent ?? null,
+    session: data.session ?? null,
     message: data.message ?? null,
     workspace: data.cwd,
     commits: data.commits,

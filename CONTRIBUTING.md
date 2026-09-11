@@ -21,3 +21,9 @@ Thanks for helping improve `agent-receipt`.
 - Update `CHANGELOG.md`
 - `npm test`
 - Tag and publish (maintainers)
+
+## CI workflow
+
+The GitHub Actions workflow lives at [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml).
+Copy it to `.github/workflows/ci.yml` with a token that has the `workflow` scope
+(or via the GitHub UI), then commit.
