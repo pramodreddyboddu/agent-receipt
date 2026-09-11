@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] — 2026-09-11
+
+### Added
+
+- Text `history` / `ls` shows a yellow **`[uncommitted]`** badge on dirty-tree
+  receipts (same `uncommitted` field already present in `history --json` / index)
+
+### Changed
+
+- Text history prefers `.agent-receipt/index.json` (like `--json`) so the badge
+  and risk counts stay consistent with the index
+- Package version bumped to `0.5.1`
+
 ## [0.5.0] — 2026-09-11
 
 ### Added
