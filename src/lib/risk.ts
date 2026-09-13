@@ -193,8 +193,19 @@ const ENTROPY_MIN_LEN = 32;
 const ENTROPY_SKIP_RE =
   /^(?:https?:|node_modules|sha256|sha512|checksum)/i;
 
+/** Receipt / index artifacts often embed SHA-256 footers — skip entropy noise. */
+function isReceiptArtifactPath(path: string): boolean {
+  const n = path.replace(/\\/g, '/');
+  return /(^|\/)\.agent-receipt\//i.test(n);
+}
+
+/** Pure hex digests (git / sha256 footers) — not live secrets. */
+const HEX_DIGEST_RE = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
+
 function scanHighEntropy(path: string, diff: string, hints: RiskHint[]): void {
   if (!diff) return;
+  // Nested receipt/index bodies re-list integrity hashes — not actionable secrets
+  if (isReceiptArtifactPath(path)) return;
   // Only scan added lines to cut noise from context
   const added = diff
     .split('\n')
@@ -207,6 +218,7 @@ function scanHighEntropy(path: string, diff: string, hints: RiskHint[]): void {
     const token = m[0];
     if (token.length < ENTROPY_MIN_LEN) continue;
     if (ENTROPY_SKIP_RE.test(token)) continue;
+    if (HEX_DIGEST_RE.test(token)) continue;
     // Require mixed alphabet (not all same char / trivial)
     const uniq = new Set(token).size;
     if (uniq < 10) continue;

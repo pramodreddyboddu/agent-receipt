@@ -6,6 +6,9 @@ const HASH_END = ' -->';
 /**
  * Canonical body used for hashing: everything before the Integrity section
  * (or any line containing the hash marker). Trailing blank lines normalized.
+ *
+ * By design, anything after `## Integrity` / the hash marker is ignored by
+ * verify — appends after the Integrity footer do not affect the hash.
  */
 export function canonicalBody(markdown: string): string {
   const normalized = markdown.replace(/\r\n/g, '\n');
@@ -45,20 +48,56 @@ export function extractEmbeddedHash(markdown: string): string | null {
   return markdown.slice(start, end).trim();
 }
 
+/**
+ * True when the file has non-empty content after the Integrity section that
+ * is not part of the standard hash footer. Such appends are ignored by
+ * canonicalBody / verify by design.
+ */
+export function hasTrailingAfterIntegrity(markdown: string): boolean {
+  const normalized = markdown.replace(/\r\n/g, '\n');
+  const lines = normalized.split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    if (
+      lines[i].startsWith('## Integrity') ||
+      lines[i].includes('agent-receipt-sha256')
+    ) {
+      break;
+    }
+    i++;
+  }
+  if (i >= lines.length) return false;
+
+  // Skip the Integrity heading, blank lines, hash marker, and SHA-256 prose.
+  for (; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === '') continue;
+    if (line.startsWith('## Integrity')) continue;
+    if (line.includes('agent-receipt-sha256')) continue;
+    if (/^SHA-256 of canonical body:/.test(line)) continue;
+    return true;
+  }
+  return false;
+}
+
 export function verifyMarkdown(markdown: string): {
   ok: boolean;
   expected: string | null;
   actual: string;
   reason: string;
+  /** Content after Integrity exists and is ignored by the hash (by design). */
+  trailingIgnored?: boolean;
 } {
   const expected = extractEmbeddedHash(markdown);
   const actual = sha256Hex(canonicalBody(markdown));
+  const trailingIgnored = hasTrailingAfterIntegrity(markdown);
   if (!expected) {
     return {
       ok: false,
       expected: null,
       actual,
       reason: 'No embedded agent-receipt-sha256 marker found',
+      trailingIgnored,
     };
   }
   if (expected !== actual) {
@@ -67,7 +106,8 @@ export function verifyMarkdown(markdown: string): {
       expected,
       actual,
       reason: 'Hash mismatch — receipt may have been tampered with',
+      trailingIgnored,
     };
   }
-  return { ok: true, expected, actual, reason: 'OK' };
+  return { ok: true, expected, actual, reason: 'OK', trailingIgnored };
 }

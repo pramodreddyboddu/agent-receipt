@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { loadConfig } from './config.js';
 import { summarizeRisks, type RiskHint, type RiskSummary } from './risk.js';
 import { sha256Hex, canonicalBody } from './hash.js';
@@ -72,9 +72,35 @@ export interface IndexCaptureMeta {
   markdown: string;
 }
 
-/** Prepend a new capture into `.agent-receipt/index.json` (newest first). */
-export function updateIndexOnCapture(cwd: string, meta: IndexCaptureMeta): string {
+/** Resolve configured receipts dir absolute path (for rebuild helpers). */
+export function receiptsDir(cwd: string): string {
+  const cfg = loadConfig(cwd);
+  return cfg.outDir.startsWith('/') ? cfg.outDir : join(cwd, cfg.outDir);
+}
+
+/** True when absPath resolves inside the configured outDir. */
+export function isInsideOutDir(cwd: string, absPath: string): boolean {
+  const dir = resolve(receiptsDir(cwd));
+  const abs = resolve(absPath);
+  const rel = relative(dir, abs);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+/**
+ * Prepend a new capture into `.agent-receipt/index.json` (newest first).
+ * Captures written outside configured outDir (e.g. `--out ./share.md`) are
+ * skipped so they do not become history/`newest` ahead of outDir receipts.
+ * Returns the index path, or null when skipped.
+ */
+export function updateIndexOnCapture(
+  cwd: string,
+  meta: IndexCaptureMeta,
+): string | null {
   const absOut = resolve(cwd, meta.outPath);
+  if (!isInsideOutDir(cwd, absOut)) {
+    return null;
+  }
+
   let rel = relative(cwd, absOut).replace(/\\/g, '/');
   if (rel.startsWith('../') || rel === '..') {
     // Outside repo — keep basename under a synthetic key
@@ -105,10 +131,4 @@ export function updateIndexOnCapture(cwd: string, meta: IndexCaptureMeta): strin
   idx.updatedAt = new Date().toISOString();
   idx.version = 1;
   return writeIndex(cwd, idx);
-}
-
-/** Resolve configured receipts dir absolute path (for rebuild helpers). */
-export function receiptsDir(cwd: string): string {
-  const cfg = loadConfig(cwd);
-  return cfg.outDir.startsWith('/') ? cfg.outDir : join(cwd, cfg.outDir);
 }

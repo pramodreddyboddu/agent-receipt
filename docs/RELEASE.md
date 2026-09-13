@@ -10,6 +10,7 @@ want a public release. This checklist is the playbook when you are ready.
 - [ ] Version bump consistent across:
   - [ ] `package.json` → `"version"` + scoped name `@pramodreddyboddu/agent-receipt`
   - [ ] `src/lib/version.ts` → `VERSION`
+  - [ ] Integrity docs note: trailing appends after `## Integrity` ignored by verify
   - [ ] `CHANGELOG.md` → dated section
 - [ ] `npm run pack:check` — **automated** (`npm pack --dry-run` asserts `bin` + `dist`, and bin path has no leading `./`)
 - [ ] README 60-second path still works from a fresh clone / GitHub install
@@ -125,7 +126,7 @@ Notes:
 ```bash
 npm i -g github:pramodreddyboddu/agent-receipt
 # or a branch/ref:
-npm i -g github:pramodreddyboddu/agent-receipt#v1.0.2
+npm i -g github:pramodreddyboddu/agent-receipt#v1.0.3
 ```
 
 ## Post-release smoke

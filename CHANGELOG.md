@@ -11,6 +11,27 @@ All notable changes to this project will be documented in this file.
 - Document Trusted Publisher + GitHub Environment setup in `docs/RELEASE.md`
 - Harden `npm run pack:check` against npm 11 `./bin/...` publish footgun (bin already canonical on 1.0.2)
 
+## [1.0.3] — 2026-09-13
+
+### Fixed
+
+- **`--redact`**: mask credential URLs (`DATABASE_URL`, `postgres://user:pass@…`,
+  Redis/Mongo URIs, `password=` query params) — passwords no longer leak while
+  API/AWS keys were masked
+- **`--redact`**: omit nested prior-receipt / `.agent-receipt` index diff bodies so
+  truncated secrets from earlier receipts cannot re-embed
+- **Risk**: skip high-entropy false positives on `.agent-receipt/` artifact paths
+  and pure hex digests (sha1/sha256 footers)
+- **History / index**: captures with `--out` outside configured `outDir` are no
+  longer prepended as newest in `.agent-receipt/index.json`
+
+### Changed
+
+- Package version bumped to `1.0.3`
+- Document that trailing appends after `## Integrity` are ignored by `verify`
+  (canonical-body design); `verify` prints a brief note when such content exists
+
+
 ## 1.0.2
 
 - Republish after 1.0.1 version was reserved/yanked on npm (installs 404'd; same version cannot be restaged).

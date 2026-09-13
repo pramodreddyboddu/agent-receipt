@@ -344,10 +344,19 @@ The Markdown body (everything except the Integrity section / hash marker) is
 hashed with SHA-256. `verify` recomputes the hash and compares it to the embedded
 marker. Any edit to the body fails verification.
 
+**Trailing appends after `## Integrity` are ignored by design** — they are not
+part of the canonical body, so `verify` still passes if only the footer area is
+extended. Prefer editing the body (which will fail verify) or re-capturing when
+you need a new sealed artifact.
+
 This is **tamper-evident**, not cryptographic signing. For signatures, wrap the
 receipt with your own signing flow (e.g. `minisign`, GPG).
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
+
+`--redact` also masks credential URLs (e.g. `DATABASE_URL` / `postgres://user:pass@…`)
+and omits nested prior-receipt / index diff bodies so truncated secrets are not
+re-embedded when those artifacts appear in the change set.
 
 ## Development
 

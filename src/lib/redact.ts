@@ -3,6 +3,14 @@
  * Masks high-signal secrets in Markdown/HTML bodies, then callers re-hash.
  */
 
+/** True for receipt / index artifacts that may embed prior secrets. */
+export function isReceiptArtifactPath(path: string): boolean {
+  const n = path.replace(/\\/g, '/');
+  if (/(^|\/)\.agent-receipt\//i.test(n)) return true;
+  if (/(^|\/)receipt-\d{4}-\d{2}-\d{2}T[^/]*\.md$/i.test(n)) return true;
+  return false;
+}
+
 /** Patterns that look like live secrets in diffs / risk detail. */
 const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
   {
@@ -31,9 +39,29 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
     replacement: '$1[REDACTED]',
   },
   {
-    // Generic high-entropy token assignments common in .env diffs
-    re: /((?:API[_-]?KEY|SECRET[_-]?KEY|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|PASSWORD|PRIVATE[_-]?KEY)\s*[:=]\s*["']?)([^\s"'\\]{12,})/gi,
+    // Connection / credential URLs: scheme://user:password@host (or :password@)
+    re: /\b([a-z][a-z0-9+.-]*:\/\/(?:[^:@\/\s"'<>]*):)([^@\/\s"'<>]+)(@)/gi,
+    replacement: '$1[REDACTED]$3',
+  },
+  {
+    // Common DB / URI env assignments (full value — covers uncommon schemes)
+    re: /((?:DATABASE[_-]?URL|DB[_-]?URL|MONGO(?:DB)?[_-]?(?:URI|URL)|REDIS[_-]?URL|MYSQL[_-]?URL|POSTGRES(?:QL)?[_-]?URL|CONNECTION[_-]?STRING|DATABASE[_-]?URI)\s*[:=]\s*["']?)([^\s"']+)/gi,
     replacement: '$1[REDACTED]',
+  },
+  {
+    // password= / token= / secret= query or form params
+    re: /([?&](?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?token)=)([^&\s"']+)/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    // Generic high-entropy token assignments common in .env diffs
+    re: /((?:API[_-]?KEY|SECRET[_-]?KEY|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|PASSWORD|PRIVATE[_-]?KEY)\s*[:=]\s*["']?)([^\s"'\\]{8,})/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    // Truncated high-entropy previews from prior risk findings (e.g. "K8vQm2nXp9Lr…")
+    re: /\b([A-Za-z0-9+/=_\-.]{8,})…/g,
+    replacement: '[REDACTED]…',
   },
 ];
 
@@ -61,6 +89,7 @@ export function redactSecretsInText(text: string): string {
  * Redact a full Markdown receipt body (before Integrity).
  * - Masks secret values in diffs and prose
  * - Masks high/secret risk detail cells
+ * - Omits nested prior-receipt / index diff bodies (avoids re-embedding secrets)
  * - Inserts a redaction notice under Session when not already present
  */
 export function redactMarkdownBody(markdown: string): string {
@@ -68,8 +97,11 @@ export function redactMarkdownBody(markdown: string): string {
   const lines = normalized.split('\n');
   const out: string[] = [];
   let inDiffFence = false;
+  let inNestedArtifactDiff = false;
+  let nestedOmitted = false;
   let inRiskTable = false;
   let sawRedactionNotice = false;
+  let currentDiffPath: string | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -82,6 +114,14 @@ export function redactMarkdownBody(markdown: string): string {
       sawRedactionNotice = true;
     }
 
+    // Track ### `path` under Diff summaries
+    const pathHeader = line.match(/^###\s+`([^`]+)`\s*$/);
+    if (pathHeader) {
+      currentDiffPath = pathHeader[1];
+      out.push(line);
+      continue;
+    }
+
     if (line.startsWith('## Risk findings')) {
       inRiskTable = true;
       out.push(line);
@@ -92,13 +132,37 @@ export function redactMarkdownBody(markdown: string): string {
     }
 
     if (line.trim() === '```diff' || line.trim() === '```') {
-      if (line.trim() === '```diff') inDiffFence = true;
-      else if (inDiffFence && line.trim() === '```') inDiffFence = false;
+      if (line.trim() === '```diff') {
+        inDiffFence = true;
+        inNestedArtifactDiff = Boolean(
+          currentDiffPath && isReceiptArtifactPath(currentDiffPath),
+        );
+        nestedOmitted = false;
+        out.push(line);
+        continue;
+      }
+      if (inDiffFence && line.trim() === '```') {
+        if (inNestedArtifactDiff && !nestedOmitted) {
+          out.push('+[REDACTED — nested receipt/index body omitted]');
+        }
+        inDiffFence = false;
+        inNestedArtifactDiff = false;
+        nestedOmitted = false;
+        out.push(line);
+        continue;
+      }
       out.push(line);
       continue;
     }
 
     if (inDiffFence) {
+      if (inNestedArtifactDiff) {
+        if (!nestedOmitted) {
+          out.push('+[REDACTED — nested receipt/index body omitted]');
+          nestedOmitted = true;
+        }
+        continue;
+      }
       out.push(redactSecretsInText(line));
       continue;
     }
@@ -111,8 +175,7 @@ export function redactMarkdownBody(markdown: string): string {
         const codeCell = cells[1].trim();
         const codeMatch = codeCell.match(/`([^`]+)`/);
         const code = codeMatch?.[1] ?? codeCell;
-        const isSecret =
-          sev === 'high' || HIGH_SECRET_CODES.has(code);
+        const isSecret = sev === 'high' || HIGH_SECRET_CODES.has(code);
         if (isSecret) {
           const detail = redactSecretsInText(cells.slice(2).join('|')).replace(
             /[A-Za-z0-9/+=_-]{16,}/g,
