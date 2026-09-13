@@ -1,3 +1,9 @@
+# Mirror / fallback copy of .github/workflows/ci.yml
+# Canonical path: .github/workflows/ci.yml
+# If GitHub OAuth lacks the `workflow` scope and you cannot push workflows,
+# copy this file manually:
+#   mkdir -p .github/workflows
+#   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 name: CI
 
 on:

@@ -5,39 +5,116 @@ want a public release. This checklist is the playbook when you are ready.
 
 ## Preflight
 
-- [x] `npm test` green locally — **automated** (`npm test` / CI)
+- [ ] `npm test` green locally — **automated** (`npm test` / CI)
 - [ ] `node bin/agent-receipt.js doctor` clean (or only expected WARNs) in a sample repo
-- [x] Version bump consistent across — **automated on this release branch**:
-  - [x] `package.json` → `"version"` (`1.0.1`) + scoped name `@pramodreddyboddu/agent-receipt`
-  - [x] `src/lib/version.ts` → `VERSION`
-  - [x] `CHANGELOG.md` → dated `1.0.1` section
-- [x] `npm run pack:check` — **automated** (`npm pack --dry-run` asserts `bin` + `dist`)
+- [ ] Version bump consistent across:
+  - [ ] `package.json` → `"version"` + scoped name `@pramodreddyboddu/agent-receipt`
+  - [ ] `src/lib/version.ts` → `VERSION`
+  - [ ] `CHANGELOG.md` → dated section
+- [ ] `npm run pack:check` — **automated** (`npm pack --dry-run` asserts `bin` + `dist`, and bin path has no leading `./`)
 - [ ] README 60-second path still works from a fresh clone / GitHub install
 - [ ] `docs/receipt.schema.json` matches current `--json` shape
 - [ ] Example receipt under `examples/` still looks sane (`verify` on it optional)
 
-## Make the GitHub repo public (optional, manual)
+## CI workflow
 
-1. GitHub → Settings → Danger Zone → Change repository visibility → Public
-2. Confirm README / LICENSE / SECURITY expectations
-3. (Optional) Add topics: `cli`, `git`, `ai-agents`, `audit`, `tamper-evident`
+Canonical workflow: **`.github/workflows/ci.yml`**
 
-## npm publish (optional, manual — do NOT run from CI agents blindly)
+Docs mirrors (fallback if OAuth lacks `workflow` scope):
+
+- `docs/github-actions-ci.yml` → copy to `.github/workflows/ci.yml`
+- `docs/github-actions-release.yml` → copy to `.github/workflows/release.yml`
 
 ```bash
-# from a clean main tip matching the release tag
+mkdir -p .github/workflows
+cp docs/github-actions-ci.yml .github/workflows/ci.yml
+cp docs/github-actions-release.yml .github/workflows/release.yml
+git add .github/workflows/
+git commit -m "ci: enable GitHub Actions workflows"
+git push
+```
+
+## npm Trusted Publishing (OIDC) — preferred
+
+Prefer **Trusted Publishing** over long-lived `NPM_TOKEN` secrets. The release
+workflow (`.github/workflows/release.yml`) publishes with OIDC; no npm token is
+stored in GitHub Actions secrets.
+
+### 1. Create GitHub Environment `npm-publish`
+
+1. GitHub → **Settings** → **Environments** → **New environment**
+2. Name it exactly: `npm-publish` (must match `environment:` in `release.yml`)
+3. Optional but recommended:
+   - Required reviewers (you) before deploy
+   - Deployment branches / tags: restrict to tags matching `v*` if available
+
+### 2. Configure Trusted Publisher on npmjs.com
+
+1. Open https://www.npmjs.com/package/@pramodreddyboddu/agent-receipt → **Settings**
+2. Find **Trusted Publisher** → choose **GitHub Actions**
+3. Fill in **exactly** (case-sensitive):
+
+   | Field | Value |
+   | --- | --- |
+   | Organization or user | `pramodreddyboddu` |
+   | Repository | `agent-receipt` |
+   | Workflow filename | `release.yml` (filename only, not a path) |
+   | Environment name | `npm-publish` |
+
+4. Allowed actions: allow **`npm publish`** (and/or staged publish if you prefer review-then-approve)
+5. Save. npm does **not** verify the config until the first publish attempt.
+
+Requirements (as of npm Trusted Publishing GA):
+
+- npm CLI **≥ 11.5.1**
+- Node **≥ 22.14.0** on the runner (the workflow pins `22.14` and upgrades npm)
+- Workflow permission: `id-token: write`
+- GitHub-hosted runners (self-hosted not supported for OIDC publish today)
+
+### 3. Publish via tag (automated)
+
+```bash
+# on a clean main tip matching the intended release
+git checkout main && git pull
+# ensure version / CHANGELOG / version.ts already bumped on main
+git tag -a v1.0.3 -m "agent-receipt v1.0.3"
+git push origin v1.0.3
+# Release workflow runs: test → pack:check → npm publish --access public (OIDC)
+gh release create v1.0.3 --title "v1.0.3" --notes-file CHANGELOG.md
+```
+
+Or run **Actions → Release → Run workflow** (`workflow_dispatch`) after Trusted Publisher is configured.
+
+### 4. After Trusted Publishing works — harden token policy
+
+1. npm package **Settings** → **Publishing access**
+2. Select **Require two-factor authentication and disallow tokens**
+3. Revoke any leftover automation / classic publish tokens
+
+Trusted Publishing continues to work; only traditional tokens are blocked.
+
+### Troubleshooting OIDC publish
+
+- **ENEEDAUTH / Unable to authenticate**: workflow filename mismatch (`release.yml`), wrong owner/repo case, missing `id-token: write`, or Environment name mismatch (`npm-publish`).
+- **Empty `_authToken` in `.npmrc`**: do **not** set `NODE_AUTH_TOKEN` / `NPM_TOKEN` on the publish step. If `actions/setup-node` wrote an empty token line, remove it before `npm publish` or upgrade setup-node.
+- Provenance is automatic for public repos using Trusted Publishing (no `--provenance` flag needed).
+
+## Manual npm publish (fallback — not for CI agents)
+
+Only if Trusted Publishing is not configured yet:
+
+```bash
 npm login
 npm whoami
-npm run pack:check   # or: npm pack --dry-run
+npm run pack:check
 npm publish --access public
-# equivalent (publishConfig.access=public already set):
-# npm publish
 ```
 
 Notes:
 
 - Package name is scoped: `@pramodreddyboddu/agent-receipt` (unscoped `agent-receipt` is taken)
 - CLI binary remains `agent-receipt`
+- **`bin` path must not use a leading `./`** — use `"bin/agent-receipt.js"`. npm 11 treats `./bin/...` as invalid at publish time and may strip the bin (`npm warn publish "bin[agent-receipt]" ... was invalid and removed` / cleaned). `npm run pack:check` guards this.
 - `prepublishOnly` runs `npm test`
 - `files` allowlist in `package.json` controls the tarball (`bin`, `dist`, `docs`, `examples`, `SECURITY.md`, …)
 - `publishConfig.access` is `public` (required for scoped packages)
@@ -48,42 +125,13 @@ Notes:
 ```bash
 npm i -g github:pramodreddyboddu/agent-receipt
 # or a branch/ref:
-npm i -g github:pramodreddyboddu/agent-receipt#v1.0.1
+npm i -g github:pramodreddyboddu/agent-receipt#v1.0.2
 ```
-
-## Tag + GitHub Release (v1.0.1)
-
-After this PR is merged to `main` (Release QA gates):
-
-```bash
-git checkout main
-git pull
-git tag -a v1.0.1 -m "agent-receipt v1.0.1"
-git push origin v1.0.1
-gh release create v1.0.1 --title "v1.0.1" --notes-file CHANGELOG.md
-```
-
-## CI workflow
-
-If the GitHub OAuth token lacks the `workflow` scope, keep the workflow under
-`docs/github-actions-ci.yml` and copy it into `.github/workflows/ci.yml`
-manually (or with a PAT that has workflow scope):
-
-```bash
-mkdir -p .github/workflows
-cp docs/github-actions-ci.yml .github/workflows/ci.yml
-git add .github/workflows/ci.yml
-git commit -m "ci: enable GitHub Actions"
-git push
-```
-
-On the v1.0.1 publish-ready branch we attempt to add `.github/workflows/ci.yml`;
-if push/PR is rejected for workflow scope, leave docs-only and note it on the PR.
 
 ## Post-release smoke
 
 ```bash
-npm i -g @pramodreddyboddu/agent-receipt@1.0.2   # or github:…#v1.0.1
+npm i -g @pramodreddyboddu/agent-receipt@latest
 cd $(mktemp -d) && git init
 echo hi > README.md && git add . && git commit -m init
 agent-receipt init
@@ -103,5 +151,5 @@ agent-receipt --version
 
 - Publish from a dirty working tree
 - Force-push release tags
-- Commit secrets / `.npmrc` tokens
+- Commit secrets / `.npmrc` tokens / long-lived `NPM_TOKEN` for publish once OIDC works
 - Flip visibility / publish as part of an automated agent task unless explicitly asked
