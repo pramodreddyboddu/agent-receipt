@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Changed
+
+- Promote CI to `.github/workflows/ci.yml` (docs mirror retained under `docs/github-actions-ci.yml`)
+- Add OIDC Trusted Publishing release workflow (`.github/workflows/release.yml`) — no long-lived `NPM_TOKEN`
+- Document Trusted Publisher + GitHub Environment setup in `docs/RELEASE.md`
+- Harden `npm run pack:check` against npm 11 `./bin/...` publish footgun (bin already canonical on 1.0.2)
+
 ## 1.0.2
 
 - Republish after 1.0.1 version was reserved/yanked on npm (installs 404'd; same version cannot be restaged).
