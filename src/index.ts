@@ -22,6 +22,7 @@ export {
   verifyMarkdown,
   sha256Hex,
   canonicalBody,
+  hasTrailingAfterIntegrity,
 } from './lib/hash.js';
 export {
   analyzeRisks,
@@ -36,7 +37,12 @@ export {
 } from './lib/risk.js';
 export { summarizeNotableChanges, formatDiffStatTable } from './lib/summary.js';
 export { formatMarkdown, formatJson, formatTldr, buildReviewItems } from './lib/receipt.js';
-export { redactSecretsInText, redactMarkdownBody, prepareRedactedBody } from './lib/redact.js';
+export {
+  redactSecretsInText,
+  redactMarkdownBody,
+  prepareRedactedBody,
+  isReceiptArtifactPath,
+} from './lib/redact.js';
 export { markdownToHtml } from './lib/html.js';
 export { CURSOR_RULE_MDC, CURSOR_RULE_REL } from './lib/cursor-rule.js';
 export {
@@ -58,6 +64,8 @@ export {
   updateIndexOnCapture,
   indexPath,
   INDEX_REL,
+  isInsideOutDir,
+  receiptsDir,
 } from './lib/receipt-index.js';
 export {
   isDirty,

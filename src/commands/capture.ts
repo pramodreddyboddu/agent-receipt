@@ -211,7 +211,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
   const del = files.reduce((a, f) => a + f.deletions, 0);
 
   try {
-    updateIndexOnCapture(cwd, {
+    const indexed = updateIndexOnCapture(cwd, {
       outPath,
       timestamp: data.timestamp,
       agent: data.agent,
@@ -225,6 +225,13 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
       risks,
       markdown,
     });
+    if (!indexed && opts.out) {
+      console.log(
+        color.dim(
+          '  (index unchanged: --out path is outside outDir, so history/newest stay on outDir receipts)',
+        ),
+      );
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.log(color.dim(`  (index update skipped: ${msg})`));

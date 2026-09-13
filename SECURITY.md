@@ -44,7 +44,8 @@ It will:
 - **Not** replace dedicated secret scanners or human review
 
 Use `--fail-on` / CI as a **tripwire**, not as your only control. Prefer
-`--redact` when sharing receipts outside a trusted channel.
+`--redact` when sharing receipts outside a trusted channel (masks credential
+URLs / DB passwords as well as API keys, and omits nested prior-receipt bodies).
 
 ## Supply chain
 

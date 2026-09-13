@@ -45,7 +45,8 @@ Options:
                          Bare --fail-on means high. For hooks/CI scripts.
   --cwd <path>           Run as if started in this directory
 
-Each capture updates .agent-receipt/index.json (stable receipt index).
+Each capture under outDir updates .agent-receipt/index.json (stable receipt index).
+Captures with --out outside outDir are not indexed (so they do not become newest).
 
 Examples:
   agent-receipt capture --agent cursor --message "ship auth"
@@ -210,6 +211,9 @@ Usage:
 Recomputes SHA-256 over the Markdown body (everything except the Integrity
 section / hash marker) and compares it to the embedded marker.
 Exit 0 = OK, exit 2 = mismatch / missing hash.
+
+By design, trailing appends after ## Integrity are ignored by the hash (they
+do not affect verify). A note is printed when such trailing content is present.
 
 Examples:
   agent-receipt verify

@@ -172,11 +172,11 @@ describe('capture --uncommitted + index + history --json + allowlist', () => {
       '--message',
       'wip snapshot',
       '--out',
-      'dirty.md',
+      '.agent-receipt/receipts/dirty.md',
     ]);
     assert.match(out, /Wrote receipt/);
     assert.match(out, /uncommitted/);
-    const md = readFileSync(join(dir, 'dirty.md'), 'utf8');
+    const md = readFileSync(join(dir, '.agent-receipt/receipts/dirty.md'), 'utf8');
     assert.match(md, /uncommitted/);
     assert.match(md, /working tree/);
     assert.match(md, /wip\.txt/);
