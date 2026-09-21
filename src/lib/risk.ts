@@ -298,6 +298,41 @@ export function meetsFailOn(
   return SEVERITY_RANK[maxSeverity] >= SEVERITY_RANK[threshold];
 }
 
+/**
+ * Read the Summary table written by formatMarkdown.
+ * Redaction masks secret detail but does not change these counts.
+ * Missing / unparseable tables yield an empty summary (fail-on will not trip).
+ */
+export function parseRiskSummaryMarkdown(markdown: string): RiskSummary {
+  const empty: RiskSummary = {
+    high: 0,
+    medium: 0,
+    low: 0,
+    total: 0,
+    maxSeverity: null,
+  };
+  const riskLine = markdown.match(/^\|\s*Risk\s*\|\s*([^|\n]+)\|/m);
+  const value = riskLine?.[1]?.trim() ?? '';
+  if (!value || /^none$/i.test(value)) return empty;
+
+  const high = Number(value.match(/high\s+(\d+)/i)?.[1] ?? 0);
+  const medium = Number(value.match(/medium\s+(\d+)/i)?.[1] ?? 0);
+  const low = Number(value.match(/low\s+(\d+)/i)?.[1] ?? 0);
+  const leading = value.match(/^(\d+)/);
+  const total = leading ? Number(leading[1]) : high + medium + low;
+
+  const maxLine = markdown.match(/^\|\s*Max severity\s*\|\s*\*\*(\w+)\*\*\s*\|/im);
+  const labeled = maxLine?.[1]?.toLowerCase();
+  let maxSeverity: RiskSummary['maxSeverity'] = null;
+  if (labeled === 'high' || labeled === 'medium' || labeled === 'low') {
+    maxSeverity = labeled;
+  } else if (high > 0) maxSeverity = 'high';
+  else if (medium > 0) maxSeverity = 'medium';
+  else if (low > 0) maxSeverity = 'low';
+
+  return { high, medium, low, total, maxSeverity };
+}
+
 function scanDiffContent(path: string, diff: string, hints: RiskHint[]): void {
   if (!diff) return;
   for (const pat of CONTENT_PATTERNS) {

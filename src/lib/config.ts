@@ -13,6 +13,19 @@ export interface AgentReceiptConfig {
    * Example: `package-json-change`, `lockfile-change:*.lock`, `*:docs/**`
    */
   riskAllowlist: string[];
+  /**
+   * When true, capture / wrap / watch / share redact unless `--no-redact`.
+   * Default false. `share` still redacts unless `--no-redact` even when this is false.
+   */
+  redact: boolean;
+  /** Set when `redact:` is present but not a boolean. */
+  redactInvalid?: boolean;
+  /**
+   * Default `--fail-on` for capture / wrap / watch / share.
+   * `verify` ignores this unless `--fail-on` is passed explicitly.
+   * Invalid values are kept so `doctor` / `validateConfig` can report them.
+   */
+  failOn?: string;
 }
 
 const DEFAULTS: AgentReceiptConfig = {
@@ -22,6 +35,7 @@ const DEFAULTS: AgentReceiptConfig = {
   fullDiffs: false,
   ignore: ['node_modules/**', 'dist/**', 'coverage/**'],
   riskAllowlist: [],
+  redact: false,
 };
 
 const CONFIG_NAME = '.agent-receipt.yml';
@@ -131,6 +145,20 @@ export function loadConfig(cwd: string): AgentReceiptConfig {
     };
   }
   const parsed = parseSimpleYaml(readFileSync(path, 'utf8'));
+  let redact = DEFAULTS.redact;
+  let redactInvalid = false;
+  if (parsed.redact !== undefined) {
+    if (typeof parsed.redact === 'boolean') redact = parsed.redact;
+    else redactInvalid = true;
+  }
+  let failOn: string | undefined;
+  if (parsed.failOn === undefined || parsed.failOn === false || parsed.failOn === '') {
+    failOn = undefined;
+  } else if (parsed.failOn === true) {
+    failOn = 'high';
+  } else {
+    failOn = String(parsed.failOn).toLowerCase();
+  }
   return {
     outDir: String(parsed.outDir ?? DEFAULTS.outDir),
     defaultAgent: String(parsed.defaultAgent ?? DEFAULTS.defaultAgent),
@@ -142,6 +170,9 @@ export function loadConfig(cwd: string): AgentReceiptConfig {
       typeof parsed.fullDiffs === 'boolean' ? parsed.fullDiffs : DEFAULTS.fullDiffs,
     ignore: asStringList(parsed.ignore, DEFAULTS.ignore),
     riskAllowlist: asStringList(parsed.riskAllowlist, DEFAULTS.riskAllowlist),
+    redact,
+    redactInvalid: redactInvalid || undefined,
+    failOn,
   };
 }
 
@@ -177,6 +208,17 @@ export function validateConfig(cfg: AgentReceiptConfig): string[] {
       }
     }
   }
+  if (typeof cfg.redact !== 'boolean' || cfg.redactInvalid) {
+    problems.push('redact must be true or false');
+  }
+  if (
+    cfg.failOn !== undefined &&
+    cfg.failOn !== 'high' &&
+    cfg.failOn !== 'medium' &&
+    cfg.failOn !== 'low'
+  ) {
+    problems.push('failOn must be high, medium, or low');
+  }
   return problems;
 }
 
@@ -205,6 +247,11 @@ ignore:
 #   - "lockfile-change:*.lock"
 #   - "*:docs/**"
 riskAllowlist: []
+
+# Optional org defaults (off unless set). See examples/org-policy.yml
+# and docs/business.md. share still redacts unless you pass --no-redact.
+# redact: true
+# failOn: high
 `;
   writeFileSync(configFile, yaml, 'utf8');
 
@@ -248,17 +295,29 @@ riskAllowlist: []
 
    Recipe: \`docs/grok-cli.md\` in the agent-receipt package.
 
-8. Health check: \`agent-receipt doctor\`
+8. Health check (includes a short prod-ready checklist): \`agent-receipt doctor\`
 
-9. CI / hooks that should fail on secrets:
+9. CI / hooks that should fail on secrets. Exit 0 pass, 2 policy or verify
+   failure, 1 usage error. \`--json\` on capture/wrap/share/verify prints one
+   object on stdout:
 
    \`\`\`bash
-   agent-receipt capture --fail-on high
+   agent-receipt wrap --base main --fail-on high --json
    \`\`\`
 
-10. Agent-specific tips: see \`docs/agents.md\` in the package / repo.
+10. Share a redacted HTML receipt (verifies, prints paths + TL;DR):
 
-11. Add \`.agent-receipt/receipts/\` to git if you want receipts committed,
+    \`\`\`bash
+    agent-receipt share --out share.html
+    agent-receipt share --md share.md --out share.html
+    \`\`\`
+
+11. Team rollout, org policy, and what not to put in receipts:
+    \`docs/business.md\` in the agent-receipt package.
+
+12. Agent-specific tips: see \`docs/agents.md\` in the package / repo.
+
+13. Add \`.agent-receipt/receipts/\` to git if you want receipts committed,
     or keep them local / artifact-only.
 `;
   writeFileSync(notesFile, notes, 'utf8');

@@ -7,10 +7,11 @@ import {
   readFileSync,
   existsSync,
   chmodSync,
+  symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   GROK_RULE_MD,
@@ -74,6 +75,9 @@ describe('init --grok', { concurrency: false }, () => {
     assert.match(GROK_WRAP_SCRIPT, /--redact/);
     assert.match(GROK_WRAP_SCRIPT, /--uncommitted/);
     assert.match(GROK_WRAP_SCRIPT, /git status --porcelain/);
+    assert.match(GROK_WRAP_SCRIPT, /drain_hook_stdin/);
+    assert.match(GROK_WRAP_SCRIPT, /must not block waiting for EOF/);
+    assert.doesNotMatch(GROK_WRAP_SCRIPT, /cat >\/dev\/null/);
   });
 
   it('does not write .grok files without --grok', () => {
@@ -151,6 +155,87 @@ describe('init --grok', { concurrency: false }, () => {
       '--message',
       'grok session (uncommitted)',
     ]);
+  });
+
+  function runOpenStdin(script, env, payload) {
+    return new Promise((resolve, reject) => {
+      const child = spawn('/bin/sh', [script], {
+        cwd: dir,
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const started = Date.now();
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d) => {
+        stdout += d;
+      });
+      child.stderr.on('data', (d) => {
+        stderr += d;
+      });
+      if (payload) child.stdin.write(payload);
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        reject(new Error(`SessionEnd hook hung with stdin left open (${Date.now() - started}ms)`));
+      }, 3000);
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      child.on('exit', (code) => {
+        clearTimeout(timer);
+        try {
+          child.stdin.destroy();
+        } catch {
+          /* already closed */
+        }
+        resolve({ code, stdout, stderr, elapsed: Date.now() - started });
+      });
+    });
+  }
+
+  it('SessionEnd script does not hang when stdin stays open without EOF', async () => {
+    cli(dir, ['init', '--grok']);
+    const script = join(dir, '.grok', 'hooks', 'agent-receipt-wrap.sh');
+    const env = {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      GROK_WORKSPACE_ROOT: dir,
+      HOOK_STDIN_WAIT_SEC: '0.3',
+    };
+
+    const empty = await runOpenStdin(script, env);
+    assert.equal(empty.code, 0);
+    // Bounded wait (timeout + dd), not an instant skip and not an EOF hang.
+    assert.ok(empty.elapsed >= 180, `expected a bounded wait, got ${empty.elapsed}ms`);
+    assert.ok(empty.elapsed < 2500, `drain took too long: ${empty.elapsed}ms`);
+
+    const primed = await runOpenStdin(script, env, '{"event":"SessionEnd"}\n');
+    assert.equal(primed.code, 0);
+    assert.ok(primed.elapsed < 1000, `payload+open stdin took ${primed.elapsed}ms`);
+  });
+
+  it('SessionEnd drain uses node when timeout is not on PATH', async () => {
+    cli(dir, ['init', '--grok']);
+    const script = join(dir, '.grok', 'hooks', 'agent-receipt-wrap.sh');
+    const binDir = mkdtempSync(join(tmpdir(), 'agent-receipt-notimeout-'));
+    const link = (cmd) => {
+      const src = execFileSync('sh', ['-c', `command -v ${cmd}`], { encoding: 'utf8' }).trim();
+      symlinkSync(src, join(binDir, cmd));
+    };
+    link('node');
+    link('git');
+    const env = {
+      ...process.env,
+      PATH: binDir,
+      GROK_WORKSPACE_ROOT: dir,
+      HOOK_STDIN_WAIT_SEC: '0.3',
+    };
+    const result = await runOpenStdin(script, env);
+    assert.equal(result.code, 0);
+    assert.ok(result.elapsed >= 180, `node drain returned too fast (${result.elapsed}ms)`);
+    assert.ok(result.elapsed < 2500, `node drain took ${result.elapsed}ms`);
+    rmSync(binDir, { recursive: true, force: true });
   });
 
   it('SessionEnd script is non-blocking when agent-receipt is missing', () => {

@@ -190,14 +190,16 @@ describe('compare + capture ignore', () => {
       'r1.md',
       '--json',
     ]);
-    assert.match(out, /Wrote receipt/);
-    assert.match(out, /ignored/i);
+    const gate = JSON.parse(out);
+    assert.equal(gate.command, 'capture');
+    assert.equal(gate.ok, true);
+    assert.ok(gate.ignored >= 1);
     const md = readFileSync(join(dir, 'r1.md'), 'utf8');
     assert.doesNotMatch(md, /dist\/bundle\.js/);
     assert.match(md, /app\.js/);
     const json = JSON.parse(readFileSync(join(dir, 'r1.json'), 'utf8'));
     assert.ok(json.files.every((f) => !f.path.startsWith('dist/')));
-    assert.match(md, /1\.0\.4/);
+    assert.match(md, /1\.0\.5/);
   });
 
   it('compare shows file deltas between two receipts', () => {

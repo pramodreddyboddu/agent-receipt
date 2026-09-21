@@ -3,6 +3,7 @@ export { VERSION } from './lib/version.js';
 export { cmdInit, writeCursorRule, writeGrokIntegration } from './commands/init.js';
 export { cmdCapture } from './commands/capture.js';
 export { cmdWrap } from './commands/wrap.js';
+export { cmdShare } from './commands/share.js';
 export { cmdExport, cmdHtml } from './commands/export.js';
 export { cmdShow, resolveReceiptPath, findLatestReceipt } from './commands/show.js';
 export { cmdLast } from './commands/last.js';
@@ -31,12 +32,14 @@ export {
   sortRisks,
   parseFailOn,
   meetsFailOn,
+  parseRiskSummaryMarkdown,
   parseRiskAllowlist,
   applyRiskAllowlist,
   shannonEntropy,
 } from './lib/risk.js';
 export { summarizeNotableChanges, formatDiffStatTable } from './lib/summary.js';
-export { formatMarkdown, formatJson, formatTldr, buildReviewItems } from './lib/receipt.js';
+export { formatMarkdown, formatJson, formatTldr, extractTldr, buildReviewItems } from './lib/receipt.js';
+export { finalizeGate, printGate, errorGate, gateExitCode } from './lib/gate.js';
 export {
   redactSecretsInText,
   redactMarkdownBody,

@@ -13,6 +13,7 @@ agent-receipt install-hooks
 Also see the short copies under [`examples/`](../examples/) (`AGENTS.md`,
 `claude-code.md`, `aider.md`, `hooks.md`, `.cursor/rules/`, `.grok/`).
 Grok Build: [`grok-cli.md`](grok-cli.md).
+Team rollout, CI `--json` gates, and share-safety: [`business.md`](business.md).
 
 ## Cursor
 

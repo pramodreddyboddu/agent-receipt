@@ -18,6 +18,8 @@ export interface WatchOptions {
   message?: string;
   failOn?: FailOnThreshold;
   json?: boolean;
+  /** Honor config / `--redact` on each auto-capture. */
+  redact?: boolean;
   /**
    * Only watch HEAD commits (v0.4 behavior). Default watches dirty tree
    * (staged/unstaged/untracked) as well as new commits.
@@ -127,6 +129,7 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
           message: opts.message ?? `watch ${head.slice(0, 7)}`,
           failOn: opts.failOn,
           json: opts.json,
+          redact: opts.redact,
         };
         if (baseline !== '(no commits)') {
           captureOpts.since = baseline;
@@ -179,6 +182,7 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
         message: opts.message ?? 'watch uncommitted',
         failOn: opts.failOn,
         json: opts.json,
+        redact: opts.redact,
       };
 
       let result: CaptureResult;

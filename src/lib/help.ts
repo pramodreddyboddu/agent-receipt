@@ -39,15 +39,21 @@ Options:
   --session <id>         Session / run id label
   --out <path>           Output Markdown path
   --full                 Include full diffs (no truncation)
-  --json                 Also write companion .json
+  --json                 Write companion .json AND print one CI gate object on stdout
+                         (human progress goes to stderr). See docs/business.md.
   --diff-stat            Include diff-stat overview (default: on)
   --no-diff-stat         Omit the diff-stat overview
   --top-risks <N>        Max risk rows in findings table (default: 20)
   --redact               Mask high/secret findings for safer sharing (re-hashed)
+  --no-redact            Force redact off (overrides config redact: true)
   --fail-on [high|medium|low]
                          Exit 2 after writing if max severity meets threshold.
-                         Bare --fail-on means high. For hooks/CI scripts.
+                         Bare --fail-on means high. Overrides config failOn.
+                         Exit codes: 0 pass, 2 policy failure, 1 usage error.
   --cwd <path>           Run as if started in this directory
+
+Config \`.agent-receipt.yml\` may set \`redact: true\` and \`failOn: high\`
+(see examples/org-policy.yml). Those apply when the flags above are omitted.
 
 Each capture under outDir updates .agent-receipt/index.json (stable receipt index).
 Captures with --out outside outDir are not indexed (so they do not become newest).
@@ -77,13 +83,18 @@ Options:
   --base <ref>           When clean, capture vs this base branch/ref
   --uncommitted          Require dirty-tree capture (error if clean)
   --redact               Mask high/secret findings in the written receipt
+  --no-redact            Force redact off (overrides config redact: true)
   --fail-on [high|medium|low]
-                         Exit 2 after writing if max severity meets threshold
-  --json                 Also write companion .json
+                         Exit 2 after writing if max severity meets threshold.
+                         Bare --fail-on means high. Overrides config failOn.
+  --json                 Companion .json plus one CI gate object on stdout
+                         (human progress on stderr). Exit codes stay 0 / 2 / 1.
   --full                 Include full diffs
   --cwd <path>           Run as if started in this directory
 
-Exit codes: 0 OK, 2 fail-on threshold or verify failure, 1 error.
+Exit codes: 0 OK, 2 fail-on threshold or verify failure, 1 usage/runtime error.
+\`--json\` does not change those codes. Both failures still exit 2; the gate
+object sets \`failedOn\` and \`verified\` so CI can tell them apart.
 
 Examples:
   agent-receipt wrap --agent cursor --message "done with auth"
@@ -91,6 +102,46 @@ Examples:
   agent-receipt wrap --agent grok --redact --uncommitted --message "wip"
   agent-receipt wrap --agent cursor --base main
   agent-receipt wrap --fail-on high
+  agent-receipt wrap --json --fail-on high
+`,
+
+  share: `agent-receipt share — redact, write HTML (+ optional Markdown), verify
+
+Usage:
+  agent-receipt share [path] [--out <html>] [--md [file]] [--no-redact] [--fail-on …] [--json]
+
+One shot for handing a receipt to someone else. Reuses export / html / verify /
+redact (share-safety from 1.0.3: credential URLs, nested receipt bodies).
+
+Defaults:
+  - Newest receipt under outDir when path is omitted
+  - --redact is ON unless you pass --no-redact (config redact: false does not turn this off)
+  - HTML next to the receipt (sibling .html)
+  - Optional Markdown only when --md / --markdown is set
+  - Refuses to overwrite the source receipt
+  - Does not write anything if the source receipt fails verify (no re-hash of a tampered body)
+
+Prints TL;DR, html path, optional md path, source path, then verify.
+
+Options:
+  --out <path>           HTML output (default: sibling .html)
+  --md [path]            Also write Markdown (default name: sibling .redacted.md)
+  --markdown [path]      Alias for --md
+  --redact               Accepted; this is already the default
+  --no-redact            Write HTML/Markdown without masking
+  --fail-on [high|medium|low]
+                         Exit 2 if the source summary meets the threshold
+                         (counts are not cleared by redaction). Bare = high.
+                         Config failOn applies when the flag is omitted.
+  --json                 One CI gate object on stdout (progress on stderr)
+  --cwd <path>           Run as if started in this directory
+
+Exit codes: 0 OK, 2 verify failure or --fail-on, 1 usage/runtime error.
+
+Examples:
+  agent-receipt share
+  agent-receipt share --out share.html --md share.md
+  agent-receipt share receipt.md --fail-on high --json
 `,
 
   export: `agent-receipt export — write a shareable HTML (or Markdown) receipt
@@ -191,6 +242,7 @@ Options:
   --fail-on [high|medium|low]
                          After capture, exit 2 when --once if threshold met
   --json                 Also write companion .json on each capture
+                         (human stdout stays; CI gates use capture/wrap/share/verify --json)
   --cwd <path>           Run as if started in this directory
 
 When HEAD moves A → B, capture uses --since A so all commits in the interval are included.
@@ -216,14 +268,23 @@ Usage:
 
 Recomputes SHA-256 over the Markdown body (everything except the Integrity
 section / hash marker) and compares it to the embedded marker.
-Exit 0 = OK, exit 2 = mismatch / missing hash.
+Exit 0 = OK, exit 2 = mismatch / missing hash (or --fail-on met), exit 1 = usage error.
 
 By design, trailing appends after ## Integrity are ignored by the hash (they
 do not affect verify). A note is printed when such trailing content is present.
 
+--fail-on is opt-in here. Config failOn does NOT change plain verify, so
+existing hooks stay integrity-only. Pass the flag to also exit 2 when the
+receipt Summary risk meets the threshold.
+
+--json prints one CI gate object on stdout (ok, exitCode, verified, failedOn,
+sha256, risk). Exit codes are unchanged.
+
 Examples:
   agent-receipt verify
   agent-receipt verify receipt.md
+  agent-receipt verify --json
+  agent-receipt verify --fail-on high --json
 `,
 
   doctor: `agent-receipt doctor — environment health check
@@ -231,15 +292,23 @@ Examples:
 Usage:
   agent-receipt doctor [--cwd <path>]
 
-Checks:
+Environment:
   node          Node.js >= 20
   git           git on PATH
   repo          inside a git work tree
-  config        .agent-receipt.yml present + valid
-  hooks         managed post-commit hook installed?
   outDir        receipt directory writable
+  cli           this version
+
+Prod ready (short checklist — WARN/INFO do not fail the command):
+  config        .agent-receipt.yml present + valid (shows redact / failOn)
+  hooks         managed post-commit hook installed?
+  redact        redact: true in config, or still optional (share redacts by default)
+  git-clean     working tree clean? Dirty is a warning, not a failure
+  cursor        init --cursor rule present?
+  grok          init --grok rule + SessionEnd hook present?
 
 Exit 0 if no FAIL checks; exit 1 otherwise. WARN items are non-fatal.
+Team rollout: docs/business.md · examples/org-policy.yml
 
 Examples:
   agent-receipt doctor
@@ -331,6 +400,7 @@ Commands:
   init                   Write config + notes (--cursor, --grok drop agent rules)
   capture                Capture a git snapshot receipt (Markdown)
   wrap                   End-of-session: capture + TL;DR + verify
+  share [path]           Redact + HTML (+ optional md) + verify + TL;DR
   export [path]          Write self-contained HTML (or Markdown) receipt
   html [path]            Alias for export as HTML
   show [path]            Pretty-print last / given receipt (full body)
@@ -362,6 +432,8 @@ Examples:
   agent-receipt init --cursor
   agent-receipt init --grok
   agent-receipt wrap --agent cursor --message "session done"
+  agent-receipt wrap --json --fail-on high
+  agent-receipt share --out share.html --md share.md
   agent-receipt wrap --agent grok --redact --message "grok session"
   agent-receipt capture --agent cursor --message "ship v0.6"
   agent-receipt capture --base main --message "PR vs main"
@@ -383,6 +455,7 @@ Examples:
 
 Docs: https://github.com/pramodreddyboddu/agent-receipt
 Agent tips: docs/agents.md · docs/grok-cli.md · examples/ (Cursor, Grok, Claude Code, Aider)
+Prod / CI: docs/business.md · examples/org-policy.yml
 Schema: docs/receipt.schema.json · Release: docs/RELEASE.md
 `;
 }

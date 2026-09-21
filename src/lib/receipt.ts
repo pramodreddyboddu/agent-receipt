@@ -47,6 +47,12 @@ function statusCounts(files: FileStat[]): Record<string, number> {
   return counts;
 }
 
+/** Pull the one-line TL;DR blockquote out of a written receipt. */
+export function extractTldr(markdown: string): string | null {
+  const m = markdown.match(/> \*\*TL;DR\*\*\s+(.+)/);
+  return m?.[1]?.trim() ?? null;
+}
+
 export function formatTldr(data: ReceiptData): string {
   const totalIns = data.files.reduce((a, f) => a + f.insertions, 0);
   const totalDel = data.files.reduce((a, f) => a + f.deletions, 0);
