@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh .grok/hooks/agent-receipt-wrap.sh",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

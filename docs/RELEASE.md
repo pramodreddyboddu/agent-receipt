@@ -78,10 +78,10 @@ Requirements (as of npm Trusted Publishing GA):
 # on a clean main tip matching the intended release
 git checkout main && git pull
 # ensure version / CHANGELOG / version.ts already bumped on main
-git tag -a v1.0.3 -m "agent-receipt v1.0.3"
-git push origin v1.0.3
+git tag -a v1.0.4 -m "agent-receipt v1.0.4"
+git push origin v1.0.4
 # Release workflow runs: test → pack:check → npm publish --access public (OIDC)
-gh release create v1.0.3 --title "v1.0.3" --notes-file CHANGELOG.md
+gh release create v1.0.4 --title "v1.0.4" --notes-file CHANGELOG.md
 ```
 
 Or run **Actions → Release → Run workflow** (`workflow_dispatch`) after Trusted Publisher is configured.
@@ -126,7 +126,7 @@ Notes:
 ```bash
 npm i -g github:pramodreddyboddu/agent-receipt
 # or a branch/ref:
-npm i -g github:pramodreddyboddu/agent-receipt#v1.0.3
+npm i -g github:pramodreddyboddu/agent-receipt#v1.0.4
 ```
 
 ## Post-release smoke

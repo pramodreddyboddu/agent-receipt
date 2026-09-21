@@ -1,6 +1,6 @@
 {
   "name": "@pramodreddyboddu/agent-receipt",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "One-shot, tamper-evident git receipts for AI coding agent sessions — wrap, verify, share",
   "type": "module",
   "bin": {
@@ -19,6 +19,7 @@
     "dist",
     "docs",
     "examples",
+    "scripts/grok-wrap.sh",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
@@ -30,6 +31,7 @@
     "test": "npm run build && node --test test/*.test.js",
     "prepublishOnly": "npm test",
     "start": "node bin/agent-receipt.js",
+    "wrap:grok": "sh scripts/grok-wrap.sh",
     "pack:check": "node scripts/pack-check.js"
   },
   "engines": {
@@ -45,6 +47,7 @@
     "ai",
     "ai-agents",
     "cursor",
+    "grok",
     "claude",
     "aider",
     "devtools",

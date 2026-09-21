@@ -1,6 +1,6 @@
 export { run } from './cli.js';
 export { VERSION } from './lib/version.js';
-export { cmdInit, writeCursorRule } from './commands/init.js';
+export { cmdInit, writeCursorRule, writeGrokIntegration } from './commands/init.js';
 export { cmdCapture } from './commands/capture.js';
 export { cmdWrap } from './commands/wrap.js';
 export { cmdExport, cmdHtml } from './commands/export.js';
@@ -45,6 +45,14 @@ export {
 } from './lib/redact.js';
 export { markdownToHtml } from './lib/html.js';
 export { CURSOR_RULE_MDC, CURSOR_RULE_REL } from './lib/cursor-rule.js';
+export {
+  GROK_RULE_MD,
+  GROK_RULE_REL,
+  GROK_HOOK_JSON,
+  GROK_HOOK_REL,
+  GROK_WRAP_SCRIPT,
+  GROK_WRAP_SCRIPT_REL,
+} from './lib/grok-rule.js';
 export {
   loadConfig,
   validateConfig,

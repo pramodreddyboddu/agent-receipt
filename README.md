@@ -106,7 +106,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 
 | Command | Purpose |
 |---------|---------|
-| `init [--cursor]` | Write `.agent-receipt.yml` + notes; `--cursor` drops the Cursor rule |
+| `init [--cursor] [--grok]` | Write `.agent-receipt.yml` + notes; `--cursor` / `--grok` drop agent rules |
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON) |
 | `wrap` | End of session: capture (+ `--uncommitted` if dirty) → TL;DR + path → verify |
 | `export` / `html` | Self-contained HTML receipt (or export last); `--out`, `--redact` |
@@ -275,6 +275,30 @@ cp path/to/agent-receipt/examples/.cursor/rules/agent-receipt.mdc .cursor/rules/
 ```bash
 agent-receipt watch --once --interval 2 --agent cursor --message "session wrap-up"
 ```
+
+## Grok Build CLI
+
+`init --grok` writes a project rule Grok loads every session
+(`.grok/rules/agent-receipt.md`) and a **SessionEnd** hook that wraps only when
+the working tree is dirty, with `--redact`. Project hooks run after
+`grok --trust` or `/hooks-trust`.
+
+After a Grok session — dirty tree is captured as **uncommitted** automatically;
+`--redact` keeps the 1.0.3 share-safety masks:
+
+```bash
+agent-receipt wrap --agent grok --redact --message "what changed"
+```
+
+Require a dirty snapshot (errors if the tree is clean):
+
+```bash
+agent-receipt wrap --agent grok --redact --uncommitted --message "uncommitted grok work"
+```
+
+In this repo: `scripts/grok-wrap.sh "what changed"` or `npm run wrap:grok -- "what changed"`.
+
+Full recipe: [`docs/grok-cli.md`](docs/grok-cli.md).
 
 ## Git hooks (local / global install)
 

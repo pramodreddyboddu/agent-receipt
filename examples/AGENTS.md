@@ -13,6 +13,7 @@ Optional one-time setup in this repo:
 
 ```bash
 agent-receipt init --cursor      # Cursor rule that runs capture on wrap-up
+agent-receipt init --grok        # Grok rule + SessionEnd hook (--redact)
 agent-receipt install-hooks      # post-commit capture
 ```
 
