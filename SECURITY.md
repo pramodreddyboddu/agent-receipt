@@ -44,8 +44,10 @@ It will:
 - **Not** replace dedicated secret scanners or human review
 
 Use `--fail-on` / CI as a **tripwire**, not as your only control. Prefer
-`--redact` when sharing receipts outside a trusted channel (masks credential
-URLs / DB passwords as well as API keys, and omits nested prior-receipt bodies).
+`share` (redact is on unless `--no-redact`) or `--redact` when sharing receipts
+outside a trusted channel (masks credential URLs / DB passwords as well as API
+keys, and omits nested prior-receipt bodies). Redaction is not a DLP guarantee.
+See [`docs/business.md`](docs/business.md) for what not to put in receipts.
 
 ## Supply chain
 

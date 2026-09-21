@@ -32,5 +32,6 @@ jobs:
       - name: CLI smoke
         run: |
           node bin/agent-receipt.js help
+          node bin/agent-receipt.js help share
           node bin/agent-receipt.js version
           node bin/agent-receipt.js --version

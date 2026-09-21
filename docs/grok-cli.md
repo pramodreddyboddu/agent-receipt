@@ -23,7 +23,7 @@ agent-receipt init --grok
 |------|------|
 | `.grok/rules/agent-receipt.md` | Project rule. Grok loads every `*.md` in `.grok/rules/` each session and is told to **run** `wrap`, not only suggest it. |
 | `.grok/hooks/agent-receipt.json` | `SessionEnd` hook. |
-| `.grok/hooks/agent-receipt-wrap.sh` | Runs `wrap --agent grok --redact --uncommitted` **only when the working tree is dirty**. Exit 0 if `agent-receipt` is missing or wrap fails (does not fail the Grok session). |
+| `.grok/hooks/agent-receipt-wrap.sh` | Runs `wrap --agent grok --redact --uncommitted` **only when the working tree is dirty**. Exit 0 if `agent-receipt` is missing or wrap fails (does not fail the Grok session). Does not wait for stdin EOF (see below). |
 
 Grok does not run project hooks until you trust the repo:
 
@@ -92,11 +92,28 @@ Share HTML only from the redacted receipt:
 agent-receipt html --redact --out share.html
 ```
 
+## Stdin contract
+
+Grok may pass hook JSON on stdin and leave the pipe open (no EOF). The
+SessionEnd script and `scripts/grok-wrap.sh` **must not block waiting for EOF**.
+
+- A tty is not read.
+- Otherwise one `read` of at most `HOOK_STDIN_MAX` bytes (default 65536) is
+  drained, capped by `HOOK_STDIN_WAIT_SEC` (default `0.4`) when `timeout` is
+  on `PATH`. A short payload returns immediately even if the writer never
+  closes. Without `timeout`, `node` applies the same cap.
+- With neither, stdin is left unread — still not a hang. The scripts do not
+  `cat` until EOF.
+- The JSON is discarded. Wrap is decided from `git status`, not the payload.
+
+Full note: [docs/business.md](business.md#sessionend-stdin-contract).
+
 ## What the hook does not do
 
 - It does not run on a clean tree (that would re-receipt the last commit every time a session ends).
 - It does not pick a session-specific message (`grok session (uncommitted)`). Run `wrap` yourself when the summary matters.
 - It does not call the network. If `agent-receipt` is not on `PATH`, `./node_modules/.bin`, or `./bin/agent-receipt.js`, it skips.
 - It does not block the session. A wrap failure is printed and ignored.
+- It does not parse stdin, and it does not wait for the host to close it.
 
 High-severity findings (secrets, `.env`, private keys) are a review checklist, not a guarantee. See [SECURITY.md](../SECURITY.md).

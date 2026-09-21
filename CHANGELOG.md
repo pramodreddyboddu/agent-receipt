@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.5] — 2026-09-21
+
+### Added
+
+- `share` — one shot: verify the source, apply `--redact` (default on; 1.0.3 share-safety), write HTML and optional Markdown (`--md`), verify the published body, print paths + TL;DR. Refuses to overwrite the source and does not re-hash a tampered receipt.
+- CI gate JSON on stdout for `capture --json`, `wrap --json`, `share --json`, and `verify --json` (human progress on stderr). Companion receipt `.json` is unchanged. `watch --json` stays companion-file + human stdout.
+- Stable `--fail-on` exits: 0 pass, 2 policy and/or verify failure, 1 usage error (invalid threshold). Config `failOn` / `redact` (see `examples/org-policy.yml`) apply to capture / wrap / watch / share. Plain `verify` ignores config `failOn` unless `--fail-on` is passed.
+- `doctor` **Prod ready** checklist: hooks, redact default (optional), config, git clean, Cursor init, Grok init. WARN/INFO stay non-fatal.
+- [`docs/business.md`](docs/business.md) — team rollout: install, hooks, CI gate, share-safety, SessionEnd stdin contract, what not to put in receipts.
+- SessionEnd / `scripts/grok-wrap.sh` stdin drain: at most one read of `HOOK_STDIN_MAX` bytes, capped by `HOOK_STDIN_WAIT_SEC` (`timeout`, else `node`). An open pipe with no EOF cannot hang the hook. Payload is discarded.
+
+### Changed
+
+- Package version bumped to `1.0.5`
+- `capture --json` / `wrap --json` stdout is the gate object (logs moved to stderr). Scripts that scraped “Wrote receipt” from stdout of `--json` should read stderr or the gate fields.
+
 ## [1.0.4] — 2026-09-21
 
 ### Added

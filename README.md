@@ -100,7 +100,8 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 - You want **history** of recent agent sessions, not only `git log`
 - You want **hooks / `watch`** so capture is not a forgotten extra step
 - You want CI to **fail on high-severity** findings (`--fail-on high`)
-- You want a **one-shot wrap** at session end, or an **HTML export** you can share
+- You want a **one-shot wrap** at session end, **`share`** for redacted HTML, or an export you can attach
+- You want a **CI gate** (`--json`, stable exit 2 on `--fail-on`) and a team rollout note ([`docs/business.md`](docs/business.md))
 
 ## Commands
 
@@ -109,13 +110,14 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `init [--cursor] [--grok]` | Write `.agent-receipt.yml` + notes; `--cursor` / `--grok` drop agent rules |
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON) |
 | `wrap` | End of session: capture (+ `--uncommitted` if dirty) → TL;DR + path → verify |
+| `share [path]` | One shot: redact → HTML (+ optional Markdown) → verify → paths + TL;DR |
 | `export` / `html` | Self-contained HTML receipt (or export last); `--out`, `--redact` |
 | `show [path]` | Pretty-print last / given receipt (full body) |
 | `last` | Path + glance of the most recent receipt |
 | `history` / `ls` | List recent receipts (`--json`; `[uncommitted]` badge; index at `.agent-receipt/index.json`) |
 | `watch` | Poll git; auto-capture on commits **or dirty tree** (`--once`, `--commits-only`) |
 | `verify [path]` | Hash-check tamper-evident integrity |
-| `doctor` | Health check: git, repo, hooks, config, Node |
+| `doctor` | Health check plus a short prod-ready checklist (hooks, redact default, git clean, Cursor/Grok init) |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
 | `diff [a] [b]` | Alias for `compare` |
 | `install-hooks` | Opt-in post-commit auto-capture (`--pre-push` optional) |
@@ -124,8 +126,9 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 
 ```bash
 agent-receipt help wrap
-agent-receipt help capture
+agent-receipt help share
 agent-receipt wrap --agent cursor --message "done"
+agent-receipt share --out share.html --md share.md
 agent-receipt history
 agent-receipt history --json --limit 5
 agent-receipt ls --limit 5
@@ -167,7 +170,23 @@ agent-receipt wrap --agent cursor --message "session done"
 agent-receipt wrap --agent cursor --base main --fail-on high
 ```
 
-Flags: `--agent`, `--message`, `--fail-on`, `--base`, `--redact`, `--uncommitted`, `--json`, `--full`.
+Flags: `--agent`, `--message`, `--fail-on`, `--base`, `--redact`, `--no-redact`, `--uncommitted`, `--json`, `--full`.
+
+`--json` prints one CI gate object on stdout (exit codes unchanged: 0 pass, 2 policy or verify failure, 1 usage error) and still writes the companion receipt `.json`. Config `failOn` / `redact` apply when the flags are omitted. See [`docs/business.md`](docs/business.md).
+
+### `share` (redacted HTML in one shot)
+
+```bash
+agent-receipt share
+agent-receipt share --out share.html --md share.md
+agent-receipt share receipt.md --fail-on high --json
+```
+
+Verifies the source first (a tampered receipt is not rewritten), applies
+**`--redact` by default** (1.0.3 share-safety: `DATABASE_URL` / credential URLs,
+nested receipt bodies), writes HTML and optional Markdown, verifies the
+published body, and prints TL;DR plus paths. `--no-redact` opts out.
+`--md` refuses to overwrite the source receipt.
 
 ### `export` / `html` (shareable receipt)
 
@@ -255,7 +274,8 @@ excluded from risk / summary / file tables via config `ignore` globs.
 
 See [`examples/sample-receipt.md`](examples/sample-receipt.md),
 [`docs/agents.md`](docs/agents.md), [`docs/receipt.schema.json`](docs/receipt.schema.json),
-and short recipes under [`examples/`](examples/).
+short recipes under [`examples/`](examples/), and
+[`docs/business.md`](docs/business.md) for team rollout.
 
 ## Cursor / agent wrap-up
 
@@ -298,7 +318,13 @@ agent-receipt wrap --agent grok --redact --uncommitted --message "uncommitted gr
 
 In this repo: `scripts/grok-wrap.sh "what changed"` or `npm run wrap:grok -- "what changed"`.
 
-Full recipe: [`docs/grok-cli.md`](docs/grok-cli.md).
+Full recipe: [`docs/grok-cli.md`](docs/grok-cli.md). The SessionEnd hook drains
+stdin with a byte cap and a short timeout so an open pipe (no EOF) cannot hang
+the session.
+
+Team install, CI gates, and what not to put in receipts:
+[`docs/business.md`](docs/business.md). Org defaults:
+[`examples/org-policy.yml`](examples/org-policy.yml).
 
 ## Git hooks (local / global install)
 

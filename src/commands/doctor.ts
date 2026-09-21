@@ -1,7 +1,7 @@
 import { existsSync, accessSync, constants, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { isGitRepo, runGit } from '../lib/git.js';
+import { getPorcelainStatus, isGitRepo, runGit } from '../lib/git.js';
 import {
   loadConfig,
   validateConfig,
@@ -9,6 +9,12 @@ import {
   CONFIG_NAME,
 } from '../lib/config.js';
 import { MARKER_BEGIN } from './hooks.js';
+import { CURSOR_RULE_REL } from '../lib/cursor-rule.js';
+import {
+  GROK_HOOK_REL,
+  GROK_RULE_REL,
+  GROK_WRAP_SCRIPT_REL,
+} from '../lib/grok-rule.js';
 import { VERSION } from '../lib/version.js';
 import { color } from '../lib/color.js';
 
@@ -140,10 +146,12 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
         detail: `${CONFIG_NAME} invalid: ${problems.join('; ')}`,
       });
     } else {
+      const redactBit = cfg.redact ? 'redact=on' : 'redact=off';
+      const failBit = cfg.failOn ? `failOn=${cfg.failOn}` : 'failOn=unset';
       checks.push({
         name: 'config',
         status: 'pass',
-        detail: `${CONFIG_NAME} ok (outDir=${cfg.outDir}, ignore=${cfg.ignore.length} glob(s))`,
+        detail: `${CONFIG_NAME} ok (outDir=${cfg.outDir}, ignore=${cfg.ignore.length} glob(s), ${redactBit}, ${failBit})`,
       });
     }
   }
@@ -209,6 +217,89 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
     detail: `agent-receipt ${VERSION}`,
   });
 
+  // Prod-ready checklist (informational — WARN/INFO do not fail doctor).
+  const cfgNow = loadConfig(cwd);
+  if (cfgNow.redact) {
+    const failBit = cfgNow.failOn ? ` · failOn: ${cfgNow.failOn}` : '';
+    checks.push({
+      name: 'redact',
+      status: 'pass',
+      detail: `redact: true (default on for capture/wrap/watch/share)${failBit}`,
+    });
+  } else {
+    const failBit = cfgNow.failOn
+      ? ` Config failOn: ${cfgNow.failOn} still applies to capture/wrap/watch/share.`
+      : '';
+    checks.push({
+      name: 'redact',
+      status: 'info',
+      detail:
+        `redact default off (optional). Set redact: true in ${CONFIG_NAME} or pass --redact.` +
+        ` share still redacts unless --no-redact. See examples/org-policy.yml.${failBit}`,
+    });
+  }
+
+  if (!inRepo) {
+    checks.push({
+      name: 'git-clean',
+      status: 'info',
+      detail: 'skipped (not in a git repo)',
+    });
+  } else {
+    const lines = getPorcelainStatus(cwd).split('\n').filter((l) => l.trim());
+    if (lines.length === 0) {
+      checks.push({
+        name: 'git-clean',
+        status: 'pass',
+        detail: 'working tree clean',
+      });
+    } else {
+      checks.push({
+        name: 'git-clean',
+        status: 'warn',
+        detail: `working tree dirty (${lines.length} path(s)) — commit, or wrap/capture --uncommitted, before a prod snapshot`,
+      });
+    }
+  }
+
+  const cursorPath = join(cwd, CURSOR_RULE_REL);
+  if (existsSync(cursorPath)) {
+    checks.push({
+      name: 'cursor',
+      status: 'pass',
+      detail: `rule installed (${CURSOR_RULE_REL})`,
+    });
+  } else {
+    checks.push({
+      name: 'cursor',
+      status: 'info',
+      detail: 'not installed (optional) — agent-receipt init --cursor',
+    });
+  }
+
+  const grokFiles = [GROK_RULE_REL, GROK_HOOK_REL, GROK_WRAP_SCRIPT_REL];
+  const grokPresent = grokFiles.filter((rel) => existsSync(join(cwd, rel)));
+  if (grokPresent.length === grokFiles.length) {
+    checks.push({
+      name: 'grok',
+      status: 'pass',
+      detail: 'rule + SessionEnd hook installed (stdin drain does not wait for EOF)',
+    });
+  } else if (grokPresent.length > 0) {
+    const missing = grokFiles.filter((rel) => !grokPresent.includes(rel));
+    checks.push({
+      name: 'grok',
+      status: 'warn',
+      detail: `partial init — missing ${missing.join(', ')} (re-run: agent-receipt init --grok)`,
+    });
+  } else {
+    checks.push({
+      name: 'grok',
+      status: 'info',
+      detail: 'not installed (optional) — agent-receipt init --grok',
+    });
+  }
+
   return checks;
 }
 
@@ -225,8 +316,16 @@ function icon(status: CheckStatus): string {
   }
 }
 
+const ENV_CHECKS = new Set(['node', 'git', 'repo', 'outDir', 'cli']);
+const PROD_CHECKS = ['config', 'hooks', 'redact', 'git-clean', 'cursor', 'grok'];
+
+function printCheck(c: DoctorCheck): void {
+  console.log(`  [${icon(c.status)}] ${c.name.padEnd(10)} ${c.detail}`);
+}
+
 /**
  * Run environment health checks. Returns exit code: 0 if no FAIL, 1 otherwise.
+ * WARN/INFO (including the prod-ready checklist) are non-fatal.
  */
 export function cmdDoctor(cwd: string): number {
   console.log(color.bold(`agent-receipt doctor`) + color.dim(` (${VERSION})`));
@@ -239,7 +338,18 @@ export function cmdDoctor(cwd: string): number {
   for (const c of checks) {
     if (c.status === 'fail') fails++;
     if (c.status === 'warn') warns++;
-    console.log(`  [${icon(c.status)}] ${c.name.padEnd(8)} ${c.detail}`);
+  }
+
+  console.log(color.bold('Environment'));
+  for (const c of checks) {
+    if (ENV_CHECKS.has(c.name)) printCheck(c);
+  }
+
+  console.log('');
+  console.log(color.bold('Prod ready'));
+  for (const name of PROD_CHECKS) {
+    const c = checks.find((item) => item.name === name);
+    if (c) printCheck(c);
   }
 
   console.log('');

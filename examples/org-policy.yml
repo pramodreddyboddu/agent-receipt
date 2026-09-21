@@ -1,0 +1,28 @@
+# Org policy example — copy onto `.agent-receipt.yml` (merge local ignore rules).
+# Docs: docs/business.md
+#
+# CI:
+#   agent-receipt wrap --base main --json
+#   exit 0 pass · exit 2 policy or verify failure · exit 1 usage error
+#
+# share redacts even when `redact` is false. This file turns redact on for
+# capture / wrap / watch as well, and fails the gate on high-severity findings.
+
+outDir: .agent-receipt/receipts
+defaultAgent: agent
+defaultCommits: 1
+fullDiffs: false
+
+# Mask high/secret findings (credential URLs, API keys, nested receipt bodies).
+redact: true
+
+# capture / wrap / watch / share exit 2 when max severity is at least high.
+# Plain `verify` stays integrity-only unless you pass --fail-on explicitly.
+failOn: high
+
+ignore:
+  - node_modules/**
+  - dist/**
+  - coverage/**
+
+riskAllowlist: []

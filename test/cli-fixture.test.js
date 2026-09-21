@@ -54,9 +54,9 @@ describe('cli fixture', () => {
     assert.match(out, /watch/);
   });
 
-  it('version is 1.0.4', () => {
+  it('version is 1.0.5', () => {
     const out = cli(dir, ['version']);
-    assert.match(out, /1\.0\.4/);
+    assert.match(out, /1\.0\.5/);
   });
 
   it('init writes config', () => {
@@ -79,7 +79,13 @@ describe('cli fixture', () => {
       '--out',
       'receipt.md',
     ]);
-    assert.match(out, /Wrote receipt/);
+    const gate = JSON.parse(out);
+    assert.equal(gate.ok, true);
+    assert.equal(gate.command, 'capture');
+    assert.equal(gate.exitCode, 0);
+    assert.equal(gate.verified, null);
+    assert.equal(gate.path, join(dir, 'receipt.md'));
+    assert.equal(gate.jsonPath, join(dir, 'receipt.json'));
     assert.ok(existsSync(join(dir, 'receipt.md')));
     assert.ok(existsSync(join(dir, 'receipt.json')));
     const md = readFileSync(join(dir, 'receipt.md'), 'utf8');
@@ -89,7 +95,7 @@ describe('cli fixture', () => {
     assert.match(md, /TL;DR/);
     assert.match(md, /test-bot/);
     assert.match(md, /fixture run/);
-    assert.match(md, /1\.0\.4/);
+    assert.match(md, /1\.0\.5/);
     assert.match(md, /agent-receipt-sha256/);
     const json = JSON.parse(readFileSync(join(dir, 'receipt.json'), 'utf8'));
     assert.ok(json.summary);

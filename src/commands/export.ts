@@ -13,6 +13,8 @@ export interface ExportOptions {
   redact?: boolean;
   /** Force markdown output instead of HTML. */
   format?: 'html' | 'markdown' | 'md';
+  /** Skip human stdout (share / JSON gate print their own summary). */
+  quiet?: boolean;
 }
 
 export interface ExportResult {
@@ -20,6 +22,8 @@ export interface ExportResult {
   source: string;
   format: 'html' | 'markdown';
   redacted: boolean;
+  /** Markdown body that was written, or rendered into HTML. */
+  markdown: string;
 }
 
 function defaultOutPath(source: string, format: 'html' | 'markdown'): string {
@@ -62,6 +66,10 @@ export function cmdExport(
   }
   mkdirSync(dirname(outPath), { recursive: true });
 
+  const log = (line: string) => {
+    if (!opts.quiet) console.log(line);
+  };
+
   if (format === 'html') {
     const html = markdownToHtml(markdown, {
       title: `Agent Receipt — ${basename(source)}`,
@@ -77,14 +85,14 @@ export function cmdExport(
     }
   }
 
-  console.log(color.green('✓') + ` Wrote ${format}: ${outPath}`);
-  console.log(color.dim(`  source: ${source}`));
+  log(color.green('✓') + ` Wrote ${format}: ${outPath}`);
+  log(color.dim(`  source: ${source}`));
   if (redacted) {
-    console.log(color.yellow('  ⚠ Redacted — high/secret findings masked.'));
+    log(color.yellow('  ⚠ Redacted — high/secret findings masked.'));
   }
-  console.log(color.dim('  Open in a browser (HTML) or share the file as-is.'));
+  log(color.dim('  Open in a browser (HTML) or share the file as-is.'));
 
-  return { path: outPath, source, format, redacted };
+  return { path: outPath, source, format, redacted, markdown };
 }
 
 /** Alias used by the `html` command. */

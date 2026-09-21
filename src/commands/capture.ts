@@ -31,9 +31,16 @@ import {
 } from '../lib/receipt.js';
 import { updateIndexOnCapture } from '../lib/receipt-index.js';
 import { prepareRedactedBody } from '../lib/redact.js';
-import { appendHashFooter } from '../lib/hash.js';
+import { appendHashFooter, extractEmbeddedHash } from '../lib/hash.js';
 import { VERSION } from '../lib/version.js';
 import { color } from '../lib/color.js';
+import {
+  emitLine,
+  failOnReason,
+  finalizeGate,
+  printGate,
+  riskToGate,
+} from '../lib/gate.js';
 
 export interface CaptureOptions {
   since?: string;
@@ -57,6 +64,14 @@ export interface CaptureOptions {
   uncommitted?: boolean;
   /** Mask high/secret findings in the written Markdown for safer sharing. */
   redact?: boolean;
+  /** Send human progress to stderr (stdout reserved for a JSON gate). */
+  quiet?: boolean;
+  /**
+   * Print one CI gate object on stdout. Implies quiet.
+   * `json: true` still only means "also write the companion receipt .json"
+   * unless this is set (the CLI sets both for `capture --json`).
+   */
+  emitGate?: boolean;
 }
 
 export interface CaptureResult {
@@ -67,6 +82,9 @@ export interface CaptureResult {
   /** One-line TL;DR from the written receipt (pre-redaction summary when redacted). */
   tldr: string;
   redacted: boolean;
+  ignored: number;
+  jsonPath: string | null;
+  sha256: string | null;
 }
 
 export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
@@ -179,6 +197,8 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
   if (redacted) {
     markdown = appendHashFooter(prepareRedactedBody(markdown));
   }
+  const quiet = Boolean(opts.quiet || opts.emitGate);
+  const say = (line: string) => emitLine(quiet, line);
 
   // TL;DR from the (possibly redacted) receipt blockquote
   const tldrMatch = markdown.match(/> \*\*TL;DR\*\*\s+(.+)/);
@@ -197,14 +217,15 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
 
   writeFileSync(outPath, markdown, 'utf8');
 
+  let jsonPath: string | null = null;
   if (opts.json) {
-    const jsonPath = outPath.replace(/\.md$/i, '') + '.json';
+    jsonPath = outPath.replace(/\.md$/i, '') + '.json';
     writeFileSync(
       jsonPath,
       JSON.stringify(formatJson(data, markdown), null, 2) + '\n',
       'utf8',
     );
-    console.log(color.dim(`Wrote JSON:    ${jsonPath}`));
+    say(color.dim(`Wrote JSON:    ${jsonPath}`));
   }
 
   const ins = files.reduce((a, f) => a + f.insertions, 0);
@@ -226,7 +247,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
       markdown,
     });
     if (!indexed && opts.out) {
-      console.log(
+      say(
         color.dim(
           '  (index unchanged: --out path is outside outDir, so history/newest stay on outDir receipts)',
         ),
@@ -234,44 +255,44 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.log(color.dim(`  (index update skipped: ${msg})`));
+    say(color.dim(`  (index update skipped: ${msg})`));
   }
 
-  console.log(color.green('✓') + ` Wrote receipt: ${outPath}`);
+  say(color.green('✓') + ` Wrote receipt: ${outPath}`);
   const scope = uncommitted ? 'uncommitted' : rangeLabel;
-  console.log(
+  say(
     `  ${files.length} file(s), +${ins}/−${del}, ${risks.length} risk hint(s)` +
       (riskSum.maxSeverity ? ` [max: ${riskSum.maxSeverity}]` : '') +
       `, range ${scope}`,
   );
   if (typeof commitsAhead === 'number' && (opts.base || opts.since)) {
-    console.log(
+    say(
       `  ${commitsAhead} commit(s) ahead` +
         (opts.base || opts.since ? ` of ${opts.base || opts.since}` : ''),
     );
   }
   if (uncommitted) {
-    console.log(color.yellow('  ⚠ Snapshot is uncommitted (working tree, not HEAD).'));
+    say(color.yellow('  ⚠ Snapshot is uncommitted (working tree, not HEAD).'));
   }
   if (redacted) {
-    console.log(color.yellow('  ⚠ Receipt redacted — high/secret findings masked.'));
+    say(color.yellow('  ⚠ Receipt redacted — high/secret findings masked.'));
   }
   if (ignored.length) {
-    console.log(
+    say(
       color.dim(
         `  ignored ${ignored.length} path(s) via config ignore globs (noise)`,
       ),
     );
   }
   if (cfg.riskAllowlist.length) {
-    console.log(
+    say(
       color.dim(
         `  riskAllowlist active (${cfg.riskAllowlist.length} rule(s))`,
       ),
     );
   }
   if (riskSum.high > 0) {
-    console.log(
+    say(
       color.yellow(
         `  ⚠ ${riskSum.high} high-severity risk hint(s) — review before trusting this session.`,
       ),
@@ -289,5 +310,38 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     );
   }
 
-  return { path: outPath, riskSum, failedOn, uncommitted, tldr, redacted };
+  const sha256 = extractEmbeddedHash(markdown);
+  if (opts.emitGate) {
+    printGate(
+      finalizeGate({
+        command: 'capture',
+        verified: null,
+        failedOn,
+        failOn: opts.failOn ?? null,
+        redacted,
+        uncommitted,
+        path: outPath,
+        jsonPath,
+        htmlPath: null,
+        markdownPath: null,
+        tldr,
+        sha256,
+        risk: riskToGate(riskSum),
+        ignored: ignored.length,
+        reason: failedOn ? failOnReason(opts.failOn, riskSum.maxSeverity) : null,
+      }),
+    );
+  }
+
+  return {
+    path: outPath,
+    riskSum,
+    failedOn,
+    uncommitted,
+    tldr,
+    redacted,
+    ignored: ignored.length,
+    jsonPath,
+    sha256,
+  };
 }
