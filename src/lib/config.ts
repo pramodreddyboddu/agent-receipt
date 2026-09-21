@@ -239,17 +239,26 @@ riskAllowlist: []
 6. Cursor: \`agent-receipt init --cursor\` drops \`.cursor/rules/agent-receipt.mdc\`
    so the agent runs capture itself at session end.
 
-7. Health check: \`agent-receipt doctor\`
+7. Grok Build: \`agent-receipt init --grok\` drops \`.grok/rules/agent-receipt.md\`
+   and a SessionEnd hook. After a session:
 
-8. CI / hooks that should fail on secrets:
+   \`\`\`bash
+   agent-receipt wrap --agent grok --redact --message "what changed"
+   \`\`\`
+
+   Recipe: \`docs/grok-cli.md\` in the agent-receipt package.
+
+8. Health check: \`agent-receipt doctor\`
+
+9. CI / hooks that should fail on secrets:
 
    \`\`\`bash
    agent-receipt capture --fail-on high
    \`\`\`
 
-9. Agent-specific tips: see \`docs/agents.md\` in the package / repo.
+10. Agent-specific tips: see \`docs/agents.md\` in the package / repo.
 
-10. Add \`.agent-receipt/receipts/\` to git if you want receipts committed,
+11. Add \`.agent-receipt/receipts/\` to git if you want receipts committed,
     or keep them local / artifact-only.
 `;
   writeFileSync(notesFile, notes, 'utf8');

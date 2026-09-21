@@ -41,7 +41,10 @@ export async function run(argv: string[] = process.argv): Promise<number> {
   try {
     switch (command) {
       case 'init':
-        cmdInit(cwd, { cursor: flagBool(flags, 'cursor') });
+        cmdInit(cwd, {
+          cursor: flagBool(flags, 'cursor'),
+          grok: flagBool(flags, 'grok'),
+        });
         return 0;
       case 'capture': {
         const noDiffStat = flagBool(flags, 'no-diff-stat');

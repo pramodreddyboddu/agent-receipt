@@ -2,10 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## [1.0.4] — 2026-09-21
+
+### Added
+
+- `init --grok` — writes `.grok/rules/agent-receipt.md` (Grok Build loads it every session) and a SessionEnd hook (`.grok/hooks/agent-receipt.json` + `agent-receipt-wrap.sh`) that runs `wrap --agent grok --redact --uncommitted` **only when the working tree is dirty** (non-blocking; needs `grok --trust` / `/hooks-trust`)
+- [`docs/grok-cli.md`](docs/grok-cli.md) — post-session recipe for the Grok Build CLI
+- `scripts/grok-wrap.sh` and npm script `wrap:grok` — `wrap --agent grok --redact` (does not force `--uncommitted`; a dirty tree is captured automatically)
+- Example copies under `examples/.grok/`
 
 ### Changed
 
+- Package version bumped to `1.0.4`
 - Promote CI to `.github/workflows/ci.yml` (docs mirror retained under `docs/github-actions-ci.yml`)
 - Add OIDC Trusted Publishing release workflow (`.github/workflows/release.yml`) — no long-lived `NPM_TOKEN`
 - Document Trusted Publisher + GitHub Environment setup in `docs/RELEASE.md`

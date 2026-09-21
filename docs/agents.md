@@ -11,7 +11,8 @@ agent-receipt install-hooks
 ```
 
 Also see the short copies under [`examples/`](../examples/) (`AGENTS.md`,
-`claude-code.md`, `aider.md`, `hooks.md`, `.cursor/rules/`).
+`claude-code.md`, `aider.md`, `hooks.md`, `.cursor/rules/`, `.grok/`).
+Grok Build: [`grok-cli.md`](grok-cli.md).
 
 ## Cursor
 
@@ -56,6 +57,29 @@ agent-receipt uninstall-hooks
 ```
 
 Suggested flags: `--agent cursor`, `--session <chat-title>`, `--json`.
+
+## Grok Build CLI
+
+**Best path:** `agent-receipt init --grok` drops
+[`.grok/rules/agent-receipt.md`](../examples/.grok/rules/agent-receipt.md)
+plus a SessionEnd hook that wraps **uncommitted** work with `--redact`.
+Trust project hooks once (`grok --trust` or `/hooks-trust`).
+
+After a session (recommended — names what changed; dirty tree is automatic):
+
+```bash
+agent-receipt wrap --agent grok --redact --message "grok: auth refactor"
+agent-receipt last
+agent-receipt verify
+```
+
+Force a dirty snapshot (errors if clean):
+
+```bash
+agent-receipt wrap --agent grok --redact --uncommitted --message "uncommitted grok work"
+```
+
+Details: [`grok-cli.md`](grok-cli.md).
 
 ## Claude Code
 

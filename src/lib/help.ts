@@ -4,19 +4,23 @@ const TOPICS: Record<string, string> = {
   init: `agent-receipt init — write config + setup notes
 
 Usage:
-  agent-receipt init [--cursor] [--cwd <path>]
+  agent-receipt init [--cursor] [--grok] [--cwd <path>]
 
 Options:
   --cursor               Drop .cursor/rules/agent-receipt.mdc (agent runs capture)
+  --grok                 Drop .grok rule + SessionEnd hook (dirty-tree wrap, --redact)
 
 Creates:
   .agent-receipt.yml          config (outDir, agent, ignore globs, …)
   .agent-receipt/SETUP.md     short next-steps
   .cursor/rules/…             only with --cursor
+  .grok/rules/…               only with --grok (loaded every Grok session)
+  .grok/hooks/…               only with --grok (SessionEnd; needs grok --trust)
 
 Examples:
   agent-receipt init
   agent-receipt init --cursor
+  agent-receipt init --grok
   agent-receipt init --cwd ~/code/my-app
 `,
 
@@ -83,6 +87,8 @@ Exit codes: 0 OK, 2 fail-on threshold or verify failure, 1 error.
 
 Examples:
   agent-receipt wrap --agent cursor --message "done with auth"
+  agent-receipt wrap --agent grok --redact --message "grok session"
+  agent-receipt wrap --agent grok --redact --uncommitted --message "wip"
   agent-receipt wrap --agent cursor --base main
   agent-receipt wrap --fail-on high
 `,
@@ -322,7 +328,7 @@ Usage:
   agent-receipt <command> [options]
 
 Commands:
-  init                   Write .agent-receipt.yml + setup notes
+  init                   Write config + notes (--cursor, --grok drop agent rules)
   capture                Capture a git snapshot receipt (Markdown)
   wrap                   End-of-session: capture + TL;DR + verify
   export [path]          Write self-contained HTML (or Markdown) receipt
@@ -354,7 +360,9 @@ Quickstart (≈ 60 seconds):
 
 Examples:
   agent-receipt init --cursor
+  agent-receipt init --grok
   agent-receipt wrap --agent cursor --message "session done"
+  agent-receipt wrap --agent grok --redact --message "grok session"
   agent-receipt capture --agent cursor --message "ship v0.6"
   agent-receipt capture --base main --message "PR vs main"
   agent-receipt capture --uncommitted --message "wip"
@@ -374,7 +382,7 @@ Examples:
   agent-receipt help wrap
 
 Docs: https://github.com/pramodreddyboddu/agent-receipt
-Agent tips: docs/agents.md · examples/ (Cursor, Claude Code, Aider)
+Agent tips: docs/agents.md · docs/grok-cli.md · examples/ (Cursor, Grok, Claude Code, Aider)
 Schema: docs/receipt.schema.json · Release: docs/RELEASE.md
 `;
 }
