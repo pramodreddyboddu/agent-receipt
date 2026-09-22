@@ -180,6 +180,7 @@ export function cmdShare(
     redact,
     format: 'html',
     quiet: true,
+    audit: false,
   });
 
   let markdownPath: string | null = null;
@@ -189,6 +190,7 @@ export function cmdShare(
       redact,
       format: 'markdown',
       quiet: true,
+      audit: false,
     });
     markdownPath = md.path;
   }

@@ -26,6 +26,15 @@ export interface AgentReceiptConfig {
    * Invalid values are kept so `doctor` / `validateConfig` can report them.
    */
   failOn?: string;
+  /**
+   * Keep at most this many receipts under outDir. Unset = no count cap.
+   * `prune` is the only command that deletes, and only when a limit is set.
+   */
+  maxCount?: number;
+  /** Delete receipts strictly older than this many days. Unset = no age cap. */
+  maxAgeDays?: number;
+  /** Set when maxCount / maxAgeDays were present but not integers >= 1. */
+  retentionInvalid?: string[];
 }
 
 const DEFAULTS: AgentReceiptConfig = {
@@ -127,6 +136,17 @@ export function parseSimpleYaml(text: string): Record<string, YamlValue> {
   return out;
 }
 
+function parseRetentionInt(
+  value: YamlValue | undefined,
+  key: string,
+  problems: string[],
+): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 1) return value;
+  problems.push(`${key} must be an integer >= 1`);
+  return undefined;
+}
+
 function asStringList(v: YamlValue | undefined, fallback: string[]): string[] {
   if (Array.isArray(v)) return v.map(String);
   if (typeof v === 'string' && v.trim()) {
@@ -159,6 +179,9 @@ export function loadConfig(cwd: string): AgentReceiptConfig {
   } else {
     failOn = String(parsed.failOn).toLowerCase();
   }
+  const retentionInvalid: string[] = [];
+  const maxCount = parseRetentionInt(parsed.maxCount, 'maxCount', retentionInvalid);
+  const maxAgeDays = parseRetentionInt(parsed.maxAgeDays, 'maxAgeDays', retentionInvalid);
   return {
     outDir: String(parsed.outDir ?? DEFAULTS.outDir),
     defaultAgent: String(parsed.defaultAgent ?? DEFAULTS.defaultAgent),
@@ -173,6 +196,9 @@ export function loadConfig(cwd: string): AgentReceiptConfig {
     redact,
     redactInvalid: redactInvalid || undefined,
     failOn,
+    maxCount,
+    maxAgeDays,
+    retentionInvalid: retentionInvalid.length ? retentionInvalid : undefined,
   };
 }
 
@@ -219,6 +245,18 @@ export function validateConfig(cfg: AgentReceiptConfig): string[] {
   ) {
     problems.push('failOn must be high, medium, or low');
   }
+  if (cfg.retentionInvalid?.length) {
+    problems.push(...cfg.retentionInvalid);
+  }
+  if (cfg.maxCount !== undefined && (!Number.isInteger(cfg.maxCount) || cfg.maxCount < 1)) {
+    problems.push('maxCount must be an integer >= 1');
+  }
+  if (
+    cfg.maxAgeDays !== undefined &&
+    (!Number.isInteger(cfg.maxAgeDays) || cfg.maxAgeDays < 1)
+  ) {
+    problems.push('maxAgeDays must be an integer >= 1');
+  }
   return problems;
 }
 
@@ -252,6 +290,12 @@ riskAllowlist: []
 # and docs/business.md. share still redacts unless you pass --no-redact.
 # redact: true
 # failOn: high
+
+# Retention is opt-in. Nothing is deleted until you set one of these
+# and run \`agent-receipt prune\` (preview with \`--dry-run\`).
+# Capture / wrap / watch do not prune.
+# maxCount: 100
+# maxAgeDays: 30
 `;
   writeFileSync(configFile, yaml, 'utf8');
 
@@ -316,13 +360,18 @@ riskAllowlist: []
     \`docs/business.md\` in the agent-receipt package.
     Copy \`examples/org-policy.yml\` when you want redact + failOn by default.
 
-12. \`wrap\` and \`share\` append \`.agent-receipt/audit.jsonl\` (experimental
-    hash chain, not a signature). \`agent-receipt audit --verify\` checks it.
-    The log has no diff bodies. Capture / watch do not append.
+12. \`capture\`, \`watch\`, \`wrap\`, \`share\`, and \`export\` append
+    \`.agent-receipt/audit.jsonl\` (experimental hash chain, not a signature).
+    \`agent-receipt audit --verify\` checks it. The log has no diff bodies
+    and no session \`--message\`.
 
-13. Agent-specific tips: see \`docs/agents.md\` in the package / repo.
+13. Retention is opt-in. Set \`maxCount\` and/or \`maxAgeDays\` above, preview
+    with \`agent-receipt prune --dry-run\`, then \`agent-receipt prune\`.
+    See \`docs/business.md\`. Nothing is deleted until you do that.
 
-14. Add \`.agent-receipt/\` to git if you want receipts committed, or keep
+14. Agent-specific tips: see \`docs/agents.md\` in the package / repo.
+
+15. Add \`.agent-receipt/\` to git if you want receipts committed, or keep
     them local / CI-artifact-only. See retention notes in \`docs/business.md\`.
 `;
   writeFileSync(notesFile, notes, 'utf8');

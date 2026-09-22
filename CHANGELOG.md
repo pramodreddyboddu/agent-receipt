@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.7] — 2026-09-22
+
+### Added
+
+- Audit log coverage for `capture`, `watch`, and `export` / `html`. Same line shape as wrap/share (`path`, `sha256`, `agent`, `redacted`, `verified`, `failedOn`, `exitCode`, `prev`). No diff body and no `--message`. `wrap` still records one `wrap` line (not a second capture). `share` still records one `share` line (not a second export). `watch` records one `watch` line per capture. `audit --verify` checks the same hash chain.
+- `prune` / `retain` — opt-in deletion of old receipts under `outDir`. Config keys `maxCount` and `maxAgeDays` (integers ≥ 1). Nothing is deleted until a limit is set. `--dry-run` prints the plan and does not rewrite `index.json`. Apply deletes the markdown and its sibling `.json`, then refreshes the index (temp file + rename) and drops rows whose files are already gone. Refuses a repo-root or outside-repo `outDir`, symlinks, and a broken `index.json` (no deletes). Does not touch `audit.jsonl`.
+- `doctor` **retention** row: INFO when opt-in is off, WARN on disk pressure (100 receipts or 20 MB with no limit, or a limit that would delete files), FAIL on invalid keys or an unsafe `outDir`. WARN stays non-fatal.
+- Redaction and risk hints for OpenAI `sk-` / `sk-proj-`, Anthropic `sk-ant-`, Hugging Face `hf_`, and `Authorization: Bearer` tokens.
+
+### Changed
+
+- Package version bumped to `1.0.7`
+- Docs CI mirror ([`docs/github-actions-ci.yml`](docs/github-actions-ci.yml)) also runs `prune --dry-run --json` and checks that retention stays off.
+
+### Notes
+
+- Live [`.github/workflows/ci.yml`](.github/workflows/ci.yml) was **not** updated. `gh auth status` scopes were `gist`, `read:org`, and `repo` — no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Deferred: cryptographic signing, SSO / IdP, Cloud Agents, and a background deleter. `prune` does not append audit events.
+
 ## [1.0.6] — 2026-09-21
 
 ### Added

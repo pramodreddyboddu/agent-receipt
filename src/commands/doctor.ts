@@ -18,6 +18,7 @@ import {
 import { VERSION } from '../lib/version.js';
 import { color } from '../lib/color.js';
 import { auditLogPath, verifyAuditChain } from '../lib/audit.js';
+import { retentionCheck } from '../lib/retention.js';
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'info';
 
@@ -149,10 +150,14 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
     } else {
       const redactBit = cfg.redact ? 'redact=on' : 'redact=off';
       const failBit = cfg.failOn ? `failOn=${cfg.failOn}` : 'failOn=unset';
+      const retainBit =
+        cfg.maxCount != null || cfg.maxAgeDays != null
+          ? `maxCount=${cfg.maxCount ?? '—'}, maxAgeDays=${cfg.maxAgeDays ?? '—'}`
+          : 'retention=off';
       checks.push({
         name: 'config',
         status: 'pass',
-        detail: `${CONFIG_NAME} ok (outDir=${cfg.outDir}, ignore=${cfg.ignore.length} glob(s), ${redactBit}, ${failBit})`,
+        detail: `${CONFIG_NAME} ok (outDir=${cfg.outDir}, ignore=${cfg.ignore.length} glob(s), ${redactBit}, ${failBit}, ${retainBit})`,
       });
     }
   }
@@ -280,7 +285,7 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
       checks.push({
         name: 'audit',
         status: 'info',
-        detail: 'audit log present but empty — wrap and share append a line each',
+        detail: 'audit log present but empty — capture, watch, wrap, share, and export append a line each',
       });
     } else {
       const where = chain.brokenAt ? ` at line ${chain.brokenAt}` : '';
@@ -304,10 +309,12 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
       name: 'audit',
       status: writable ? 'info' : 'warn',
       detail: writable
-        ? 'no audit log yet — wrap and share append .agent-receipt/audit.jsonl'
+        ? 'no audit log yet — capture, watch, wrap, share, and export append .agent-receipt/audit.jsonl'
         : 'cannot write .agent-receipt/audit.jsonl',
     });
   }
+
+  checks.push(retentionCheck(cwd, cfgNow));
 
   if (!inRepo) {
     checks.push({
@@ -387,7 +394,17 @@ function icon(status: CheckStatus): string {
 }
 
 const ENV_CHECKS = new Set(['node', 'git', 'repo', 'outDir', 'cli']);
-const PROD_CHECKS = ['config', 'hooks', 'redact', 'policy', 'audit', 'git-clean', 'cursor', 'grok'];
+const PROD_CHECKS = [
+  'config',
+  'hooks',
+  'redact',
+  'policy',
+  'audit',
+  'retention',
+  'git-clean',
+  'cursor',
+  'grok',
+];
 
 function printCheck(c: DoctorCheck): void {
   console.log(`  [${icon(c.status)}] ${c.name.padEnd(10)} ${c.detail}`);

@@ -12,8 +12,9 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6: live .github/workflows/ci.yml was left unchanged because the
-# checkout token's scopes were gist, read:org, repo (no workflow).
+# v1.0.6 and v1.0.7: live .github/workflows/ci.yml was left unchanged
+# because the checkout token's scopes were gist, read:org, repo
+# (no workflow).
 name: CI
 
 on:
@@ -44,6 +45,7 @@ jobs:
           node bin/agent-receipt.js help
           node bin/agent-receipt.js help share
           node bin/agent-receipt.js help audit
+          node bin/agent-receipt.js help prune
           node bin/agent-receipt.js version
           node bin/agent-receipt.js --version
       - name: share --json smoke
@@ -63,3 +65,6 @@ jobs:
           node bin/agent-receipt.js share --json --cwd "$tmp" > "$tmp/share.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="share"||g.redacted!==true||g.exitCode!==0||typeof g.sha256!=="string"){console.error(g); process.exit(1)}' "$tmp/share.json"
           node bin/agent-receipt.js audit --verify --cwd "$tmp"
+          # Retention is opt-in: dry-run with no limits must delete nothing.
+          node bin/agent-receipt.js prune --dry-run --json --cwd "$tmp" > "$tmp/prune.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.enabled!==false||g.dryRun!==true||g.deleted.length!==0||g.indexUpdated!==false){console.error(g); process.exit(1)}' "$tmp/prune.json"

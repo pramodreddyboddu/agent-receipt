@@ -31,7 +31,8 @@ import {
 } from '../lib/receipt.js';
 import { updateIndexOnCapture } from '../lib/receipt-index.js';
 import { prepareRedactedBody } from '../lib/redact.js';
-import { appendHashFooter, extractEmbeddedHash } from '../lib/hash.js';
+import { appendHashFooter, extractEmbeddedHash, verifyMarkdown } from '../lib/hash.js';
+import { recordAuditEvent } from '../lib/audit.js';
 import { VERSION } from '../lib/version.js';
 import { color } from '../lib/color.js';
 import {
@@ -72,6 +73,12 @@ export interface CaptureOptions {
    * unless this is set (the CLI sets both for `capture --json`).
    */
   emitGate?: boolean;
+  /**
+   * Append `.agent-receipt/audit.jsonl`. Default `capture`.
+   * `false` when wrap records its own event. `watch` when watch is the
+   * user-facing command (one line, not a second capture line).
+   */
+  audit?: false | 'capture' | 'watch';
 }
 
 export interface CaptureResult {
@@ -311,6 +318,20 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
   }
 
   const sha256 = extractEmbeddedHash(markdown);
+  const verified = verifyMarkdown(markdown).ok;
+  if (opts.audit !== false) {
+    const exitCode = failedOn ? 2 : 0;
+    recordAuditEvent(cwd, {
+      event: opts.audit === 'watch' ? 'watch' : 'capture',
+      path: outPath,
+      sha256,
+      agent,
+      redacted,
+      verified,
+      failedOn,
+      exitCode,
+    });
+  }
   if (opts.emitGate) {
     printGate(
       finalizeGate({

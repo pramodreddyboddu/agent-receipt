@@ -145,6 +145,21 @@ const CONTENT_PATTERNS: Array<{
     code: 'slack-token',
     label: 'Slack API token',
   },
+  {
+    re: /\bsk-(?:proj-|ant-)?[A-Za-z0-9_\-]{24,}\b/,
+    code: 'llm-api-key',
+    label: 'LLM API key',
+  },
+  {
+    re: /\bhf_[A-Za-z0-9]{20,}\b/,
+    code: 'huggingface-token',
+    label: 'Hugging Face token',
+  },
+  {
+    re: /Authorization\s*:\s*Bearer\s+[A-Za-z0-9\-._~+/=]{20,}/i,
+    code: 'bearer-token',
+    label: 'Authorization bearer token',
+  },
 ];
 
 

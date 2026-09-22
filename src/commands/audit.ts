@@ -20,7 +20,7 @@ function formatEvent(ev: AuditEvent): string {
   const redacted = ev.redacted ? 'redacted' : 'plain';
   const agent = ev.agent ? `  agent=${ev.agent}` : '';
   return (
-    `${ev.ts}  ${ev.event.padEnd(5)}  exit=${ev.exitCode}  ${verified}  ${redacted}` +
+    `${ev.ts}  ${ev.event.padEnd(7)}  exit=${ev.exitCode}  ${verified}  ${redacted}` +
     `  ${shortHash(ev.sha256)}  ${ev.path}${agent}`
   );
 }
@@ -76,7 +76,9 @@ export function cmdAudit(cwd: string, opts: AuditOptions = {}): number {
   console.log(color.bold('agent-receipt audit') + color.dim('  (experimental — not a signature)'));
   console.log(color.dim(auditLogPath(cwd)));
   if (!shown.length) {
-    console.log('No audit events yet. `wrap` and `share` append one line each.');
+    console.log(
+      'No audit events yet. `capture`, `watch`, `wrap`, `share`, and `export` append one line each.',
+    );
     return 0;
   }
   if (limit && events.length > shown.length) {

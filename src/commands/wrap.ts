@@ -86,6 +86,7 @@ export function cmdWrap(cwd: string, opts: WrapOptions = {}): WrapResult {
     full: opts.full,
     quiet,
     emitGate: false,
+    audit: false,
   });
 
   let tldr = capture.tldr;
