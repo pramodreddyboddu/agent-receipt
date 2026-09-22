@@ -10,6 +10,7 @@ import {
   printGate,
   riskToGate,
 } from '../lib/gate.js';
+import { recordAuditEvent } from '../lib/audit.js';
 
 export interface WrapOptions {
   agent?: string;
@@ -125,6 +126,18 @@ export function cmdWrap(cwd: string, opts: WrapOptions = {}): WrapResult {
       }),
     );
   }
+
+  const exitCode = !verified || capture.failedOn ? 2 : 0;
+  recordAuditEvent(cwd, {
+    event: 'wrap',
+    path: capture.path,
+    sha256: verifiedReport.sha256 || capture.sha256,
+    agent: opts.agent ?? 'wrap',
+    redacted: capture.redacted,
+    verified,
+    failedOn: capture.failedOn,
+    exitCode,
+  });
 
   return {
     path: capture.path,

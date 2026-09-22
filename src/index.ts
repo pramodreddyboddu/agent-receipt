@@ -4,6 +4,7 @@ export { cmdInit, writeCursorRule, writeGrokIntegration } from './commands/init.
 export { cmdCapture } from './commands/capture.js';
 export { cmdWrap } from './commands/wrap.js';
 export { cmdShare } from './commands/share.js';
+export { cmdAudit } from './commands/audit.js';
 export { cmdExport, cmdHtml } from './commands/export.js';
 export { cmdShow, resolveReceiptPath, findLatestReceipt } from './commands/show.js';
 export { cmdLast } from './commands/last.js';
@@ -69,6 +70,14 @@ export {
   filterIgnored,
 } from './lib/ignore.js';
 export { helpFor, globalHelp } from './lib/help.js';
+export {
+  appendAuditEvent,
+  recordAuditEvent,
+  verifyAuditChain,
+  loadAuditEvents,
+  auditLogPath,
+  AUDIT_REL,
+} from './lib/audit.js';
 
 export {
   loadIndex,

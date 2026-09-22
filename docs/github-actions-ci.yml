@@ -1,9 +1,19 @@
-# Mirror / fallback copy of .github/workflows/ci.yml
-# Canonical path: .github/workflows/ci.yml
-# If GitHub OAuth lacks the `workflow` scope and you cannot push workflows,
-# copy this file manually:
+# Intended CI workflow. Copy onto .github/workflows/ci.yml.
+# Canonical path once installed: .github/workflows/ci.yml
+#
+# Updating that live file needs the GitHub OAuth `workflow` scope
+# (in addition to `repo`). `gh auth status` must list `workflow`.
+# Refresh:  gh auth refresh -h github.com -s workflow
+# Fine-grained PAT: Actions Read and write. GitHub App: Workflows.
+# Without it, GitHub rejects the push
+# ("refusing to allow an OAuth App to create or update workflow
+# `.github/workflows/ci.yml` without `workflow` scope").
+# This mirror is the file to install:
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
+#
+# v1.0.6: live .github/workflows/ci.yml was left unchanged because the
+# checkout token's scopes were gist, read:org, repo (no workflow).
 name: CI
 
 on:
@@ -33,5 +43,23 @@ jobs:
         run: |
           node bin/agent-receipt.js help
           node bin/agent-receipt.js help share
+          node bin/agent-receipt.js help audit
           node bin/agent-receipt.js version
           node bin/agent-receipt.js --version
+      - name: share --json smoke
+        run: |
+          set -eu
+          tmp=$(mktemp -d)
+          git -C "$tmp" init
+          git -C "$tmp" config user.email ci@example.com
+          git -C "$tmp" config user.name CI
+          printf '# smoke\n' > "$tmp/README.md"
+          git -C "$tmp" add README.md
+          git -C "$tmp" commit -m smoke
+          # Command comes first. A leading --cwd is parsed as help.
+          node bin/agent-receipt.js init --cwd "$tmp"
+          node bin/agent-receipt.js wrap --cwd "$tmp" --agent ci --message smoke --json > "$tmp/wrap.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="wrap"||g.exitCode!==0){console.error(g); process.exit(1)}' "$tmp/wrap.json"
+          node bin/agent-receipt.js share --cwd "$tmp" --json > "$tmp/share.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="share"||g.redacted!==true||g.exitCode!==0||typeof g.sha256!=="string"){console.error(g); process.exit(1)}' "$tmp/share.json"
+          node bin/agent-receipt.js audit --cwd "$tmp" --verify

@@ -312,13 +312,18 @@ riskAllowlist: []
     agent-receipt share --md share.md --out share.html
     \`\`\`
 
-11. Team rollout, org policy, and what not to put in receipts:
+11. Team rollout, org policy, CI gate examples, audit log, and retention:
     \`docs/business.md\` in the agent-receipt package.
+    Copy \`examples/org-policy.yml\` when you want redact + failOn by default.
 
-12. Agent-specific tips: see \`docs/agents.md\` in the package / repo.
+12. \`wrap\` and \`share\` append \`.agent-receipt/audit.jsonl\` (experimental
+    hash chain, not a signature). \`agent-receipt audit --verify\` checks it.
+    The log has no diff bodies. Capture / watch do not append.
 
-13. Add \`.agent-receipt/receipts/\` to git if you want receipts committed,
-    or keep them local / artifact-only.
+13. Agent-specific tips: see \`docs/agents.md\` in the package / repo.
+
+14. Add \`.agent-receipt/\` to git if you want receipts committed, or keep
+    them local / CI-artifact-only. See retention notes in \`docs/business.md\`.
 `;
   writeFileSync(notesFile, notes, 'utf8');
   return { configFile, notesFile };

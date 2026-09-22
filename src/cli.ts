@@ -19,6 +19,7 @@ import { cmdWatch } from './commands/watch.js';
 import { cmdWrap } from './commands/wrap.js';
 import { cmdExport, cmdHtml } from './commands/export.js';
 import { cmdShare } from './commands/share.js';
+import { cmdAudit } from './commands/audit.js';
 
 const JSON_GATE_COMMANDS = new Set(['capture', 'wrap', 'share', 'verify']);
 
@@ -190,6 +191,13 @@ export async function run(argv: string[] = process.argv): Promise<number> {
       }
       case 'doctor':
         return cmdDoctor(cwd);
+      case 'audit':
+      case 'log':
+        return cmdAudit(cwd, {
+          json: flagBool(flags, 'json'),
+          verify: flagBool(flags, 'verify'),
+          limit: flagNumber(flags, 'limit'),
+        });
       case 'compare':
       case 'diff':
         return cmdCompare(cwd, positional[0], positional[1]);

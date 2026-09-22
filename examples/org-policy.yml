@@ -7,6 +7,10 @@
 #
 # share redacts even when `redact` is false. This file turns redact on for
 # capture / wrap / watch as well, and fails the gate on high-severity findings.
+#
+# wrap and share also append .agent-receipt/audit.jsonl (experimental hash
+# chain, not a signature). Retention: docs/business.md#enterprise-sso-free
+# CI example: examples/github/pr-gate.yml
 
 outDir: .agent-receipt/receipts
 defaultAgent: agent

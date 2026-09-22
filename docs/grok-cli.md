@@ -97,13 +97,14 @@ agent-receipt html --redact --out share.html
 Grok may pass hook JSON on stdin and leave the pipe open (no EOF). The
 SessionEnd script and `scripts/grok-wrap.sh` **must not block waiting for EOF**.
 
-- A tty is not read.
-- Otherwise one `read` of at most `HOOK_STDIN_MAX` bytes (default 65536) is
-  drained, capped by `HOOK_STDIN_WAIT_SEC` (default `0.4`) when `timeout` is
-  on `PATH`. A short payload returns immediately even if the writer never
-  closes. Without `timeout`, `node` applies the same cap.
-- With neither, stdin is left unread — still not a hang. The scripts do not
-  `cat` until EOF.
+- A tty is not read and is not redirected.
+- Otherwise `node` (preferred) drains until `HOOK_STDIN_MAX` (default 65536),
+  EOF, or `HOOK_STDIN_WAIT_SEC` (default `0.4`), and stops ~30ms after the
+  last chunk. A short payload returns even if the writer never closes.
+- If `node` is missing, GNU `timeout` + `dd` does one `read(2)`, and only
+  when `timeout` accepts the wait value (BusyBox rejects `0.4` and is skipped).
+- Stdin is then redirected from `/dev/null`, so a writer blocked on a full
+  pipe gets `EPIPE` instead of stalling wrap. The scripts do not `cat` until EOF.
 - The JSON is discarded. Wrap is decided from `git status`, not the payload.
 
 Full note: [docs/business.md](business.md#sessionend-stdin-contract).

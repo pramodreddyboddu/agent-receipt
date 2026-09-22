@@ -95,6 +95,7 @@ Options:
 Exit codes: 0 OK, 2 fail-on threshold or verify failure, 1 usage/runtime error.
 \`--json\` does not change those codes. Both failures still exit 2; the gate
 object sets \`failedOn\` and \`verified\` so CI can tell them apart.
+A line is appended to \`.agent-receipt/audit.jsonl\` (see \`help audit\`).
 
 Examples:
   agent-receipt wrap --agent cursor --message "done with auth"
@@ -137,6 +138,7 @@ Options:
   --cwd <path>           Run as if started in this directory
 
 Exit codes: 0 OK, 2 verify failure or --fail-on, 1 usage/runtime error.
+Appends \`.agent-receipt/audit.jsonl\` (experimental hash chain; see \`help audit\`).
 
 Examples:
   agent-receipt share
@@ -287,6 +289,38 @@ Examples:
   agent-receipt verify --fail-on high --json
 `,
 
+  audit: `agent-receipt audit — list the local wrap/share compliance log
+
+Usage:
+  agent-receipt audit [--limit <N>] [--json]
+  agent-receipt audit --verify [--json]
+  agent-receipt log                  # alias
+
+\`wrap\` and \`share\` append one JSON line to \`.agent-receipt/audit.jsonl\`.
+The log stores event, path, sha256, agent, redacted, verified, exit code.
+It does **not** store diff bodies or the session \`--message\`.
+
+Each line's \`prev\` is the SHA-256 of the previous line (or null on the
+first). \`audit --verify\` checks that chain. Exit 0 = intact, exit 2 =
+mismatch, exit 1 = unreadable. This is **experimental** tamper-evidence
+for the log — not a signature and not PKI.
+
+\`--json\` prints a JSON array, oldest first. \`--limit\` keeps the newest N.
+\`--verify --json\` prints \`{ ok, events, brokenAt, reason }\` instead.
+
+Capture, watch, and export do not append. Use wrap or share when the
+team log should move.
+
+Examples:
+  agent-receipt audit
+  agent-receipt audit --limit 10
+  agent-receipt audit --json
+  agent-receipt audit --verify
+  agent-receipt log --verify
+`,
+
+  log: `See: agent-receipt help audit`,
+
   doctor: `agent-receipt doctor — environment health check
 
 Usage:
@@ -303,6 +337,8 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
   config        .agent-receipt.yml present + valid (shows redact / failOn)
   hooks         managed post-commit hook installed?
   redact        redact: true in config, or still optional (share redacts by default)
+  policy        redact on AND failOn set (examples/org-policy.yml)? Optional.
+  audit         .agent-receipt/audit.jsonl chain OK? Missing is info, broken is a warning.
   git-clean     working tree clean? Dirty is a warning, not a failure
   cursor        init --cursor rule present?
   grok          init --grok rule + SessionEnd hook present?
@@ -409,6 +445,8 @@ Commands:
   ls                     Alias for history
   watch                  Poll git; auto-capture on commits or dirty tree
   verify [path]          Hash-check tamper-evident integrity
+  audit                  List wrap/share events (.agent-receipt/audit.jsonl)
+  log                    Alias for audit
   doctor                 Environment health check (git, hooks, config, node)
   compare [a] [b]        Diff two receipts (default: last vs previous)
   diff [a] [b]           Alias for compare
@@ -448,6 +486,8 @@ Examples:
   agent-receipt watch --interval 5
   agent-receipt last
   agent-receipt verify
+  agent-receipt audit
+  agent-receipt audit --verify
   agent-receipt doctor
   agent-receipt compare
   agent-receipt install-hooks
@@ -455,7 +495,7 @@ Examples:
 
 Docs: https://github.com/pramodreddyboddu/agent-receipt
 Agent tips: docs/agents.md · docs/grok-cli.md · examples/ (Cursor, Grok, Claude Code, Aider)
-Prod / CI: docs/business.md · examples/org-policy.yml
+Prod / CI: docs/business.md · examples/org-policy.yml · examples/github/
 Schema: docs/receipt.schema.json · Release: docs/RELEASE.md
 `;
 }

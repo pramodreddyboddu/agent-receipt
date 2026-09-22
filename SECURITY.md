@@ -25,9 +25,10 @@ You should hear back within a few days. Coordinated disclosure is preferred.
 ## What this tool is (and is not)
 
 `agent-receipt` produces **tamper-evident** Markdown/HTML receipts (SHA-256 of the
-canonical body). It is **not**:
+canonical body). `audit` adds an experimental hash chain over wrap/share events
+(`.agent-receipt/audit.jsonl`). It is **not**:
 
-- Cryptographic signing (no keys, no PKI)
+- Cryptographic signing (no keys, no PKI, including the audit log)
 - A substitute for `gitleaks`, secret scanning CI, or code review
 - A guarantee that a session was safe to ship
 
@@ -45,8 +46,10 @@ It will:
 
 Use `--fail-on` / CI as a **tripwire**, not as your only control. Prefer
 `share` (redact is on unless `--no-redact`) or `--redact` when sharing receipts
-outside a trusted channel (masks credential URLs / DB passwords as well as API
-keys, and omits nested prior-receipt bodies). Redaction is not a DLP guarantee.
+outside a trusted channel (masks credential URLs / DB passwords, common cloud
+tokens such as GitHub `gho_`/`ghs_`, GitLab `glpat-`, Google, npm, Stripe,
+SendGrid, Slack, and Azure `AccountKey`, and omits nested prior-receipt
+bodies). Redaction is not a DLP guarantee.
 See [`docs/business.md`](docs/business.md) for what not to put in receipts.
 
 ## Supply chain

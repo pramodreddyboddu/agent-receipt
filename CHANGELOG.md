@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.6] — 2026-09-21
+
+### Added
+
+- `audit` / `log` — append-only `.agent-receipt/audit.jsonl` for `wrap` and `share` (path, sha256, agent, redacted, verified, exit code; no diff body and no `--message`). `prev` is the SHA-256 of the previous line. `audit --verify` exits 0 when the chain matches and 2 when a line was edited. Experimental tamper-evidence, not a signature.
+- `doctor` prod checklist rows **policy** (redact + failOn, optional) and **audit** (chain OK / missing / broken). WARN/INFO stay non-fatal.
+- Cloud-token redaction and risk hints: GitHub `gho_` / `ghu_` / `ghs_` / `ghr_` (with `ghp_`), GitLab `glpat-`, npm, Google `AIza` / `ya29.`, AWS `ASIA`, Stripe, SendGrid, Slack `xoxc` / `xoxe` / `xapp` / webhook URLs, Azure `AccountKey` / `SharedAccessKey`, and `sig=` query params.
+- [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) — pull-request and reusable workflow for `--fail-on` + `--json`. [`examples/github/action.yml`](examples/github/action.yml) — composite action.
+- Enterprise section in [`docs/business.md`](docs/business.md): SSO-free rollout, org policy, CI gate, share defaults, audit, retention for `.agent-receipt/`.
+
+### Fixed
+
+- SessionEnd / `scripts/grok-wrap.sh`: prefer `node` for a multi-chunk drain; skip `timeout` when it rejects the wait value (BusyBox fractional seconds). After the drain, stdin is redirected from `/dev/null` so a host blocked on a full write gets `EPIPE` instead of stalling wrap.
+
+### Changed
+
+- Package version bumped to `1.0.6`
+- Docs CI mirror ([`docs/github-actions-ci.yml`](docs/github-actions-ci.yml)) runs a temp-repo `wrap --json` and `share --json` smoke plus `audit --verify`.
+
+### Notes
+
+- Live [`.github/workflows/ci.yml`](.github/workflows/ci.yml) was **not** updated. The `gh` token scopes were `gist`, `read:org`, and `repo` — no `workflow` scope — and GitHub rejects workflow-file pushes without it. Install the mirror after `gh auth refresh -h github.com -s workflow` (fine-grained PAT: Actions Read and write). See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Deferred: cryptographic signing, SSO, Cloud Agents, automatic receipt deletion, and audit events for capture / watch / export.
+
 ## [1.0.5] — 2026-09-21
 
 ### Added

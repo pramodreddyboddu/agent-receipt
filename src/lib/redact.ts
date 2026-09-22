@@ -18,16 +18,65 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
     replacement: 'AKIA[REDACTED]',
   },
   {
-    re: /\bghp_[A-Za-z0-9]{36}\b/g,
-    replacement: 'ghp_[REDACTED]',
+    re: /\bASIA[0-9A-Z]{16}\b/g,
+    replacement: 'ASIA[REDACTED]',
+  },
+  {
+    // ghp_ classic, gho_ OAuth, ghu_ user-to-server, ghs_ server, ghr_ refresh
+    re: /\b(gh[pousr]_)[A-Za-z0-9]{36}\b/g,
+    replacement: '$1[REDACTED]',
   },
   {
     re: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/g,
     replacement: 'github_pat_[REDACTED]',
   },
   {
+    re: /\b(glpat-)[A-Za-z0-9\-_]{20,}\b/g,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    re: /\b(npm_)[A-Za-z0-9]{36}\b/g,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    re: /\b(AIza)[0-9A-Za-z\-_]{35}\b/g,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    re: /\b(ya29\.)[0-9A-Za-z\-_]{20,}/g,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    re: /\b((?:sk|rk)_(?:live|test)_)[0-9A-Za-z]{10,}\b/g,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    re: /\bSG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g,
+    replacement: 'SG.[REDACTED]',
+  },
+  {
     re: /\bxox[baprs]-[A-Za-z0-9-]{10,}/g,
     replacement: 'xox[REDACTED]',
+  },
+  {
+    re: /\bxox[ce]-[A-Za-z0-9-]{10,}/g,
+    replacement: 'xox[REDACTED]',
+  },
+  {
+    re: /\bxapp-[A-Za-z0-9-]{10,}/g,
+    replacement: 'xapp-[REDACTED]',
+  },
+  {
+    re: /(https:\/\/hooks\.slack\.com\/services\/)[A-Za-z0-9+/]+(?:\/[A-Za-z0-9+/]+){1,}/g,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    re: /(AccountKey\s*=\s*)([^;"'\s]+)/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    re: /(SharedAccessKey\s*=\s*)([^;"'\s]+)/gi,
+    replacement: '$1[REDACTED]',
   },
   {
     re: /-----BEGIN (?:RSA |OPENSSH |EC |DSA |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |DSA |ENCRYPTED )?PRIVATE KEY-----/g,
@@ -50,12 +99,12 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
   },
   {
     // password= / token= / secret= query or form params
-    re: /([?&](?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?token)=)([^&\s"']+)/gi,
+    re: /([?&](?:password|passwd|pwd|secret|token|sig|signature|api[_-]?key|access[_-]?token)=)([^&\s"']+)/gi,
     replacement: '$1[REDACTED]',
   },
   {
     // Generic high-entropy token assignments common in .env diffs
-    re: /((?:API[_-]?KEY|SECRET[_-]?KEY|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|PASSWORD|PRIVATE[_-]?KEY)\s*[:=]\s*["']?)([^\s"'\\]{8,})/gi,
+    re: /((?:API[_-]?KEY|SECRET[_-]?KEY|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|PASSWORD|PRIVATE[_-]?KEY|CLIENT[_-]?SECRET|ACCOUNT[_-]?KEY|SESSION[_-]?TOKEN|NPM[_-]?TOKEN)\s*[:=]\s*["']?)([^\s"'\\]{8,})/gi,
     replacement: '$1[REDACTED]',
   },
   {
@@ -71,6 +120,13 @@ const HIGH_SECRET_CODES = new Set([
   'aws-secret-key',
   'private-key-block',
   'github-token',
+  'gitlab-token',
+  'google-api-key',
+  'google-oauth-token',
+  'stripe-secret',
+  'npm-token',
+  'sendgrid-token',
+  'azure-account-key',
   'slack-token',
   'high-entropy-secret',
   'env-file',

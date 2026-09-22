@@ -81,7 +81,7 @@ const CONTENT_PATTERNS: Array<{
   label: string;
 }> = [
   {
-    re: /\bAKIA[0-9A-Z]{16}\b/,
+    re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/,
     code: 'aws-access-key',
     label: 'AWS access key id',
   },
@@ -96,9 +96,9 @@ const CONTENT_PATTERNS: Array<{
     label: 'AWS secret access key assignment',
   },
   {
-    re: /\bghp_[A-Za-z0-9]{36}\b/,
+    re: /\bgh[pousr]_[A-Za-z0-9]{36}\b/,
     code: 'github-token',
-    label: 'GitHub personal access token',
+    label: 'GitHub token',
   },
   {
     re: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/,
@@ -106,7 +106,42 @@ const CONTENT_PATTERNS: Array<{
     label: 'GitHub fine-grained PAT',
   },
   {
-    re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
+    re: /\bglpat-[A-Za-z0-9\-_]{20,}\b/,
+    code: 'gitlab-token',
+    label: 'GitLab personal access token',
+  },
+  {
+    re: /\bnpm_[A-Za-z0-9]{36}\b/,
+    code: 'npm-token',
+    label: 'npm access token',
+  },
+  {
+    re: /\bAIza[0-9A-Za-z\-_]{35}\b/,
+    code: 'google-api-key',
+    label: 'Google API key',
+  },
+  {
+    re: /\bya29\.[0-9A-Za-z\-_]{20,}/,
+    code: 'google-oauth-token',
+    label: 'Google OAuth access token',
+  },
+  {
+    re: /\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{10,}\b/,
+    code: 'stripe-secret',
+    label: 'Stripe secret key',
+  },
+  {
+    re: /\bSG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/,
+    code: 'sendgrid-token',
+    label: 'SendGrid API key',
+  },
+  {
+    re: /\bAccountKey\s*=\s*[^\s;"']+/i,
+    code: 'azure-account-key',
+    label: 'Azure storage account key',
+  },
+  {
+    re: /\b(?:xox[a-z]-|xapp-)[A-Za-z0-9-]{10,}/,
     code: 'slack-token',
     label: 'Slack API token',
   },

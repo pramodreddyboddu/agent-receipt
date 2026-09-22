@@ -25,9 +25,23 @@ Thanks for helping improve `agent-receipt`.
 
 ## CI workflow
 
-The GitHub Actions workflow lives at [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml)
-(Node 20/22, `npm run build` + `npm test`).
+The intended GitHub Actions workflow is [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml)
+(Node 20/22, `npm test`, `pack:check`, and a temp-repo `wrap --json` /
+`share --json` smoke).
 
-Copy it to `.github/workflows/ci.yml` with a token that has the `workflow` OAuth
-scope (or via the GitHub UI), then commit — some OAuth tokens cannot push
-workflow files.
+The live file is `.github/workflows/ci.yml`. Updating it requires the OAuth
+**`workflow`** scope in addition to `repo`:
+
+```bash
+gh auth refresh -h github.com -s workflow
+gh auth status   # Token scopes must include workflow
+cp docs/github-actions-ci.yml .github/workflows/ci.yml
+```
+
+`gh auth status` on the token used for the 1.0.6 cut listed `gist`, `read:org`,
+and `repo` only, so that live file was not modified. GitHub rejects the push
+with: refusing to allow an OAuth App to create or update workflow
+`.github/workflows/ci.yml` without `workflow` scope.
+
+Fine-grained PATs need **Actions: Read and write**. GitHub Apps need the
+**Workflows** permission. Do not force-push.

@@ -18,6 +18,7 @@ import {
   printGate,
   riskToGate,
 } from '../lib/gate.js';
+import { recordAuditEvent } from '../lib/audit.js';
 
 export interface ShareOptions {
   /** HTML output path. Default: sibling `.html` next to the receipt. */
@@ -51,6 +52,12 @@ export interface ShareResult {
 
 function sibling(source: string, suffix: string): string {
   return source.replace(/\.md$/i, '') + suffix;
+}
+
+function agentFromReceipt(markdown: string): string | null {
+  const m = markdown.match(/^- \*\*Agent\*\*:\s*(.+)$/m);
+  const agent = m?.[1]?.trim();
+  return agent || null;
 }
 
 /**
@@ -112,6 +119,16 @@ export function cmdShare(
           ` ${failOnReason(opts.failOn, risk.maxSeverity)} — exiting 2`,
       );
     }
+    recordAuditEvent(cwd, {
+      event: 'share',
+      path: partial.htmlPath || source,
+      sha256: partial.sha256,
+      agent: agentFromReceipt(original),
+      redacted: redact,
+      verified: partial.verified,
+      failedOn,
+      exitCode,
+    });
     return {
       source,
       htmlPath: partial.htmlPath,
