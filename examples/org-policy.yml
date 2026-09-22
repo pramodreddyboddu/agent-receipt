@@ -17,6 +17,9 @@
 # capture, watch, wrap, share, and export append .agent-receipt/audit.jsonl
 # (experimental hash chain, not a signature). List one kind with
 # `audit --event wrap` (also capture, watch, share, export, prune).
+# `audit --agent <name>` is an exact match (agent null does not match).
+# `audit --failed` keeps failedOn or a nonzero exitCode. `--verify` ignores
+# those filters and checks the whole chain.
 # prune appends one line per receipt it deletes and does not delete audit.jsonl.
 # --dry-run does not append.
 #

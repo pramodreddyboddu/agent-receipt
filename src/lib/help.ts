@@ -301,7 +301,7 @@ Examples:
   audit: `agent-receipt audit — list the local compliance log
 
 Usage:
-  agent-receipt audit [--limit <N>] [--json] [--event <name>]
+  agent-receipt audit [--limit <N>] [--json] [--event <name>] [--agent <name>] [--failed]
   agent-receipt audit --verify [--json]
   agent-receipt log                  # alias
 
@@ -309,7 +309,7 @@ Usage:
 line to \`.agent-receipt/audit.jsonl\`. \`prune\` / \`retain\` append one
 \`prune\` line per receipt actually deleted (not on \`--dry-run\`, not when
 nothing is deleted, and not a second line for the sibling \`.json\`).
-The log stores event, path, sha256, agent, redacted, verified, exit code.
+The log stores event, path, sha256, agent, redacted, verified, failedOn, exit code.
 It does **not** store diff bodies or the session \`--message\`.
 
 \`wrap\` records \`wrap\` (not a second \`capture\` line). \`share\` records
@@ -317,26 +317,43 @@ It does **not** store diff bodies or the session \`--message\`.
 
 Each line's \`prev\` is the SHA-256 of the previous line (or null on the
 first). \`audit --verify\` checks that chain. Exit 0 = intact, exit 2 =
-mismatch, exit 1 = unreadable. This is **experimental** tamper-evidence
-for the log — not a signature and not PKI.
+mismatch, exit 1 = unreadable or a bad flag. This is **experimental**
+tamper-evidence for the log — not a signature and not PKI.
 
-\`--json\` prints a JSON array, oldest first. \`--limit\` keeps the newest N.
-\`--verify --json\` prints \`{ ok, command, version, events, brokenAt, reason }\`.
+\`--json\` prints a JSON array, oldest first. \`--verify --json\` prints
+\`{ ok, command, version, events, brokenAt, reason }\`.
 
-\`--event <name>\` filters the listing to one event: \`capture\`, \`watch\`,
-\`wrap\`, \`share\`, \`export\`, or \`prune\` (the names stored on each line).
-It combines with \`--limit\` (newest N of that event) and \`--json\` (still
-a JSON array). An unknown name exits 1. \`--event\` is listing-only:
-\`audit --verify\` ignores it and checks the whole chain. \`log --event\`
-is the same filter.
+Listing filters (optional; \`log\` accepts the same flags):
+
+  \`--event <name>\`   one of \`capture\`, \`watch\`, \`wrap\`, \`share\`, \`export\`, \`prune\`
+  \`--agent <name>\`   exact, case-sensitive match on the \`agent\` field.
+                     Events with \`agent: null\` do not match any \`--agent\` filter.
+  \`--failed\`         keep events where \`failedOn\` is true or \`exitCode\` is not 0
+
+Filter order: load events → \`--event\` (if set) → \`--agent\` (if set) →
+\`--failed\` (if set) → \`--limit\` (newest N of the filtered set) → print.
+Human listing is newest last. \`--json\` prints that same slice as a JSON
+array, oldest first.
+
+No matches is exit 0: an empty human listing, or \`[]\` with \`--json\`.
+Not an error. An unknown \`--event\` name exits 1. \`--agent\` requires a
+name. An unknown flag exits 1.
+
+\`--event\`, \`--agent\`, and \`--failed\` are listing-only. \`audit --verify\`
+ignores them (and \`--limit\`) and checks the whole chain. When one of those
+filters is passed with \`--verify\`, a short note goes to stderr.
 
 Examples:
   agent-receipt audit
   agent-receipt audit --limit 10
   agent-receipt audit --json
   agent-receipt audit --event wrap
-  agent-receipt audit --event wrap --limit 20 --json
+  agent-receipt audit --agent cursor
+  agent-receipt audit --agent cursor --failed
+  agent-receipt audit --event wrap --agent ci --limit 20 --json
   agent-receipt log --event prune
+  agent-receipt log --failed
+  agent-receipt log --agent ci --failed --json
   agent-receipt audit --verify
   agent-receipt log --verify
 `,
@@ -537,7 +554,7 @@ Commands:
   ls                     Alias for history
   watch                  Poll git; auto-capture on commits or dirty tree
   verify [path]          Hash-check tamper-evident integrity
-  audit                  List capture/watch/wrap/share/export/prune events (--event filters the listing)
+  audit                  List the compliance log (--event, --agent, --failed filter the listing)
   log                    Alias for audit
   prune                  Delete old receipts under outDir (opt-in; --dry-run)
   retain                 Alias for prune
@@ -582,6 +599,8 @@ Examples:
   agent-receipt verify
   agent-receipt audit
   agent-receipt audit --event wrap
+  agent-receipt audit --agent cursor --failed
+  agent-receipt log --failed
   agent-receipt audit --verify
   agent-receipt prune --dry-run
   agent-receipt doctor

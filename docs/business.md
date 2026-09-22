@@ -1,6 +1,6 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.9 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.10 for teams: install once, capture every session, fail CI
 on high-severity findings, share only redacted HTML, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
@@ -118,7 +118,7 @@ is the artifact, not the gate.
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -218,7 +218,7 @@ before exiting. You do not need `jq`.
 
 This repo’s own [docs mirror](github-actions-ci.yml) runs a temp-repo
 `wrap --json` + `share --json` smoke, then `doctor --json` and
-`audit --event wrap`. The live
+`audit --event wrap` and `audit --agent ci --failed`. The live
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) does not include
 that smoke yet: the checkout token cannot push workflow files. See
 [Workflow scope](#workflow-scope).
@@ -246,17 +246,32 @@ neither does a run that deletes nothing.
 agent-receipt audit            # newest last, human
 agent-receipt audit --json     # array, oldest first
 agent-receipt audit --event wrap
-agent-receipt audit --event wrap --limit 20 --json
+agent-receipt audit --agent cursor
+agent-receipt audit --agent ci --failed
+agent-receipt audit --event wrap --agent ci --limit 20 --json
 agent-receipt log --event prune
+agent-receipt log --failed
 agent-receipt audit --verify   # exit 0 intact, exit 2 if a line was edited
 agent-receipt log --verify     # alias
 ```
 
 `--event` keeps one of `capture`, `watch`, `wrap`, `share`, `export`, or
-`prune` (the `event` field already written on each line). It applies to the
-listing only, including with `--limit` (newest N of that event) and `--json`
-(still a JSON array, oldest first). An unknown name exits 1. `audit --verify`
-ignores `--event` and checks the whole file.
+`prune` (the `event` field already written on each line). `--agent <name>`
+keeps events whose `agent` field equals that name (exact string,
+case-sensitive). An event with `agent: null` does not match any `--agent`
+filter. `--failed` keeps events where `failedOn` is true or `exitCode` is
+not 0.
+
+Filter order: load the log, then `--event` (if set), then `--agent` (if
+set), then `--failed` (if set), then `--limit` (newest N of what remains).
+The human listing prints that slice oldest → newest (newest last). `--json`
+prints the same slice as a JSON array, oldest first. No matches is exit 0
+and an empty listing (`[]` with `--json`), not an error. An unknown
+`--event` name exits 1. An unknown flag exits 1.
+
+`audit --verify` ignores `--event`, `--agent`, `--failed`, and `--limit`
+and checks the whole file. A short stderr note says so when a listing
+filter is also passed.
 
 Each line has `ts`, `event`, `path`, `sha256`, `agent`, `redacted`,
 `verified`, `failedOn`, `exitCode`, and `prev`. `prev` is the SHA-256 of
@@ -348,19 +363,21 @@ than the people who can already read the git history.
 
 ### Deferred
 
-Not in 1.0.9: cryptographic signing, SSO / IdP, Cloud Agents, a background
+Not in 1.0.10: cryptographic signing, SSO / IdP, Cloud Agents, a background
 job that deletes receipts by itself, live GitHub Actions workflow sync (the
 checkout token has no `workflow` scope), and npm Trusted Publishing (this
 cut does not publish). `prune` stays manual. `doctor --strict` only fails
 unset policy or retention when the receipt directory is already large. CI
-`--fail-on` is still the enforcement point for risk. `doctor --json` and
-`audit --event` are checklist and listing tools; they do not sign the log.
+`--fail-on` is still the enforcement point for risk. `doctor --json`,
+`audit --event`, `audit --agent`, and `audit --failed` are checklist and
+listing tools; they do not sign the log. `history` has no `--agent` filter
+in this cut.
 
 ### Workflow scope
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.9 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.10 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

@@ -117,7 +117,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `history` / `ls` | List recent receipts (`--json`; `[uncommitted]` badge; index at `.agent-receipt/index.json`) |
 | `watch` | Poll git; auto-capture on commits **or dirty tree** (`--once`, `--commits-only`) |
 | `verify [path]` | Hash-check tamper-evident integrity |
-| `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event` filters the listing |
+| `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
 | `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default) |
 | `doctor` | Health check plus a prod checklist (policy, audit, retention, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails only under receipt-dir pressure |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
@@ -136,6 +136,8 @@ agent-receipt prune --dry-run
 agent-receipt doctor --strict
 agent-receipt doctor --json
 agent-receipt audit --event wrap --limit 20
+agent-receipt audit --agent cursor --failed
+agent-receipt log --agent ci --failed --json
 agent-receipt history --json --limit 5
 agent-receipt ls --limit 5
 agent-receipt html --redact --out share.html

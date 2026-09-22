@@ -12,15 +12,28 @@ import { VERSION } from '../lib/version.js';
 
 export interface AuditOptions {
   json?: boolean;
-  /** Check the experimental hash chain. Exit 2 on mismatch. Ignores --event and --limit. */
+  /**
+   * Check the experimental hash chain. Exit 2 on mismatch.
+   * Ignores --event, --agent, --failed, and --limit (whole file).
+   */
   verify?: boolean;
-  /** Newest N events (listing). Ignored by the chain check itself. */
+  /** Newest N events of the filtered listing. Ignored by the chain check. */
   limit?: number;
   /**
    * Listing filter: capture | watch | wrap | share | export | prune.
    * Ignored by --verify (the chain check is the whole file).
    */
   event?: string;
+  /**
+   * Listing filter: exact, case-sensitive match on `agent`.
+   * Events with `agent: null` do not match. Ignored by --verify.
+   */
+  agent?: string;
+  /**
+   * Listing filter: `failedOn === true` or `exitCode !== 0`.
+   * Ignored by --verify.
+   */
+  failed?: boolean;
 }
 
 function requireAuditEvent(value: string | undefined): AuditKind | undefined {
@@ -37,6 +50,68 @@ function shortHash(value: string | null): string {
   return value.slice(0, 12);
 }
 
+/**
+ * Load order is the caller's job. This applies:
+ * `--event` → `--agent` → `--failed` → `--limit` (newest N, file order kept).
+ */
+function applyAuditListingFilters(
+  events: AuditEvent[],
+  opts: { event?: AuditKind; agent?: string; failed?: boolean; limit?: number },
+): AuditEvent[] {
+  let filtered = events;
+  if (opts.event) filtered = filtered.filter((ev) => ev.event === opts.event);
+  if (opts.agent !== undefined) {
+    const name = opts.agent;
+    filtered = filtered.filter((ev) => ev.agent === name);
+  }
+  if (opts.failed) {
+    filtered = filtered.filter((ev) => ev.failedOn === true || ev.exitCode !== 0);
+  }
+  if (opts.limit) filtered = filtered.slice(-opts.limit);
+  return filtered;
+}
+
+function noteVerifyIgnoresFilters(
+  event: AuditKind | undefined,
+  agent: string | undefined,
+  failed: boolean,
+): void {
+  if (event) {
+    console.error(`--event ${event} is listing-only; --verify checks the whole chain.`);
+  }
+  if (agent !== undefined) {
+    console.error(`--agent ${agent} is listing-only; --verify checks the whole chain.`);
+  }
+  if (failed) {
+    console.error('--failed is listing-only; --verify checks the whole chain.');
+  }
+}
+
+function limitScope(event: AuditKind | undefined, agent: string | undefined, failed: boolean): string {
+  const parts: string[] = [];
+  if (event) parts.push(event);
+  if (agent !== undefined) parts.push(`agent=${agent}`);
+  if (failed) parts.push('failed');
+  return parts.length ? ` ${parts.join(' ')}` : '';
+}
+
+function emptyListingMessage(
+  total: number,
+  event: AuditKind | undefined,
+  agent: string | undefined,
+  failed: boolean,
+): string {
+  const other = `${total} other event${total === 1 ? '' : 's'} in the log`;
+  if (event && agent === undefined && !failed) {
+    return `No ${event} events (${other}).`;
+  }
+  const parts: string[] = [];
+  if (event) parts.push(`event=${event}`);
+  if (agent !== undefined) parts.push(`agent=${agent}`);
+  if (failed) parts.push('failed');
+  return `No events match ${parts.join(', ')} (${other}).`;
+}
+
 function formatEvent(ev: AuditEvent): string {
   const verified =
     ev.verified === true ? 'verified' : ev.verified === false ? 'UNVERIFIED' : 'verify=?';
@@ -50,7 +125,10 @@ function formatEvent(ev: AuditEvent): string {
 
 /**
  * Show or check `.agent-receipt/audit.jsonl`.
- * Exit 0 ok, 2 chain mismatch (`--verify`), 1 unreadable log (thrown).
+ * Exit 0 ok (including an empty filtered listing), 2 chain mismatch
+ * (`--verify`), 1 unreadable log or a bad filter (thrown).
+ *
+ * Listing order: load → `--event` → `--agent` → `--failed` → `--limit`.
  */
 export function cmdAudit(cwd: string, opts: AuditOptions = {}): number {
   const limit = opts.limit;
@@ -58,13 +136,11 @@ export function cmdAudit(cwd: string, opts: AuditOptions = {}): number {
     throw new Error('--limit must be an integer >= 1');
   }
   const event = requireAuditEvent(opts.event);
+  const agent = opts.agent;
+  const failed = opts.failed === true;
 
   if (opts.verify) {
-    if (event) {
-      console.error(
-        `--event ${event} is listing-only; --verify checks the whole chain.`,
-      );
-    }
+    noteVerifyIgnoresFilters(event, agent, failed);
     const chain = verifyAuditChain(cwd);
     if (opts.json) {
       console.log(
@@ -97,8 +173,8 @@ export function cmdAudit(cwd: string, opts: AuditOptions = {}): number {
   }
 
   const events = loadAuditEvents(cwd);
-  const filtered = event ? events.filter((ev) => ev.event === event) : events;
-  const shown = limit ? filtered.slice(-limit) : filtered;
+  const filtered = applyAuditListingFilters(events, { event, agent, failed });
+  const shown = applyAuditListingFilters(events, { event, agent, failed, limit });
 
   if (opts.json) {
     console.log(JSON.stringify(shown));
@@ -112,22 +188,35 @@ export function cmdAudit(cwd: string, opts: AuditOptions = {}): number {
       color.dim(`event filter: ${event} (listing only; --verify checks the whole chain)`),
     );
   }
+  if (agent !== undefined) {
+    console.log(
+      color.dim(
+        `agent filter: ${agent} (exact match; agent null does not match; listing only)`,
+      ),
+    );
+  }
+  if (failed) {
+    console.log(
+      color.dim(
+        'failed filter: failedOn or nonzero exitCode (listing only; --verify checks the whole chain)',
+      ),
+    );
+  }
   if (!shown.length) {
     if (!events.length) {
       console.log(
         'No audit events yet. `capture`, `watch`, `wrap`, `share`, `export`, and `prune` (when it deletes) append one line each.',
       );
-    } else if (event) {
-      console.log(
-        `No ${event} events (${events.length} other event${events.length === 1 ? '' : 's'} in the log).`,
-      );
+    } else if (event || agent !== undefined || failed) {
+      console.log(emptyListingMessage(events.length, event, agent, failed));
     }
     return 0;
   }
   if (limit && filtered.length > shown.length) {
-    const scope = event ? ` ${event}` : '';
     console.log(
-      color.dim(`showing newest ${shown.length} of ${filtered.length}${scope} (oldest → newest)`),
+      color.dim(
+        `showing newest ${shown.length} of ${filtered.length}${limitScope(event, agent, failed)} (oldest → newest)`,
+      ),
     );
   }
   for (const ev of shown) console.log(formatEvent(ev));
