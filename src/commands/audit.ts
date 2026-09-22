@@ -1,5 +1,6 @@
 import { auditLogPath, loadAuditEvents, verifyAuditChain, type AuditEvent } from '../lib/audit.js';
 import { color } from '../lib/color.js';
+import { VERSION } from '../lib/version.js';
 
 export interface AuditOptions {
   json?: boolean;
@@ -41,6 +42,8 @@ export function cmdAudit(cwd: string, opts: AuditOptions = {}): number {
       console.log(
         JSON.stringify({
           ok: chain.ok,
+          command: 'audit',
+          version: VERSION,
           events: chain.events,
           brokenAt: chain.brokenAt,
           reason: chain.reason,
@@ -77,7 +80,7 @@ export function cmdAudit(cwd: string, opts: AuditOptions = {}): number {
   console.log(color.dim(auditLogPath(cwd)));
   if (!shown.length) {
     console.log(
-      'No audit events yet. `capture`, `watch`, `wrap`, `share`, and `export` append one line each.',
+      'No audit events yet. `capture`, `watch`, `wrap`, `share`, `export`, and `prune` (when it deletes) append one line each.',
     );
     return 0;
   }

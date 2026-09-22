@@ -203,7 +203,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         return result.exitCode;
       }
       case 'doctor':
-        return cmdDoctor(cwd);
+        return cmdDoctor(cwd, { strict: flagBool(flags, 'strict') });
       case 'audit':
       case 'log':
         return cmdAudit(cwd, {

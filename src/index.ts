@@ -96,6 +96,7 @@ export {
   listReceiptFiles,
   resolveRetentionPolicy,
   retentionCheck,
+  outDirUnderPressure,
   DISK_PRESSURE_BYTES,
   DISK_PRESSURE_COUNT,
 } from './lib/retention.js';

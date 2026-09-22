@@ -7,6 +7,7 @@ import {
   validateConfig,
   configPath,
   CONFIG_NAME,
+  type AgentReceiptConfig,
 } from '../lib/config.js';
 import { MARKER_BEGIN } from './hooks.js';
 import { CURSOR_RULE_REL } from '../lib/cursor-rule.js';
@@ -18,9 +19,18 @@ import {
 import { VERSION } from '../lib/version.js';
 import { color } from '../lib/color.js';
 import { auditLogPath, verifyAuditChain } from '../lib/audit.js';
-import { retentionCheck } from '../lib/retention.js';
+import { outDirUnderPressure, retentionCheck } from '../lib/retention.js';
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'info';
+
+export interface DoctorOptions {
+  /**
+   * Exit non-zero when org policy (redact + failOn) and/or retention is unset
+   * AND outDir is under pressure (100 receipts or 20 MB). Default doctor
+   * leaves those rows WARN/INFO. This is not the CI `--fail-on` risk gate.
+   */
+  strict?: boolean;
+}
 
 export interface DoctorCheck {
   name: string;
@@ -73,7 +83,60 @@ function hooksInstalled(cwd: string): {
   };
 }
 
-export function runDoctorChecks(cwd: string): DoctorCheck[] {
+function orgPolicyUnset(cfg: AgentReceiptConfig): boolean {
+  if (cfg.redactInvalid) return false;
+  const failOnOk =
+    cfg.failOn === 'high' || cfg.failOn === 'medium' || cfg.failOn === 'low';
+  if (cfg.failOn !== undefined && !failOnOk) return false;
+  return !(cfg.redact === true && failOnOk);
+}
+
+function retentionLimitsUnset(cfg: AgentReceiptConfig): boolean {
+  if (cfg.retentionInvalid?.length) return false;
+  return cfg.maxCount == null && cfg.maxAgeDays == null;
+}
+
+/**
+ * Promote unset policy / retention to FAIL only when the receipt dir is large
+ * enough that leaving them off is a prod gap. No pressure → rows stay as-is.
+ */
+function applyStrictPressureGate(cwd: string, checks: DoctorCheck[]): DoctorCheck[] {
+  let pressured = false;
+  try {
+    pressured = outDirUnderPressure(cwd);
+  } catch {
+    pressured = false;
+  }
+  if (!pressured) return checks;
+  const cfg = loadConfig(cwd);
+  return checks.map((c) => {
+    if (c.name === 'policy' && c.status !== 'fail' && orgPolicyUnset(cfg)) {
+      return {
+        ...c,
+        status: 'fail',
+        detail:
+          c.detail +
+          ' Strict: set redact: true and failOn while outDir is under pressure (100 receipts or 20 MB). Not a substitute for CI --fail-on.',
+      };
+    }
+    if (
+      c.name === 'retention' &&
+      (c.status === 'warn' || c.status === 'info') &&
+      retentionLimitsUnset(cfg)
+    ) {
+      return {
+        ...c,
+        status: 'fail',
+        detail:
+          c.detail +
+          ' Strict: set maxCount and/or maxAgeDays while outDir is under pressure.',
+      };
+    }
+    return c;
+  });
+}
+
+export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCheck[] {
   const checks: DoctorCheck[] = [];
 
   // Node version
@@ -285,7 +348,8 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
       checks.push({
         name: 'audit',
         status: 'info',
-        detail: 'audit log present but empty — capture, watch, wrap, share, and export append a line each',
+        detail:
+          'audit log present but empty — capture, watch, wrap, share, export, and prune (when it deletes) append a line each',
       });
     } else {
       const where = chain.brokenAt ? ` at line ${chain.brokenAt}` : '';
@@ -309,7 +373,7 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
       name: 'audit',
       status: writable ? 'info' : 'warn',
       detail: writable
-        ? 'no audit log yet — capture, watch, wrap, share, and export append .agent-receipt/audit.jsonl'
+        ? 'no audit log yet — capture, watch, wrap, share, export, and prune (when it deletes) append .agent-receipt/audit.jsonl'
         : 'cannot write .agent-receipt/audit.jsonl',
     });
   }
@@ -377,7 +441,8 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
     });
   }
 
-  return checks;
+  if (!opts.strict) return checks;
+  return applyStrictPressureGate(cwd, checks);
 }
 
 function icon(status: CheckStatus): string {
@@ -411,15 +476,25 @@ function printCheck(c: DoctorCheck): void {
 }
 
 /**
- * Run environment health checks. Returns exit code: 0 if no FAIL, 1 otherwise.
- * WARN/INFO (including the prod-ready checklist) are non-fatal.
+ * Run environment health checks.
+ * Exit 0 if no FAIL, exit 1 otherwise.
+ * WARN/INFO are non-fatal, including unset org policy and retention.
+ * `--strict` promotes those two rows to FAIL only when outDir is under
+ * pressure (100 receipts or 20 MB). CI `--fail-on` remains the risk gate.
  */
-export function cmdDoctor(cwd: string): number {
+export function cmdDoctor(cwd: string, opts: DoctorOptions = {}): number {
   console.log(color.bold(`agent-receipt doctor`) + color.dim(` (${VERSION})`));
   console.log(color.dim(`cwd: ${cwd}`));
+  if (opts.strict) {
+    console.log(
+      color.dim(
+        'strict: unset org policy (redact + failOn) and/or retention fail only when outDir is under pressure (100 receipts or 20 MB). CI --fail-on is still the risk gate.',
+      ),
+    );
+  }
   console.log('');
 
-  const checks = runDoctorChecks(cwd);
+  const checks = runDoctorChecks(cwd, opts);
   let fails = 0;
   let warns = 0;
   for (const c of checks) {
