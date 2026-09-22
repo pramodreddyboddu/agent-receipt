@@ -213,13 +213,15 @@ Examples:
   history: `agent-receipt history — list recent receipts
 
 Usage:
-  agent-receipt history [--limit <N>] [--json] [--agent <name>] [--uncommitted]
-  agent-receipt ls [--limit <N>] [--json] [--agent <name>] [--uncommitted]
+  agent-receipt history [--limit <N>] [--json] [--agent <name>] [--uncommitted] [--failed]
+  agent-receipt ls [--limit <N>] [--json] [--agent <name>] [--uncommitted] [--failed]
 
 Shows newest-first: time, agent, risk counts, short summary.
 Uncommitted (dirty-tree) receipts get a visible [uncommitted] badge.
+Receipts that failed the gate get a visible [failed] badge.
 '--json' prints a JSON array (prefers .agent-receipt/index.json when present;
-otherwise scans outDir). The scan applies the same filters.
+otherwise scans outDir). The scan applies the same filters. Each row includes
+\`failedOn\`. Scan rows also include \`uncommitted\`.
 
 Listing filters (optional; \`ls\` accepts the same flags):
 
@@ -227,23 +229,30 @@ Listing filters (optional; \`ls\` accepts the same flags):
                      Receipts with \`agent: null\` (or a missing agent) do not
                      match any \`--agent\` filter.
   \`--uncommitted\`    keep receipts where \`uncommitted\` is true
+  \`--failed\`         keep receipts that failed the gate. An index row with
+                     \`failedOn\` uses that boolean (a stored \`false\` stays
+                     out even when risk is high). Older rows, which omit the
+                     field, match when \`risk.high > 0\` or \`risk.maxSeverity\`
+                     is \`high\`. A scan matches a high-severity risk row.
+                     Medium or low alone does not match.
 
 Filter order: load receipts → \`--agent\` (if set) → \`--uncommitted\` (if set)
-→ \`--limit\` (newest N of the filtered set) → print.
+→ \`--failed\` (if set) → \`--limit\` (newest N of the filtered set) → print.
 Human listing is newest first. \`--json\` prints that same slice.
 
 No matches is exit 0: an empty human listing, or \`[]\` with \`--json\`.
 Not an error. An empty receipt store (nothing under outDir, so no filter
 would help) still errors, same as \`history\` with no flags.
-\`--agent\` requires a name. An unknown flag exits 1.
+\`--agent\` requires a name. \`--failed\` does not take a value. An unknown flag exits 1.
 
-Known flags: \`--limit\`, \`--json\`, \`--agent\`, \`--uncommitted\`, \`--cwd\`.
+Known flags: \`--limit\`, \`--json\`, \`--agent\`, \`--uncommitted\`, \`--failed\`, \`--cwd\`.
 
 Options:
   --limit <N>            Max rows after filters (default: 20)
   --json                 Machine-readable JSON array
   --agent <name>         Exact agent match (case-sensitive)
   --uncommitted          Dirty-tree snapshots only
+  --failed               Gate failures only (takes no value)
   --cwd <path>           Run as if started in this directory
 
 Examples:
@@ -251,6 +260,8 @@ Examples:
   agent-receipt history --json --limit 5
   agent-receipt history --agent cursor
   agent-receipt history --uncommitted --json
+  agent-receipt history --failed
+  agent-receipt history --agent ci --failed --json
   agent-receipt history --agent ci --uncommitted --limit 5
   agent-receipt ls --agent ci --limit 5
 `,
@@ -575,7 +586,7 @@ Commands:
   html [path]            Alias for export as HTML
   show [path]            Pretty-print last / given receipt (full body)
   last                   Path + glance of the most recent receipt
-  history                List recent receipts (--agent, --uncommitted, --json)
+  history                List recent receipts (--agent, --uncommitted, --failed, --json)
   ls                     Alias for history
   watch                  Poll git; auto-capture on commits or dirty tree
   verify [path]          Hash-check tamper-evident integrity
@@ -619,6 +630,8 @@ Examples:
   agent-receipt history --json
   agent-receipt history --agent cursor
   agent-receipt history --uncommitted
+  agent-receipt history --failed
+  agent-receipt history --agent ci --failed --json
   agent-receipt ls --agent ci --limit 5
   agent-receipt watch --once --agent cursor
   agent-receipt watch --commits-only --once

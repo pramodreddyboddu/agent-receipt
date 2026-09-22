@@ -336,11 +336,15 @@ describe('history --agent and --uncommitted', () => {
     assert.deepEqual(messagesOf(ci), ['scan-newer-ci', 'scan-old-ci']);
     assert.equal(ci[0].agent, 'ci');
     assert.equal(ci[1].agent, 'ci');
-    assert.equal('uncommitted' in ci[0], false);
+    assert.equal(ci[0].uncommitted, true);
+    assert.equal(ci[1].uncommitted, false);
+    assert.equal(ci[0].failedOn, false);
+    assert.equal(ci[1].failedOn, false);
     assert.deepEqual(Object.keys(ci[0]).sort(), [
       'agent',
       'branch',
       'deletions',
+      'failedOn',
       'files',
       'head',
       'insertions',
@@ -349,6 +353,7 @@ describe('history --agent and --uncommitted', () => {
       'risk',
       'sha256',
       'timestamp',
+      'uncommitted',
     ]);
     assert.equal(ci[0].risk.high, 0);
     assert.equal(ci[0].files, 1);
@@ -410,10 +415,6 @@ describe('history --agent and --uncommitted', () => {
     assert.match(unknown.err, /--uncommitted/);
     assert.match(unknown.err, /--cwd/);
     assert.equal(unknown.out.trim(), '');
-
-    const failed = cliResult(dir, ['ls', '--failed']);
-    assert.equal(failed.code, 1);
-    assert.match(failed.err, /Unknown flag: --failed/);
 
     const nope = cliResult(dir, ['history', '--nope']);
     assert.equal(nope.code, 1);

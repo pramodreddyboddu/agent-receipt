@@ -111,14 +111,14 @@ function flagAuditFailed(flags: Record<string, string | boolean>): boolean {
   );
 }
 
-const HISTORY_FLAGS = new Set(['cwd', 'json', 'limit', 'agent', 'uncommitted']);
+const HISTORY_FLAGS = new Set(['cwd', 'json', 'limit', 'agent', 'uncommitted', 'failed']);
 
 function assertKnownHistoryFlags(flags: Record<string, string | boolean>): void {
   for (const key of Object.keys(flags)) {
     if (!HISTORY_FLAGS.has(key)) {
       throw new Error(
         `Unknown flag: --${key}. ` +
-          'history/ls accepts --limit, --json, --agent <name>, --uncommitted, and --cwd.',
+          'history/ls accepts --limit, --json, --agent <name>, --uncommitted, --failed, and --cwd.',
       );
     }
   }
@@ -140,6 +140,14 @@ function flagHistoryUncommitted(flags: Record<string, string | boolean>): boolea
   if (flags.uncommitted === true || flags.uncommitted === 'true') return true;
   throw new Error(
     '--uncommitted does not take a value. It keeps receipts where uncommitted is true.',
+  );
+}
+
+function flagHistoryFailed(flags: Record<string, string | boolean>): boolean {
+  if (flags.failed === undefined) return false;
+  if (flags.failed === true || flags.failed === 'true') return true;
+  throw new Error(
+    '--failed does not take a value. It keeps receipts that failed the gate.',
   );
 }
 
@@ -264,6 +272,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           json: flagBool(flags, 'json'),
           agent: flagHistoryAgent(flags),
           uncommitted: flagHistoryUncommitted(flags),
+          failed: flagHistoryFailed(flags),
         });
       case 'watch': {
         const failOn = resolveFailOn(cwd, flags, true);

@@ -175,6 +175,9 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
 
   const risks = analyzeRisks(files, diffs, cfg.riskAllowlist);
   const riskSum = summarizeRisks(risks);
+  const failedOn = Boolean(
+    opts.failOn && meetsFailOn(riskSum.maxSeverity, opts.failOn),
+  );
 
   const data: ReceiptData = {
     version: VERSION,
@@ -229,7 +232,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     jsonPath = outPath.replace(/\.md$/i, '') + '.json';
     writeFileSync(
       jsonPath,
-      JSON.stringify(formatJson(data, markdown), null, 2) + '\n',
+      JSON.stringify(formatJson(data, markdown, failedOn), null, 2) + '\n',
       'utf8',
     );
     say(color.dim(`Wrote JSON:    ${jsonPath}`));
@@ -247,6 +250,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
       head: data.head,
       branch: data.branch,
       uncommitted,
+      failedOn,
       files: files.length,
       insertions: ins,
       deletions: del,
@@ -306,9 +310,6 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     );
   }
 
-  const failedOn = Boolean(
-    opts.failOn && meetsFailOn(riskSum.maxSeverity, opts.failOn),
-  );
   if (failedOn && opts.failOn) {
     console.error(
       color.red('✗') +

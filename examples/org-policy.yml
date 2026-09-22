@@ -20,6 +20,9 @@
 # `audit --agent <name>` is an exact match (agent null does not match).
 # `audit --failed` keeps failedOn or a nonzero exitCode. `--verify` ignores
 # those filters and checks the whole chain.
+# Receipts that failed the gate (index failedOn; older rows use high risk):
+#   agent-receipt history --failed
+#   agent-receipt history --agent ci --failed
 # prune appends one line per receipt it deletes and does not delete audit.jsonl.
 # --dry-run does not append.
 #

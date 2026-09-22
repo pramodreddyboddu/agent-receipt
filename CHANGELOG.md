@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.12] — 2026-09-22
+
+### Added
+
+- `history --failed` and `ls --failed` keep receipts that failed the gate. An index row with `failedOn` uses that boolean: `true` is kept, and a stored `false` stays out even when the risk summary is high. Rows written before 1.0.12 omit `failedOn` and match when `risk.high > 0` or `risk.maxSeverity` is `high`. A scan (no index) matches when the glance has a high-severity risk row. Medium or low alone does not match. Combines with `--agent`, `--uncommitted`, `--limit`, and `--json`. No matches is exit 0 and an empty listing (`[]` with `--json`). An empty receipt store still errors. `--failed` takes no value.
+- New captures store `failedOn: true` or `false` on `.agent-receipt/index.json` (the gate result, computed before the index update). The companion receipt `.json`, when written, carries the same boolean. Older index rows without the field stay valid.
+- Human history rows that failed the gate show a `[failed]` badge.
+- `history` / `ls` `--json` stays a JSON array. Every row includes `failedOn` (the stored bit when the index has it, otherwise the same boolean the filter uses). Scan-path rows also include `uncommitted` (boolean).
+
+### Changed
+
+- Package version bumped to `1.0.12`
+- Known `history` / `ls` flags: `--limit`, `--json`, `--agent`, `--uncommitted`, `--failed`, `--cwd`. Unknown flags still exit 1. `--agent` still requires a name.
+- Listing filter order: load receipts (index when present, otherwise scan `outDir`), then `--agent` (if set), then `--uncommitted` (if set), then `--failed` (if set), then `--limit` (newest N of the filtered set).
+- Docs CI mirror ([`docs/github-actions-ci.yml`](docs/github-actions-ci.yml)) also runs `history --failed --json` and `history --agent ci --failed --json`.
+
+### Notes
+
+- Live [`.github/workflows/ci.yml`](.github/workflows/ci.yml) was **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Deferred: cryptographic signing / prove-this-run signatures, SSO / IdP, Cloud Agents, a background deleter, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing (this cut does not publish).
+
 ## [1.0.11] — 2026-09-22
 
 ### Added

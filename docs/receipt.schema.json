@@ -51,6 +51,10 @@
       "type": "boolean",
       "description": "True when the receipt snapshots the dirty working tree"
     },
+    "failedOn": {
+      "type": "boolean",
+      "description": "True when fail-on tripped for this capture. Always set on companions written by 1.0.12+. Older companions may omit it."
+    },
     "workspace": {
       "type": "string",
       "description": "Absolute cwd where capture ran"
