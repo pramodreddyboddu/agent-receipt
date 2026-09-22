@@ -301,7 +301,7 @@ Examples:
   audit: `agent-receipt audit — list the local compliance log
 
 Usage:
-  agent-receipt audit [--limit <N>] [--json]
+  agent-receipt audit [--limit <N>] [--json] [--event <name>]
   agent-receipt audit --verify [--json]
   agent-receipt log                  # alias
 
@@ -323,10 +323,20 @@ for the log — not a signature and not PKI.
 \`--json\` prints a JSON array, oldest first. \`--limit\` keeps the newest N.
 \`--verify --json\` prints \`{ ok, command, version, events, brokenAt, reason }\`.
 
+\`--event <name>\` filters the listing to one event: \`capture\`, \`watch\`,
+\`wrap\`, \`share\`, \`export\`, or \`prune\` (the names stored on each line).
+It combines with \`--limit\` (newest N of that event) and \`--json\` (still
+a JSON array). An unknown name exits 1. \`--event\` is listing-only:
+\`audit --verify\` ignores it and checks the whole chain. \`log --event\`
+is the same filter.
+
 Examples:
   agent-receipt audit
   agent-receipt audit --limit 10
   agent-receipt audit --json
+  agent-receipt audit --event wrap
+  agent-receipt audit --event wrap --limit 20 --json
+  agent-receipt log --event prune
   agent-receipt audit --verify
   agent-receipt log --verify
 `,
@@ -385,7 +395,7 @@ Examples:
   doctor: `agent-receipt doctor — environment health check
 
 Usage:
-  agent-receipt doctor [--strict] [--cwd <path>]
+  agent-receipt doctor [--strict] [--json] [--cwd <path>]
 
 Environment:
   node          Node.js >= 20
@@ -414,11 +424,22 @@ threshold those rows stay INFO/WARN and the exit stays 0. A configured
 limit that would still delete files stays a warning — run \`prune\`.
 \`--strict\` does not scan diffs. CI \`--fail-on\` remains the risk gate.
 
+\`--json\` prints one object on stdout and does not change the exit code:
+
+  { "ok", "command": "doctor", "version", "exitCode", "strict", "checks" }
+
+\`ok\` is true when \`exitCode\` is 0. Each check is \`{ "id", "status", "detail" }\`
+with status \`pass\`, \`fail\`, \`warn\`, or \`info\` — the same rows and labels as
+the human checklist (Environment, then Prod ready). Human output stays the
+default when \`--json\` is omitted.
+
 Team rollout: docs/business.md · examples/org-policy.yml
 
 Examples:
   agent-receipt doctor
   agent-receipt doctor --strict
+  agent-receipt doctor --json
+  agent-receipt doctor --strict --json
   agent-receipt doctor --cwd ~/code/my-app
 `,
 
@@ -516,11 +537,11 @@ Commands:
   ls                     Alias for history
   watch                  Poll git; auto-capture on commits or dirty tree
   verify [path]          Hash-check tamper-evident integrity
-  audit                  List capture/watch/wrap/share/export/prune events (.agent-receipt/audit.jsonl)
+  audit                  List capture/watch/wrap/share/export/prune events (--event filters the listing)
   log                    Alias for audit
   prune                  Delete old receipts under outDir (opt-in; --dry-run)
   retain                 Alias for prune
-  doctor                 Environment health check (git, hooks, config, retention, --strict)
+  doctor                 Environment health check (--json for scripts; --strict under pressure)
   compare [a] [b]        Diff two receipts (default: last vs previous)
   diff [a] [b]           Alias for compare
   install-hooks          Install opt-in post-commit capture hook
@@ -560,9 +581,11 @@ Examples:
   agent-receipt last
   agent-receipt verify
   agent-receipt audit
+  agent-receipt audit --event wrap
   agent-receipt audit --verify
   agent-receipt prune --dry-run
   agent-receipt doctor
+  agent-receipt doctor --json
   agent-receipt compare
   agent-receipt install-hooks
   agent-receipt help wrap

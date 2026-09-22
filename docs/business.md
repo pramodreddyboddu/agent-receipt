@@ -1,6 +1,6 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.8 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.9 for teams: install once, capture every session, fail CI
 on high-severity findings, share only redacted HTML, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
@@ -52,6 +52,12 @@ whether `redact` is the default, policy, audit, retention, git clean, Cursor
 init, Grok init. Only `FAIL` rows change the exit code (exit 1). Warnings are
 non-fatal. `doctor --strict` is optional and still does not replace CI
 `--fail-on` — see [Org policy](#org-policy).
+
+`doctor --json` prints that same checklist as **one JSON object** on stdout
+(`ok`, `command`, `version`, `exitCode`, `strict`, `checks`). `ok` is true
+only when `exitCode` is 0. Each check is `{ id, status, detail }` with
+status `pass`, `fail`, `warn`, or `info`. `--json` does not change the exit
+code. It is a checklist for scripts, not the CI risk gate (`wrap --json`).
 
 ## Org policy
 
@@ -112,7 +118,7 @@ is the artifact, not the gate.
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -187,6 +193,14 @@ is unset **and** `outDir` is under pressure (100 receipts or 20 MB). A small
 directory stays exit 0 with the same INFO/WARN rows. A limit that is set but
 would still delete files stays a warning until you run `prune`.
 
+```bash
+agent-receipt doctor --json
+agent-receipt doctor --strict --json
+```
+
+`checks` follows the human Environment then Prod ready order. Human output
+stays the default when `--json` is omitted.
+
 ### CI gate
 
 Hooks stay non-blocking. The failing check belongs in the PR job.
@@ -203,7 +217,8 @@ error. The step prints the gate JSON from `$RUNNER_TEMP/receipt-gate.json`
 before exiting. You do not need `jq`.
 
 This repo’s own [docs mirror](github-actions-ci.yml) runs a temp-repo
-`wrap --json` + `share --json` smoke. The live
+`wrap --json` + `share --json` smoke, then `doctor --json` and
+`audit --event wrap`. The live
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) does not include
 that smoke yet: the checkout token cannot push workflow files. See
 [Workflow scope](#workflow-scope).
@@ -230,9 +245,18 @@ neither does a run that deletes nothing.
 ```bash
 agent-receipt audit            # newest last, human
 agent-receipt audit --json     # array, oldest first
+agent-receipt audit --event wrap
+agent-receipt audit --event wrap --limit 20 --json
+agent-receipt log --event prune
 agent-receipt audit --verify   # exit 0 intact, exit 2 if a line was edited
 agent-receipt log --verify     # alias
 ```
+
+`--event` keeps one of `capture`, `watch`, `wrap`, `share`, `export`, or
+`prune` (the `event` field already written on each line). It applies to the
+listing only, including with `--limit` (newest N of that event) and `--json`
+(still a JSON array, oldest first). An unknown name exits 1. `audit --verify`
+ignores `--event` and checks the whole file.
 
 Each line has `ts`, `event`, `path`, `sha256`, `agent`, `redacted`,
 `verified`, `failedOn`, `exitCode`, and `prev`. `prev` is the SHA-256 of
@@ -324,17 +348,19 @@ than the people who can already read the git history.
 
 ### Deferred
 
-Not in 1.0.8: cryptographic signing, SSO / IdP, Cloud Agents, and a
-background job that deletes receipts by itself. `prune` is manual.
-`doctor --strict` only fails unset policy or retention when the receipt
-directory is already large. CI `--fail-on` is still the enforcement point
-for risk.
+Not in 1.0.9: cryptographic signing, SSO / IdP, Cloud Agents, a background
+job that deletes receipts by itself, live GitHub Actions workflow sync (the
+checkout token has no `workflow` scope), and npm Trusted Publishing (this
+cut does not publish). `prune` stays manual. `doctor --strict` only fails
+unset policy or retention when the receipt directory is already large. CI
+`--fail-on` is still the enforcement point for risk. `doctor --json` and
+`audit --event` are checklist and listing tools; they do not sign the log.
 
 ### Workflow scope
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6, 1.0.7, and 1.0.8 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.9 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

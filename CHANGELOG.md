@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.9] — 2026-09-22
+
+### Added
+
+- `doctor --json` prints one object on stdout for CI and scripts: `ok` (true when the exit code is 0), `command` (`doctor`), `version`, `exitCode`, `strict`, and `checks` (`id`, `status`, `detail`). Status labels stay `pass` / `fail` / `warn` / `info`. The rows match the human checklist (Environment, then Prod ready). Exit codes are unchanged: 0 when nothing FAILs, 1 on FAIL or a `--strict` pressure failure. Human output stays the default when `--json` is omitted.
+- `audit --event <name>` and `log --event <name>` filter the listing to one event: `capture`, `watch`, `wrap`, `share`, `export`, or `prune`. Works with `--limit` and `--json` (still a JSON array, oldest first). An unknown name exits 1. `--event` is listing-only — `audit --verify` ignores it and checks the whole chain.
+
+### Changed
+
+- Package version bumped to `1.0.9`
+- [`examples/org-policy.yml`](examples/org-policy.yml) comments point at `doctor --strict` and `doctor --json`. `maxCount` / `maxAgeDays` stay commented; retention remains opt-in.
+- Docs CI mirror ([`docs/github-actions-ci.yml`](docs/github-actions-ci.yml)) smokes `doctor --json` and `audit --event wrap`.
+
+### Notes
+
+- Live [`.github/workflows/ci.yml`](.github/workflows/ci.yml) was **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Deferred: cryptographic signing, SSO / IdP, Cloud Agents, a background deleter, live workflow sync, and npm Trusted Publishing (this cut does not publish).
+
 ## [1.0.8] — 2026-09-22
 
 ### Added

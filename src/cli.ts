@@ -61,6 +61,16 @@ function flagPositiveInt(
   return n;
 }
 
+function flagAuditEvent(flags: Record<string, string | boolean>): string | undefined {
+  if (flags.event === undefined) return undefined;
+  if (typeof flags.event !== 'string' || flags.event.trim() === '') {
+    throw new Error(
+      '--event requires a name: capture, watch, wrap, share, export, or prune',
+    );
+  }
+  return flags.event.trim();
+}
+
 /** share redacts unless `--no-redact` (share-safety from 1.0.3). */
 function resolveShareRedact(flags: Record<string, string | boolean>): boolean {
   if (flagBool(flags, 'no-redact')) return false;
@@ -203,13 +213,17 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         return result.exitCode;
       }
       case 'doctor':
-        return cmdDoctor(cwd, { strict: flagBool(flags, 'strict') });
+        return cmdDoctor(cwd, {
+          strict: flagBool(flags, 'strict'),
+          json: flagBool(flags, 'json'),
+        });
       case 'audit':
       case 'log':
         return cmdAudit(cwd, {
           json: flagBool(flags, 'json'),
           verify: flagBool(flags, 'verify'),
           limit: flagNumber(flags, 'limit'),
+          event: flagAuditEvent(flags),
         });
       case 'prune':
       case 'retain':
