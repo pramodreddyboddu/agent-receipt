@@ -57,6 +57,8 @@ Config \`.agent-receipt.yml\` may set \`redact: true\` and \`failOn: high\`
 
 Each capture under outDir updates .agent-receipt/index.json (stable receipt index).
 Captures with --out outside outDir are not indexed (so they do not become newest).
+Appends one line to \`.agent-receipt/audit.jsonl\` (no diff body, no --message).
+See \`help audit\`. Wrap records a wrap line instead of a second capture line.
 
 Examples:
   agent-receipt capture --agent cursor --message "ship auth"
@@ -162,6 +164,11 @@ Options:
                          Output format (default: html)
   --cwd <path>           Run as if started in this directory
 
+Appends \`.agent-receipt/audit.jsonl\` (event \`export\`). \`share\` records
+\`share\` instead, so an export made by share is not a second line.
+The line stores the output path and the markdown body's sha256 — not the
+HTML bytes and not a diff.
+
 Examples:
   agent-receipt export
   agent-receipt export --out share.html --redact
@@ -249,6 +256,8 @@ Options:
 
 When HEAD moves A → B, capture uses --since A so all commits in the interval are included.
 When the working tree changes (and HEAD did not), capture uses --uncommitted.
+Each successful capture appends one \`watch\` line to \`.agent-receipt/audit.jsonl\`
+(not a second \`capture\` line). The session \`--message\` is not stored in the log.
 
 Cursor / agent wrap-up:
   agent-receipt watch --once --interval 2 --agent cursor --message "session wrap-up"
@@ -289,16 +298,20 @@ Examples:
   agent-receipt verify --fail-on high --json
 `,
 
-  audit: `agent-receipt audit — list the local wrap/share compliance log
+  audit: `agent-receipt audit — list the local compliance log
 
 Usage:
   agent-receipt audit [--limit <N>] [--json]
   agent-receipt audit --verify [--json]
   agent-receipt log                  # alias
 
-\`wrap\` and \`share\` append one JSON line to \`.agent-receipt/audit.jsonl\`.
-The log stores event, path, sha256, agent, redacted, verified, exit code.
-It does **not** store diff bodies or the session \`--message\`.
+\`capture\`, \`watch\`, \`wrap\`, \`share\`, and \`export\` each append one JSON
+line to \`.agent-receipt/audit.jsonl\`. The log stores event, path, sha256,
+agent, redacted, verified, exit code. It does **not** store diff bodies
+or the session \`--message\`.
+
+\`wrap\` records \`wrap\` (not a second \`capture\` line). \`share\` records
+\`share\` (not a second \`export\` line). \`watch\` records \`watch\` per capture.
 
 Each line's \`prev\` is the SHA-256 of the previous line (or null on the
 first). \`audit --verify\` checks that chain. Exit 0 = intact, exit 2 =
@@ -308,9 +321,6 @@ for the log — not a signature and not PKI.
 \`--json\` prints a JSON array, oldest first. \`--limit\` keeps the newest N.
 \`--verify --json\` prints \`{ ok, events, brokenAt, reason }\` instead.
 
-Capture, watch, and export do not append. Use wrap or share when the
-team log should move.
-
 Examples:
   agent-receipt audit
   agent-receipt audit --limit 10
@@ -318,6 +328,46 @@ Examples:
   agent-receipt audit --verify
   agent-receipt log --verify
 `,
+
+  prune: `agent-receipt prune — delete old receipts under outDir (opt-in)
+
+Usage:
+  agent-receipt prune [--dry-run] [--max-count <N>] [--max-age-days <N>] [--json]
+  agent-receipt retain                 # alias
+
+Nothing is deleted unless a limit is set. Limits come from
+\`.agent-receipt.yml\` (\`maxCount\`, \`maxAgeDays\`) or from the flags below.
+Flags override config for this run. Omit both and prune exits 0 without
+deleting. Capture, wrap, and watch never prune on their own.
+
+A receipt is kept only when it satisfies every limit that is set
+(it is deleted when it misses any one of them):
+  - maxCount     keep the newest N (by receipt timestamp, else file mtime)
+  - maxAgeDays   delete only when strictly older than N days
+                 (a receipt exactly N days old is kept)
+
+Both limits together: a file is kept only if it is inside the count AND
+young enough. Sibling \`<receipt>.json\` is deleted with the markdown.
+\`index.json\` is rewritten (temp file + rename) so removed paths drop out.
+Rows that already point at missing files under outDir are dropped too.
+\`audit.jsonl\` and \`SETUP.md\` are never deleted. Symlinks are skipped.
+
+\`--dry-run\` prints the plan and does not delete or rewrite the index.
+
+outDir must be a subdirectory of the repo (not the repo root, not outside).
+A broken \`index.json\` makes prune refuse before it deletes anything.
+
+Exit 0 when the plan is applied, previewed, or retention is off.
+Exit 1 on invalid limits, an unsafe outDir, or an unreadable index.
+
+Examples:
+  agent-receipt prune --dry-run
+  agent-receipt prune --dry-run --max-count 50
+  agent-receipt prune --max-age-days 30
+  agent-receipt prune --json
+`,
+
+  retain: `See: agent-receipt help prune`,
 
   log: `See: agent-receipt help audit`,
 
@@ -339,6 +389,7 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
   redact        redact: true in config, or still optional (share redacts by default)
   policy        redact on AND failOn set (examples/org-policy.yml)? Optional.
   audit         .agent-receipt/audit.jsonl chain OK? Missing is info, broken is a warning.
+  retention     maxCount / maxAgeDays (opt-in). Over the cap or a large outDir is a warning.
   git-clean     working tree clean? Dirty is a warning, not a failure
   cursor        init --cursor rule present?
   grok          init --grok rule + SessionEnd hook present?
@@ -445,9 +496,11 @@ Commands:
   ls                     Alias for history
   watch                  Poll git; auto-capture on commits or dirty tree
   verify [path]          Hash-check tamper-evident integrity
-  audit                  List wrap/share events (.agent-receipt/audit.jsonl)
+  audit                  List capture/watch/wrap/share/export events (.agent-receipt/audit.jsonl)
   log                    Alias for audit
-  doctor                 Environment health check (git, hooks, config, node)
+  prune                  Delete old receipts under outDir (opt-in; --dry-run)
+  retain                 Alias for prune
+  doctor                 Environment health check (git, hooks, config, retention)
   compare [a] [b]        Diff two receipts (default: last vs previous)
   diff [a] [b]           Alias for compare
   install-hooks          Install opt-in post-commit capture hook
@@ -488,6 +541,7 @@ Examples:
   agent-receipt verify
   agent-receipt audit
   agent-receipt audit --verify
+  agent-receipt prune --dry-run
   agent-receipt doctor
   agent-receipt compare
   agent-receipt install-hooks

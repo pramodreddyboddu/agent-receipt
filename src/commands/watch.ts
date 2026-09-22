@@ -130,6 +130,7 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
           failOn: opts.failOn,
           json: opts.json,
           redact: opts.redact,
+          audit: 'watch',
         };
         if (baseline !== '(no commits)') {
           captureOpts.since = baseline;
@@ -183,6 +184,7 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
         failOn: opts.failOn,
         json: opts.json,
         redact: opts.redact,
+        audit: 'watch',
       };
 
       let result: CaptureResult;

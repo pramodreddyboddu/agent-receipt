@@ -1,5 +1,5 @@
 /**
- * Local compliance log for wrap / share.
+ * Local compliance log for capture, watch, wrap, share, and export.
  *
  * `.agent-receipt/audit.jsonl` is an append-only hash chain: each line's
  * `prev` is the SHA-256 of the previous line (including its trailing newline),
@@ -13,7 +13,7 @@ import { VERSION } from './version.js';
 
 export const AUDIT_REL = '.agent-receipt/audit.jsonl';
 
-export type AuditKind = 'wrap' | 'share';
+export type AuditKind = 'capture' | 'watch' | 'wrap' | 'share' | 'export';
 
 export interface AuditEvent {
   ts: string;

@@ -20,6 +20,7 @@ import { cmdWrap } from './commands/wrap.js';
 import { cmdExport, cmdHtml } from './commands/export.js';
 import { cmdShare } from './commands/share.js';
 import { cmdAudit } from './commands/audit.js';
+import { cmdPrune } from './commands/prune.js';
 
 const JSON_GATE_COMMANDS = new Set(['capture', 'wrap', 'share', 'verify']);
 
@@ -46,6 +47,18 @@ function resolveRedact(cwd: string, flags: Record<string, string | boolean>): bo
   if (flagBool(flags, 'no-redact')) return false;
   if (flagBool(flags, 'redact')) return true;
   return loadConfig(cwd).redact === true;
+}
+
+function flagPositiveInt(
+  flags: Record<string, string | boolean>,
+  name: string,
+): number | undefined {
+  if (flags[name] === undefined) return undefined;
+  const n = flagNumber(flags, name);
+  if (n === undefined || !Number.isInteger(n) || n < 1) {
+    throw new Error(`--${name} must be an integer >= 1`);
+  }
+  return n;
 }
 
 /** share redacts unless `--no-redact` (share-safety from 1.0.3). */
@@ -198,6 +211,15 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           verify: flagBool(flags, 'verify'),
           limit: flagNumber(flags, 'limit'),
         });
+      case 'prune':
+      case 'retain':
+        cmdPrune(cwd, {
+          dryRun: flagBool(flags, 'dry-run'),
+          maxCount: flagPositiveInt(flags, 'max-count'),
+          maxAgeDays: flagPositiveInt(flags, 'max-age-days'),
+          json: flagBool(flags, 'json'),
+        });
+        return 0;
       case 'compare':
       case 'diff':
         return cmdCompare(cwd, positional[0], positional[1]);

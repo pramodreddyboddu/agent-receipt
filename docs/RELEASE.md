@@ -34,8 +34,9 @@ gh auth refresh -h github.com -s workflow
 
 Fine-grained PAT: **Actions: Read and write**. GitHub App: **Workflows**.
 A token whose `gh auth status` scopes are only `gist`, `read:org`, `repo`
-cannot push `.github/workflows/*`. v1.0.6 left `.github/workflows/ci.yml`
-unchanged for that reason; the docs mirror has the `share --json` smoke.
+cannot push `.github/workflows/*`. v1.0.6 and v1.0.7 left
+`.github/workflows/ci.yml` unchanged for that reason; the docs mirror has
+the `share --json` smoke and a `prune --dry-run` check.
 
 ```bash
 mkdir -p .github/workflows

@@ -30,5 +30,6 @@ agent-receipt history
 agent-receipt last
 agent-receipt verify
 agent-receipt share --out share.html   # redacted HTML + verify + TL;DR
-agent-receipt audit --verify          # local wrap/share log (not a signature)
+agent-receipt audit --verify          # local capture/watch/wrap/share/export log
+agent-receipt prune --dry-run          # opt-in retention; deletes nothing until configured
 ```

@@ -4,7 +4,7 @@
 # Also reusable:
 #   jobs:
 #     receipt:
-#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.6
+#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.7
 #       with:
 #         base: main
 #         fail-on: high
@@ -53,7 +53,7 @@ jobs:
         run: |
           set -eu
           if ! command -v agent-receipt >/dev/null 2>&1; then
-            # Pin a tag once v1.0.6 is tagged. Default branch until then.
+            # Pin a tag once v1.0.7 is tagged. Default branch until then.
             npm install -g github:pramodreddyboddu/agent-receipt
           fi
 

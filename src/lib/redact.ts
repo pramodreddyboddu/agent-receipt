@@ -67,6 +67,19 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
     replacement: 'xapp-[REDACTED]',
   },
   {
+    // OpenAI sk- / sk-proj-, Anthropic sk-ant- (underscore form is Stripe, above).
+    re: /\b(sk-(?:proj-|ant-)?)[A-Za-z0-9_\-]{24,}\b/g,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    re: /\b(hf_)[A-Za-z0-9]{20,}\b/g,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    re: /(Authorization\s*:\s*Bearer\s+)([A-Za-z0-9\-._~+/=]{20,})/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
     re: /(https:\/\/hooks\.slack\.com\/services\/)[A-Za-z0-9+/]+(?:\/[A-Za-z0-9+/]+){1,}/g,
     replacement: '$1[REDACTED]',
   },
@@ -128,6 +141,9 @@ const HIGH_SECRET_CODES = new Set([
   'sendgrid-token',
   'azure-account-key',
   'slack-token',
+  'llm-api-key',
+  'huggingface-token',
+  'bearer-token',
   'high-entropy-secret',
   'env-file',
   'secret-looking-path',

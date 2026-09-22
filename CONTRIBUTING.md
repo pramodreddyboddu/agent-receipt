@@ -38,8 +38,9 @@ gh auth status   # Token scopes must include workflow
 cp docs/github-actions-ci.yml .github/workflows/ci.yml
 ```
 
-`gh auth status` on the token used for the 1.0.6 cut listed `gist`, `read:org`,
-and `repo` only, so that live file was not modified. GitHub rejects the push
+`gh auth status` on the tokens used for the 1.0.6 and 1.0.7 cuts listed
+`gist`, `read:org`, and `repo` only, so that live file was not modified.
+GitHub rejects the push
 with: refusing to allow an OAuth App to create or update workflow
 `.github/workflows/ci.yml` without `workflow` scope.
 

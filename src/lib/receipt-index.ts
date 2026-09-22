@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { loadConfig } from './config.js';
 import { summarizeRisks, type RiskHint, type RiskSummary } from './risk.js';
@@ -54,6 +54,70 @@ export function writeIndex(cwd: string, index: ReceiptIndex): string {
   mkdirSync(dirname(p), { recursive: true });
   const body = JSON.stringify(index, null, 2) + '\n';
   writeFileSync(p, body, 'utf8');
+  return p;
+}
+
+/**
+ * Read index.json. Missing file → empty index.
+ * Invalid JSON or a non-object body throws so prune can refuse to delete.
+ */
+export function readIndexStrict(cwd: string): { index: ReceiptIndex; existed: boolean } {
+  const p = indexPath(cwd);
+  if (!existsSync(p)) {
+    return {
+      index: { version: 1, updatedAt: new Date(0).toISOString(), receipts: [] },
+      existed: false,
+    };
+  }
+  let raw: string;
+  try {
+    raw = readFileSync(p, 'utf8');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`cannot read index (${p}): ${msg} — prune refused to delete receipts`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`index.json is not valid JSON (${p}) — prune refused to delete receipts`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`index.json is not an object (${p}) — prune refused to delete receipts`);
+  }
+  const obj = parsed as Partial<ReceiptIndex>;
+  if (obj.receipts !== undefined && !Array.isArray(obj.receipts)) {
+    throw new Error(
+      `index.json receipts is not an array (${p}) — prune refused to delete receipts`,
+    );
+  }
+  return {
+    existed: true,
+    index: {
+      version: 1,
+      updatedAt: String(obj.updatedAt ?? new Date(0).toISOString()),
+      receipts: Array.isArray(obj.receipts) ? (obj.receipts as ReceiptIndexEntry[]) : [],
+    },
+  };
+}
+
+/** Write index.json via temp file + rename so a crash cannot truncate the catalog. */
+export function writeIndexAtomic(cwd: string, index: ReceiptIndex): string {
+  const p = indexPath(cwd);
+  mkdirSync(dirname(p), { recursive: true });
+  const body = JSON.stringify({ ...index, version: 1 as const }, null, 2) + '\n';
+  const tmp = `${p}.tmp-${process.pid}`;
+  writeFileSync(tmp, body, 'utf8');
+  try {
+    renameSync(tmp, p);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* leave the temp file if unlink also fails */
+    }
+    throw err;
+  }
   return p;
 }
 

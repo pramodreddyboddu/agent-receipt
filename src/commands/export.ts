@@ -4,6 +4,7 @@ import { resolveReceiptPath } from './show.js';
 import { markdownToHtml } from '../lib/html.js';
 import { prepareRedactedBody } from '../lib/redact.js';
 import { appendHashFooter, verifyMarkdown } from '../lib/hash.js';
+import { recordAuditEvent } from '../lib/audit.js';
 import { color } from '../lib/color.js';
 
 export interface ExportOptions {
@@ -15,6 +16,11 @@ export interface ExportOptions {
   format?: 'html' | 'markdown' | 'md';
   /** Skip human stdout (share / JSON gate print their own summary). */
   quiet?: boolean;
+  /**
+   * Append an `export` audit line. Default true.
+   * Share passes false — it records one `share` event for the handoff.
+   */
+  audit?: boolean;
 }
 
 export interface ExportResult {
@@ -24,6 +30,12 @@ export interface ExportResult {
   redacted: boolean;
   /** Markdown body that was written, or rendered into HTML. */
   markdown: string;
+}
+
+function agentLabel(markdown: string): string | null {
+  const m = markdown.match(/^- \*\*Agent\*\*:\s*(.+)$/m);
+  const agent = m?.[1]?.trim();
+  return agent || null;
 }
 
 function defaultOutPath(source: string, format: 'html' | 'markdown'): string {
@@ -44,6 +56,7 @@ export function cmdExport(
 ): ExportResult {
   const source = resolveReceiptPath(cwd, pathArg);
   let markdown = readFileSync(source, 'utf8');
+  const agent = agentLabel(markdown);
   const redacted = Boolean(opts.redact);
 
   if (redacted) {
@@ -78,11 +91,24 @@ export function cmdExport(
     writeFileSync(outPath, html, 'utf8');
   } else {
     writeFileSync(outPath, markdown, 'utf8');
-    // sanity: redacted/exported md should still verify when we re-hashed
-    const v = verifyMarkdown(markdown);
-    if (!v.ok) {
-      throw new Error(`Export markdown failed integrity self-check: ${v.reason}`);
-    }
+  }
+
+  const check = verifyMarkdown(markdown);
+  const integrityFailed = format === 'markdown' && !check.ok;
+  if (opts.audit !== false) {
+    recordAuditEvent(cwd, {
+      event: 'export',
+      path: outPath,
+      sha256: check.actual,
+      agent,
+      redacted,
+      verified: check.ok,
+      failedOn: false,
+      exitCode: integrityFailed ? 1 : 0,
+    });
+  }
+  if (integrityFailed) {
+    throw new Error(`Export markdown failed integrity self-check: ${check.reason}`);
   }
 
   log(color.green('✓') + ` Wrote ${format}: ${outPath}`);

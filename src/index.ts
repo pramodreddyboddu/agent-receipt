@@ -5,6 +5,7 @@ export { cmdCapture } from './commands/capture.js';
 export { cmdWrap } from './commands/wrap.js';
 export { cmdShare } from './commands/share.js';
 export { cmdAudit } from './commands/audit.js';
+export { cmdPrune } from './commands/prune.js';
 export { cmdExport, cmdHtml } from './commands/export.js';
 export { cmdShow, resolveReceiptPath, findLatestReceipt } from './commands/show.js';
 export { cmdLast } from './commands/last.js';
@@ -78,6 +79,7 @@ export {
   auditLogPath,
   AUDIT_REL,
 } from './lib/audit.js';
+export type { AuditKind, AuditEvent } from './lib/audit.js';
 
 export {
   loadIndex,
@@ -86,7 +88,17 @@ export {
   INDEX_REL,
   isInsideOutDir,
   receiptsDir,
+  readIndexStrict,
+  writeIndexAtomic,
 } from './lib/receipt-index.js';
+export {
+  planRetention,
+  listReceiptFiles,
+  resolveRetentionPolicy,
+  retentionCheck,
+  DISK_PRESSURE_BYTES,
+  DISK_PRESSURE_COUNT,
+} from './lib/retention.js';
 export {
   isDirty,
   dirtyFingerprint,
