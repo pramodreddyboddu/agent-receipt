@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.8] — 2026-09-22
+
+### Added
+
+- `prune` / `retain` append one `.agent-receipt/audit.jsonl` line per receipt actually deleted. Same fields as wrap/share/capture (`path`, `sha256`, `agent`, `redacted`, `verified`, `failedOn`, `exitCode`, `prev`). No diff body and no `--message`. The sibling `.json` is not a second event. `--dry-run` and a run that deletes nothing do not append. `audit --verify` checks the same hash chain.
+- `doctor --strict` exits 1 when org policy (`redact` + `failOn`) and/or retention is unset **and** `outDir` is under pressure (100 receipts or 20 MB). Below that threshold those rows stay INFO/WARN. Default `doctor` is unchanged: WARN/INFO do not fail the process. CI `--fail-on` is still the risk gate — `--strict` does not scan diffs.
+- `prune --json` rows carry the same identity fields as an audit line (`sha256`, `agent`, `redacted`, `verified`, `failedOn`, `exitCode`) plus `reasons` and `bytes`. The report adds `command`, `version`, `exitCode`, and `audited` (lines appended; 0 on dry-run). `audit --verify --json` includes `command` and `version`.
+- Redaction and risk hints for Groq `gsk_` keys and xAI `xai-` keys (long alphanumeric form; hyphenated model names are left alone).
+
+### Changed
+
+- Package version bumped to `1.0.8`
+
+### Notes
+
+- Live [`.github/workflows/ci.yml`](.github/workflows/ci.yml) was **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Deferred: cryptographic signing, SSO / IdP, Cloud Agents, and a background deleter. `doctor --strict` does not fail merely because a configured limit would still delete files — that stays a warning until you run `prune`.
+
 ## [1.0.7] — 2026-09-22
 
 ### Added

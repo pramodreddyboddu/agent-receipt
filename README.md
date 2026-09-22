@@ -101,7 +101,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 - You want **hooks / `watch`** so capture is not a forgotten extra step
 - You want CI to **fail on high-severity** findings (`--fail-on high`)
 - You want a **one-shot wrap** at session end, **`share`** for redacted HTML, or an export you can attach
-- You want a **CI gate** (`--json`, stable exit 2 on `--fail-on`), a local **audit** log (capture, watch, wrap, share, export), opt-in **`prune`** for old receipts, and a team rollout note ([`docs/business.md`](docs/business.md))
+- You want a **CI gate** (`--json`, stable exit 2 on `--fail-on`), a local **audit** log (capture, watch, wrap, share, export, and prune deletes), opt-in **`prune`** for old receipts, and a team rollout note ([`docs/business.md`](docs/business.md))
 
 ## Commands
 
@@ -117,9 +117,9 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `history` / `ls` | List recent receipts (`--json`; `[uncommitted]` badge; index at `.agent-receipt/index.json`) |
 | `watch` | Poll git; auto-capture on commits **or dirty tree** (`--once`, `--commits-only`) |
 | `verify [path]` | Hash-check tamper-evident integrity |
-| `audit` / `log` | Local log of capture, watch, wrap, share, and export (`.agent-receipt/audit.jsonl`, experimental hash chain) |
-| `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run`; off by default) |
-| `doctor` | Health check plus a prod checklist (policy, audit, retention, hooks, redact, git clean, Cursor/Grok) |
+| `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain) |
+| `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default) |
+| `doctor` | Health check plus a prod checklist (policy, audit, retention, hooks, redact, git clean, Cursor/Grok). `--strict` fails only under receipt-dir pressure |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
 | `diff [a] [b]` | Alias for `compare` |
 | `install-hooks` | Opt-in post-commit auto-capture (`--pre-push` optional) |
@@ -133,6 +133,7 @@ agent-receipt wrap --agent cursor --message "done"
 agent-receipt share --out share.html --md share.md
 agent-receipt history
 agent-receipt prune --dry-run
+agent-receipt doctor --strict
 agent-receipt history --json --limit 5
 agent-receipt ls --limit 5
 agent-receipt html --redact --out share.html

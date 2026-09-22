@@ -306,9 +306,11 @@ Usage:
   agent-receipt log                  # alias
 
 \`capture\`, \`watch\`, \`wrap\`, \`share\`, and \`export\` each append one JSON
-line to \`.agent-receipt/audit.jsonl\`. The log stores event, path, sha256,
-agent, redacted, verified, exit code. It does **not** store diff bodies
-or the session \`--message\`.
+line to \`.agent-receipt/audit.jsonl\`. \`prune\` / \`retain\` append one
+\`prune\` line per receipt actually deleted (not on \`--dry-run\`, not when
+nothing is deleted, and not a second line for the sibling \`.json\`).
+The log stores event, path, sha256, agent, redacted, verified, exit code.
+It does **not** store diff bodies or the session \`--message\`.
 
 \`wrap\` records \`wrap\` (not a second \`capture\` line). \`share\` records
 \`share\` (not a second \`export\` line). \`watch\` records \`watch\` per capture.
@@ -319,7 +321,7 @@ mismatch, exit 1 = unreadable. This is **experimental** tamper-evidence
 for the log — not a signature and not PKI.
 
 \`--json\` prints a JSON array, oldest first. \`--limit\` keeps the newest N.
-\`--verify --json\` prints \`{ ok, events, brokenAt, reason }\` instead.
+\`--verify --json\` prints \`{ ok, command, version, events, brokenAt, reason }\`.
 
 Examples:
   agent-receipt audit
@@ -352,7 +354,16 @@ young enough. Sibling \`<receipt>.json\` is deleted with the markdown.
 Rows that already point at missing files under outDir are dropped too.
 \`audit.jsonl\` and \`SETUP.md\` are never deleted. Symlinks are skipped.
 
-\`--dry-run\` prints the plan and does not delete or rewrite the index.
+\`--dry-run\` prints the plan and does not delete, rewrite the index, or
+append \`audit.jsonl\`. An applied delete appends one \`prune\` audit line
+per receipt (path, sha256, agent, redacted, verified, exit — no diff body
+and no \`--message\`). The sibling \`.json\` is not a second event. A run
+that deletes nothing does not append.
+
+\`--json\` adds \`command\`, \`version\`, \`exitCode\`, and \`audited\` (lines
+appended; 0 on dry-run). Each \`deleted\` row has the same identity fields
+as an audit line (\`sha256\`, \`agent\`, \`redacted\`, \`verified\`,
+\`failedOn\`, \`exitCode\`) plus \`reasons\` and \`bytes\`.
 
 outDir must be a subdirectory of the repo (not the repo root, not outside).
 A broken \`index.json\` makes prune refuse before it deletes anything.
@@ -374,7 +385,7 @@ Examples:
   doctor: `agent-receipt doctor — environment health check
 
 Usage:
-  agent-receipt doctor [--cwd <path>]
+  agent-receipt doctor [--strict] [--cwd <path>]
 
 Environment:
   node          Node.js >= 20
@@ -394,11 +405,20 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
   cursor        init --cursor rule present?
   grok          init --grok rule + SessionEnd hook present?
 
-Exit 0 if no FAIL checks; exit 1 otherwise. WARN items are non-fatal.
+Exit 0 if no FAIL checks; exit 1 otherwise. WARN/INFO are non-fatal.
+Default \`doctor\` does not fail when org policy or retention is unset.
+
+\`--strict\` exits 1 when org policy (redact + failOn) and/or retention is
+unset AND outDir is under pressure (100 receipts or 20 MB). Below that
+threshold those rows stay INFO/WARN and the exit stays 0. A configured
+limit that would still delete files stays a warning — run \`prune\`.
+\`--strict\` does not scan diffs. CI \`--fail-on\` remains the risk gate.
+
 Team rollout: docs/business.md · examples/org-policy.yml
 
 Examples:
   agent-receipt doctor
+  agent-receipt doctor --strict
   agent-receipt doctor --cwd ~/code/my-app
 `,
 
@@ -496,11 +516,11 @@ Commands:
   ls                     Alias for history
   watch                  Poll git; auto-capture on commits or dirty tree
   verify [path]          Hash-check tamper-evident integrity
-  audit                  List capture/watch/wrap/share/export events (.agent-receipt/audit.jsonl)
+  audit                  List capture/watch/wrap/share/export/prune events (.agent-receipt/audit.jsonl)
   log                    Alias for audit
   prune                  Delete old receipts under outDir (opt-in; --dry-run)
   retain                 Alias for prune
-  doctor                 Environment health check (git, hooks, config, retention)
+  doctor                 Environment health check (git, hooks, config, retention, --strict)
   compare [a] [b]        Diff two receipts (default: last vs previous)
   diff [a] [b]           Alias for compare
   install-hooks          Install opt-in post-commit capture hook

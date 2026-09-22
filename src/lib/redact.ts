@@ -76,6 +76,16 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
     replacement: '$1[REDACTED]',
   },
   {
+    // Groq console keys: gsk_ + 48 alphanumeric. 20+ avoids tiny lookalikes.
+    re: /\b(gsk_)[A-Za-z0-9]{20,}\b/g,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    // xAI / Grok API keys: xai- + ~80 alphanumeric. Hyphenated model names stay.
+    re: /\b(xai-)[A-Za-z0-9]{20,}\b/g,
+    replacement: '$1[REDACTED]',
+  },
+  {
     re: /(Authorization\s*:\s*Bearer\s+)([A-Za-z0-9\-._~+/=]{20,})/gi,
     replacement: '$1[REDACTED]',
   },
@@ -143,6 +153,8 @@ const HIGH_SECRET_CODES = new Set([
   'slack-token',
   'llm-api-key',
   'huggingface-token',
+  'groq-api-key',
+  'xai-api-key',
   'bearer-token',
   'high-entropy-secret',
   'env-file',

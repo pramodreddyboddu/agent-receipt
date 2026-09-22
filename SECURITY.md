@@ -26,7 +26,7 @@ You should hear back within a few days. Coordinated disclosure is preferred.
 
 `agent-receipt` produces **tamper-evident** Markdown/HTML receipts (SHA-256 of the
 canonical body). `audit` adds an experimental hash chain over capture, watch,
-wrap, share, and export events (`.agent-receipt/audit.jsonl`). It is **not**:
+wrap, share, export, and prune-delete events (`.agent-receipt/audit.jsonl`). It is **not**:
 
 - Cryptographic signing (no keys, no PKI, including the audit log)
 - A substitute for `gitleaks`, secret scanning CI, or code review
@@ -49,9 +49,11 @@ Use `--fail-on` / CI as a **tripwire**, not as your only control. Prefer
 outside a trusted channel (masks credential URLs / DB passwords, common cloud
 tokens such as GitHub `gho_`/`ghs_`, GitLab `glpat-`, Google, npm, Stripe,
 SendGrid, Slack, Azure `AccountKey`, OpenAI `sk-` / Anthropic `sk-ant-`,
-Hugging Face `hf_`, and `Authorization: Bearer`, and omits nested prior-receipt
-bodies). Redaction is not a DLP guarantee. `prune` deletes receipt files only
-when you set `maxCount` / `maxAgeDays` and run it (default is keep everything).
+Hugging Face `hf_`, Groq `gsk_`, xAI `xai-`, and `Authorization: Bearer`, and
+omits nested prior-receipt bodies). Redaction is not a DLP guarantee. `prune`
+deletes receipt files only when you set `maxCount` / `maxAgeDays` and run it
+(default is keep everything) and then appends one audit line per receipt
+deleted (`--dry-run` does not).
 See [`docs/business.md`](docs/business.md) for what not to put in receipts.
 
 ## Supply chain

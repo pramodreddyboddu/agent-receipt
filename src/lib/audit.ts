@@ -1,10 +1,11 @@
 /**
- * Local compliance log for capture, watch, wrap, share, and export.
+ * Local compliance log for capture, watch, wrap, share, export, and prune.
  *
  * `.agent-receipt/audit.jsonl` is an append-only hash chain: each line's
  * `prev` is the SHA-256 of the previous line (including its trailing newline),
  * or null for the first event. This is experimental tamper-evidence for the
  * log itself — not a signature, not PKI, and not a record of diff bodies.
+ * `prune` appends one `prune` line per receipt it deletes. Dry-run does not.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
@@ -13,7 +14,7 @@ import { VERSION } from './version.js';
 
 export const AUDIT_REL = '.agent-receipt/audit.jsonl';
 
-export type AuditKind = 'capture' | 'watch' | 'wrap' | 'share' | 'export';
+export type AuditKind = 'capture' | 'watch' | 'wrap' | 'share' | 'export' | 'prune';
 
 export interface AuditEvent {
   ts: string;
@@ -107,15 +108,18 @@ export function appendAuditEvent(cwd: string, input: AuditInput): AuditEvent {
 }
 
 /**
- * Best-effort append. A failure to write the log must not fail wrap/share;
+ * Best-effort append. A failure to write the log must not fail the command;
  * the warning goes to stderr so `--json` stdout stays a single object.
+ * Returns false when the line was not written.
  */
-export function recordAuditEvent(cwd: string, input: AuditInput): void {
+export function recordAuditEvent(cwd: string, input: AuditInput): boolean {
   try {
     appendAuditEvent(cwd, input);
+    return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`warn: audit log not written (${msg})`);
+    return false;
   }
 }
 

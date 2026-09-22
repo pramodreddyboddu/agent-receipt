@@ -249,6 +249,15 @@ export function receiptBytes(files: Array<{ bytes: number; jsonBytes: number }>)
 }
 
 /**
+ * True when outDir holds enough receipts or bytes that an unset limit is a
+ * prod concern (same thresholds as the doctor retention WARN).
+ */
+export function outDirUnderPressure(cwd: string): boolean {
+  const files = listReceiptFiles(cwd);
+  return files.length >= DISK_PRESSURE_COUNT || receiptBytes(files) >= DISK_PRESSURE_BYTES;
+}
+
+/**
  * Newest-first. A receipt is removed when it is past `maxCount` (if set)
  * or strictly older than `maxAgeDays` (if set). Both limits apply together:
  * keep only files that satisfy every limit that is set.

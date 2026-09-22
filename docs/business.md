@@ -1,8 +1,8 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.7 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.8 for teams: install once, capture every session, fail CI
 on high-severity findings, share only redacted HTML, and keep a local
-audit log of capture, watch, wrap, share, and export. No SSO and no hosted service — see
+audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
 
 This is **tamper-evident**, not access control and not a secret scanner.
@@ -48,8 +48,10 @@ Cursor: `agent-receipt init --cursor` drops a rule that tells the agent to run
 capture itself.
 
 `agent-receipt doctor` prints a short **Prod ready** checklist: config, hooks,
-whether `redact` is the default, git clean, Cursor init, Grok init. Only `FAIL`
-rows change the exit code (exit 1). Warnings are non-fatal.
+whether `redact` is the default, policy, audit, retention, git clean, Cursor
+init, Grok init. Only `FAIL` rows change the exit code (exit 1). Warnings are
+non-fatal. `doctor --strict` is optional and still does not replace CI
+`--fail-on` — see [Org policy](#org-policy).
 
 ## Org policy
 
@@ -110,7 +112,7 @@ is the artifact, not the gate.
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -174,9 +176,16 @@ That turns `redact` on for capture / wrap / watch and sets `failOn: high`.
 `share` already redacts unless `--no-redact`, even without this file.
 
 `doctor` lists this as **policy**. INFO means it is not applied yet. Only
-real **FAIL** rows change the exit code — the checklist does not block a
-laptop that has not adopted the file. CI should still pass `--fail-on`
-so a missing config cannot silently weaken the job.
+real **FAIL** rows change the exit code — the default checklist does not
+block a laptop that has not adopted the file. CI should still pass `--fail-on`
+so a missing config cannot silently weaken the job. `--fail-on` scans the
+receipt risk summary. `doctor` does not.
+
+`doctor --strict` is a separate prod gate for **unset config**, not for
+secrets. It exits 1 when org policy (`redact` + `failOn`) and/or retention
+is unset **and** `outDir` is under pressure (100 receipts or 20 MB). A small
+directory stays exit 0 with the same INFO/WARN rows. A limit that is set but
+would still delete files stays a warning until you run `prune`.
 
 ### CI gate
 
@@ -208,12 +217,15 @@ still a heuristic — read the HTML once. It masks common cloud tokens
 (GitHub `ghp_` / `gho_` / `ghs_` / `ghu_` / `ghr_`, GitLab `glpat-`, npm,
 Google `AIza` / `ya29.`, AWS `AKIA` / `ASIA`, Stripe, SendGrid, Slack,
 Azure `AccountKey`, OpenAI `sk-` / `sk-proj-`, Anthropic `sk-ant-`,
-Hugging Face `hf_`, and `Authorization: Bearer`) and still misses novel shapes.
+Hugging Face `hf_`, Groq `gsk_`, xAI `xai-`, and `Authorization: Bearer`)
+and still misses novel shapes.
 
 ### Audit log (experimental)
 
 `capture`, `watch`, `wrap`, `share`, and `export` / `html` each append
-one line to `.agent-receipt/audit.jsonl`.
+one line to `.agent-receipt/audit.jsonl`. `prune` / `retain` append one
+`prune` line per receipt they delete. `--dry-run` does not append, and
+neither does a run that deletes nothing.
 
 ```bash
 agent-receipt audit            # newest last, human
@@ -235,7 +247,9 @@ it as internal.
 
 `wrap` writes one `wrap` line (the inner capture is not a second event).
 `share` writes one `share` line (the inner export is not a second event).
-`watch` writes one `watch` line per capture it makes.
+`watch` writes one `watch` line per capture it makes. `prune` writes one
+`prune` line per deleted receipt (the sibling `.json` is not a second
+line). Index rows that were already missing are not events.
 
 `doctor` reports **audit**: INFO if the file is not there yet, PASS when
 the chain matches, WARN if it does not. WARN does not fail `doctor`.
@@ -250,7 +264,7 @@ file aside and let the next command start a new one (`prev: null`).
 |------|----------|----------|
 | `receipts/*.md` and sibling `.json` | Diffs, maybe secrets before redaction | Prefer local or a CI artifact with a short retention (14–30 days is a reasonable team default). Do not commit a receipt that captured a live secret — rotate the credential. |
 | `index.json` | Paths, agent, message, risk counts, sha256. No diff body. | Messages are stored in the clear. `prune` drops rows for receipts it deletes, and rows under outDir whose files are already gone. |
-| `audit.jsonl` | capture / watch / wrap / share / export metadata and hashes. No diff, no message. | Safer to keep longer than receipt bodies (90 days is a reasonable default). Still not a public artifact. `prune` does not touch it. |
+| `audit.jsonl` | capture / watch / wrap / share / export / prune metadata and hashes. No diff, no message. | Safer to keep longer than receipt bodies (90 days is a reasonable default). Still not a public artifact. `prune` appends to it and does not delete or rewrite earlier lines. |
 | `share` HTML / `--md` | Redacted receipt | The file you attach. Glance it first. HTML written outside outDir is not pruned. |
 
 Deletion is **opt-in**. Until you set a limit, `prune` exits 0 and deletes
@@ -285,14 +299,17 @@ Rules:
 - The index is rewritten with a temp file and rename. If that write fails
   after files were removed, run `prune` again — it drops rows whose files
   are already gone.
-- `--dry-run` does not delete and does not rewrite the index.
+- `--dry-run` does not delete, does not rewrite the index, and does not append `audit.jsonl`.
+- An applied delete appends one `prune` audit line per receipt (no diff, no `--message`). `prune --json` repeats those identity fields on each `deleted` row and sets `audited` to the number of lines written (`0` on dry-run).
 - `maxCount` and `maxAgeDays` must be integers `>= 1`. `0` is rejected so
   a typo cannot wipe the directory.
 - `doctor` **retention**: INFO when opt-in is off and the directory is
   small; WARN when 100 or more receipts **or** 20 MB or more sit in
   `outDir` with no limit, or when a configured limit would delete
   something; FAIL when the keys are invalid or `outDir` is unsafe to
-  prune. WARN does not fail `doctor`.
+  prune. WARN does not fail default `doctor`. With `--strict`, that WARN
+  becomes FAIL when the limit is unset and the directory is already at
+  100 receipts or 20 MB. A set limit that would still delete stays WARN.
 
 This package gitignores `.agent-receipt/` in its own repo. Your repo
 chooses. A local-only choice:
@@ -307,17 +324,17 @@ than the people who can already read the git history.
 
 ### Deferred
 
-Not in 1.0.7: cryptographic signing, SSO / IdP, Cloud Agents, and a
+Not in 1.0.8: cryptographic signing, SSO / IdP, Cloud Agents, and a
 background job that deletes receipts by itself. `prune` is manual.
-It does not append `audit.jsonl`. `doctor` does not fail the process when
-org policy or retention is unset — CI `--fail-on` is the enforcement point
+`doctor --strict` only fails unset policy or retention when the receipt
+directory is already large. CI `--fail-on` is still the enforcement point
 for risk.
 
 ### Workflow scope
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 and 1.0.7 cuts had
+under Token scopes). The token used for the 1.0.6, 1.0.7, and 1.0.8 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

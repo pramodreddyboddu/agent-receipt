@@ -156,6 +156,16 @@ const CONTENT_PATTERNS: Array<{
     label: 'Hugging Face token',
   },
   {
+    re: /\bgsk_[A-Za-z0-9]{20,}\b/,
+    code: 'groq-api-key',
+    label: 'Groq API key',
+  },
+  {
+    re: /\bxai-[A-Za-z0-9]{20,}\b/,
+    code: 'xai-api-key',
+    label: 'xAI API key',
+  },
+  {
     re: /Authorization\s*:\s*Bearer\s+[A-Za-z0-9\-._~+/=]{20,}/i,
     code: 'bearer-token',
     label: 'Authorization bearer token',
