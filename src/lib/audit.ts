@@ -16,6 +16,22 @@ export const AUDIT_REL = '.agent-receipt/audit.jsonl';
 
 export type AuditKind = 'capture' | 'watch' | 'wrap' | 'share' | 'export' | 'prune';
 
+/** Names written to `event` on each audit.jsonl line. Listing filters use these. */
+const AUDIT_KIND_FLAGS: Record<AuditKind, true> = {
+  capture: true,
+  watch: true,
+  wrap: true,
+  share: true,
+  export: true,
+  prune: true,
+};
+
+export const AUDIT_KINDS: readonly AuditKind[] = Object.keys(AUDIT_KIND_FLAGS) as AuditKind[];
+
+export function isAuditKind(value: string): value is AuditKind {
+  return Object.prototype.hasOwnProperty.call(AUDIT_KIND_FLAGS, value);
+}
+
 export interface AuditEvent {
   ts: string;
   event: AuditKind;

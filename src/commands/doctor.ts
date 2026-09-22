@@ -30,6 +30,11 @@ export interface DoctorOptions {
    * leaves those rows WARN/INFO. This is not the CI `--fail-on` risk gate.
    */
   strict?: boolean;
+  /**
+   * One JSON object on stdout. Does not change the exit code.
+   * Human checklist stays the default when this is omitted.
+   */
+  json?: boolean;
 }
 
 export interface DoctorCheck {
@@ -471,6 +476,24 @@ const PROD_CHECKS = [
   'grok',
 ];
 
+/** Human sections: Environment, then Prod ready. JSON `checks` uses this order. */
+function checksInDisplayOrder(checks: DoctorCheck[]): DoctorCheck[] {
+  const byName = new Map(checks.map((c) => [c.name, c]));
+  const ordered: DoctorCheck[] = [];
+  const take = (name: string) => {
+    const c = byName.get(name);
+    if (!c) return;
+    ordered.push(c);
+    byName.delete(name);
+  };
+  for (const name of ENV_CHECKS) take(name);
+  for (const name of PROD_CHECKS) take(name);
+  for (const c of checks) {
+    if (byName.has(c.name)) ordered.push(c);
+  }
+  return ordered;
+}
+
 function printCheck(c: DoctorCheck): void {
   console.log(`  [${icon(c.status)}] ${c.name.padEnd(10)} ${c.detail}`);
 }
@@ -481,8 +504,37 @@ function printCheck(c: DoctorCheck): void {
  * WARN/INFO are non-fatal, including unset org policy and retention.
  * `--strict` promotes those two rows to FAIL only when outDir is under
  * pressure (100 receipts or 20 MB). CI `--fail-on` remains the risk gate.
+ * `--json` prints one object on stdout and does not change the exit code.
  */
 export function cmdDoctor(cwd: string, opts: DoctorOptions = {}): number {
+  const checks = runDoctorChecks(cwd, opts);
+  let fails = 0;
+  let warns = 0;
+  for (const c of checks) {
+    if (c.status === 'fail') fails++;
+    if (c.status === 'warn') warns++;
+  }
+  const exitCode = fails === 0 ? 0 : 1;
+  const ordered = checksInDisplayOrder(checks);
+
+  if (opts.json) {
+    console.log(
+      JSON.stringify({
+        ok: exitCode === 0,
+        command: 'doctor',
+        version: VERSION,
+        exitCode,
+        strict: opts.strict === true,
+        checks: ordered.map((c) => ({
+          id: c.name,
+          status: c.status,
+          detail: c.detail,
+        })),
+      }),
+    );
+    return exitCode;
+  }
+
   console.log(color.bold(`agent-receipt doctor`) + color.dim(` (${VERSION})`));
   console.log(color.dim(`cwd: ${cwd}`));
   if (opts.strict) {
@@ -494,24 +546,15 @@ export function cmdDoctor(cwd: string, opts: DoctorOptions = {}): number {
   }
   console.log('');
 
-  const checks = runDoctorChecks(cwd, opts);
-  let fails = 0;
-  let warns = 0;
-  for (const c of checks) {
-    if (c.status === 'fail') fails++;
-    if (c.status === 'warn') warns++;
-  }
-
   console.log(color.bold('Environment'));
-  for (const c of checks) {
+  for (const c of ordered) {
     if (ENV_CHECKS.has(c.name)) printCheck(c);
   }
 
   console.log('');
   console.log(color.bold('Prod ready'));
-  for (const name of PROD_CHECKS) {
-    const c = checks.find((item) => item.name === name);
-    if (c) printCheck(c);
+  for (const c of ordered) {
+    if (PROD_CHECKS.includes(c.name)) printCheck(c);
   }
 
   console.log('');
@@ -527,5 +570,5 @@ export function cmdDoctor(cwd: string, opts: DoctorOptions = {}): number {
     color.red('✗') +
       ` ${fails} check${fails === 1 ? '' : 's'} failed — fix the FAIL items above.`,
   );
-  return 1;
+  return exitCode;
 }

@@ -1,13 +1,35 @@
-import { auditLogPath, loadAuditEvents, verifyAuditChain, type AuditEvent } from '../lib/audit.js';
+import {
+  AUDIT_KINDS,
+  auditLogPath,
+  isAuditKind,
+  loadAuditEvents,
+  verifyAuditChain,
+  type AuditEvent,
+  type AuditKind,
+} from '../lib/audit.js';
 import { color } from '../lib/color.js';
 import { VERSION } from '../lib/version.js';
 
 export interface AuditOptions {
   json?: boolean;
-  /** Check the experimental hash chain. Exit 2 on mismatch. */
+  /** Check the experimental hash chain. Exit 2 on mismatch. Ignores --event and --limit. */
   verify?: boolean;
   /** Newest N events (listing). Ignored by the chain check itself. */
   limit?: number;
+  /**
+   * Listing filter: capture | watch | wrap | share | export | prune.
+   * Ignored by --verify (the chain check is the whole file).
+   */
+  event?: string;
+}
+
+function requireAuditEvent(value: string | undefined): AuditKind | undefined {
+  if (value === undefined) return undefined;
+  if (isAuditKind(value)) return value;
+  throw new Error(
+    `--event must be one of: ${AUDIT_KINDS.join(', ')} (got ${JSON.stringify(value)}). ` +
+      '--event filters the listing only; audit --verify always checks the whole chain.',
+  );
 }
 
 function shortHash(value: string | null): string {
@@ -35,8 +57,14 @@ export function cmdAudit(cwd: string, opts: AuditOptions = {}): number {
   if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
     throw new Error('--limit must be an integer >= 1');
   }
+  const event = requireAuditEvent(opts.event);
 
   if (opts.verify) {
+    if (event) {
+      console.error(
+        `--event ${event} is listing-only; --verify checks the whole chain.`,
+      );
+    }
     const chain = verifyAuditChain(cwd);
     if (opts.json) {
       console.log(
@@ -69,7 +97,8 @@ export function cmdAudit(cwd: string, opts: AuditOptions = {}): number {
   }
 
   const events = loadAuditEvents(cwd);
-  const shown = limit ? events.slice(-limit) : events;
+  const filtered = event ? events.filter((ev) => ev.event === event) : events;
+  const shown = limit ? filtered.slice(-limit) : filtered;
 
   if (opts.json) {
     console.log(JSON.stringify(shown));
@@ -78,14 +107,28 @@ export function cmdAudit(cwd: string, opts: AuditOptions = {}): number {
 
   console.log(color.bold('agent-receipt audit') + color.dim('  (experimental — not a signature)'));
   console.log(color.dim(auditLogPath(cwd)));
-  if (!shown.length) {
+  if (event) {
     console.log(
-      'No audit events yet. `capture`, `watch`, `wrap`, `share`, `export`, and `prune` (when it deletes) append one line each.',
+      color.dim(`event filter: ${event} (listing only; --verify checks the whole chain)`),
     );
+  }
+  if (!shown.length) {
+    if (!events.length) {
+      console.log(
+        'No audit events yet. `capture`, `watch`, `wrap`, `share`, `export`, and `prune` (when it deletes) append one line each.',
+      );
+    } else if (event) {
+      console.log(
+        `No ${event} events (${events.length} other event${events.length === 1 ? '' : 's'} in the log).`,
+      );
+    }
     return 0;
   }
-  if (limit && events.length > shown.length) {
-    console.log(color.dim(`showing newest ${shown.length} of ${events.length} (oldest → newest)`));
+  if (limit && filtered.length > shown.length) {
+    const scope = event ? ` ${event}` : '';
+    console.log(
+      color.dim(`showing newest ${shown.length} of ${filtered.length}${scope} (oldest → newest)`),
+    );
   }
   for (const ev of shown) console.log(formatEvent(ev));
   console.log(color.dim('Check the chain: agent-receipt audit --verify'));

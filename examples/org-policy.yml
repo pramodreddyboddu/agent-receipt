@@ -1,17 +1,27 @@
 # Org policy example — copy onto `.agent-receipt.yml` (merge local ignore rules).
 # Docs: docs/business.md
 #
-# CI:
+# CI risk gate (scans the receipt; this is not doctor):
 #   agent-receipt wrap --base main --json
 #   exit 0 pass · exit 2 policy or verify failure · exit 1 usage error
+#
+# Checklist for laptops and scripts (does not scan diffs):
+#   agent-receipt doctor
+#   agent-receipt doctor --strict   # unset redact+failOn and/or retention fail
+#                                  # only when outDir is under pressure
+#   agent-receipt doctor --json     # one JSON object on stdout; exits unchanged
 #
 # share redacts even when `redact` is false. This file turns redact on for
 # capture / wrap / watch as well, and fails the gate on high-severity findings.
 #
 # capture, watch, wrap, share, and export append .agent-receipt/audit.jsonl
-# (experimental hash chain, not a signature). prune appends one line per
-# receipt it deletes and does not delete audit.jsonl. --dry-run does not
-# append. Retention is opt-in — uncomment to cap receipts:
+# (experimental hash chain, not a signature). List one kind with
+# `audit --event wrap` (also capture, watch, share, export, prune).
+# prune appends one line per receipt it deletes and does not delete audit.jsonl.
+# --dry-run does not append.
+#
+# Retention is opt-in. Leave maxCount and maxAgeDays unset until you want
+# prune to delete. Uncomment to cap receipts:
 #   maxCount: 100
 #   maxAgeDays: 30
 # Then: agent-receipt prune --dry-run
