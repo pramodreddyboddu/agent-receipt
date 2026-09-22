@@ -15,6 +15,11 @@ export interface ReceiptIndexEntry {
   head?: string | null;
   branch?: string | null;
   uncommitted?: boolean;
+  /**
+   * Gate result at capture (`true` when fail-on tripped).
+   * Absent on rows written before 1.0.12. A present boolean wins over risk.
+   */
+  failedOn?: boolean;
   files: number;
   insertions: number;
   deletions: number;
@@ -129,6 +134,8 @@ export interface IndexCaptureMeta {
   head: string;
   branch: string;
   uncommitted?: boolean;
+  /** Gate result. New captures always set true or false. */
+  failedOn?: boolean;
   files: number;
   insertions: number;
   deletions: number;
@@ -179,6 +186,7 @@ export function updateIndexOnCapture(
     head: meta.head,
     branch: meta.branch,
     uncommitted: Boolean(meta.uncommitted),
+    failedOn: Boolean(meta.failedOn),
     files: meta.files,
     insertions: meta.insertions,
     deletions: meta.deletions,

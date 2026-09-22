@@ -1,9 +1,9 @@
-import { listReceipts, parseReceiptGlance } from './compare.js';
+import { listReceipts, parseReceiptGlance, type ReceiptGlance } from './compare.js';
 import { color, severityColor } from '../lib/color.js';
-import { loadIndex } from '../lib/receipt-index.js';
+import { loadIndex, type ReceiptIndexEntry } from '../lib/receipt-index.js';
 
 export interface HistoryOptions {
-  /** Max rows (default 20). Applied after --agent and --uncommitted. */
+  /** Max rows (default 20). Applied after --agent, --uncommitted, and --failed. */
   limit?: number;
   /** Emit JSON array instead of the table. */
   json?: boolean;
@@ -14,6 +14,8 @@ export interface HistoryOptions {
   agent?: string;
   /** Keep receipts where `uncommitted === true`. */
   uncommitted?: boolean;
+  /** Keep receipts that failed the gate. */
+  failed?: boolean;
 }
 
 interface HistoryFilterable {
@@ -55,6 +57,31 @@ function uncommittedBadge(uncommitted: boolean): string {
   return uncommitted ? color.yellow('[uncommitted] ') : '';
 }
 
+/** Visible badge when the receipt failed the gate. */
+function failedBadge(failed: boolean): string {
+  return failed ? color.red('[failed] ') : '';
+}
+
+/**
+ * Stored `failedOn` wins, including `false` on a high-risk row.
+ * Pre-1.0.12 rows omit the field: high severity only (medium/low stay out).
+ */
+function indexRowFailed(entry: ReceiptIndexEntry): boolean {
+  if (typeof entry.failedOn === 'boolean') return entry.failedOn;
+  const risk = entry.risk;
+  if (!risk) return false;
+  return risk.high > 0 || risk.maxSeverity === 'high';
+}
+
+/** Scan path has no gate bit. A high-severity glance row counts; medium/low do not. */
+function glanceRowFailed(risks: Array<{ severity: string }>): boolean {
+  return risks.some((r) => r.severity === 'high');
+}
+
+function indexJsonRow(entry: ReceiptIndexEntry): ReceiptIndexEntry {
+  return { ...entry, failedOn: indexRowFailed(entry) };
+}
+
 function shortSummary(g: { message?: string; fileCount?: number; files: string[] }): string {
   if (g.message) {
     const m = g.message.replace(/\s+/g, ' ').trim();
@@ -76,9 +103,13 @@ const NO_RECEIPTS =
 
 /**
  * Load order is the caller's job (index when present, else scan).
- * This applies `--agent` → `--uncommitted`. `--limit` is a separate slice.
+ * This applies `--agent` → `--uncommitted` → `--failed`. `--limit` is a separate slice.
  */
-function applyHistoryFilters<T extends HistoryFilterable>(rows: T[], opts: HistoryOptions): T[] {
+function applyHistoryFilters<T extends HistoryFilterable>(
+  rows: T[],
+  opts: HistoryOptions,
+  isFailed: (row: T) => boolean,
+): T[] {
   let filtered = rows;
   if (opts.agent !== undefined) {
     const name = opts.agent;
@@ -87,6 +118,9 @@ function applyHistoryFilters<T extends HistoryFilterable>(rows: T[], opts: Histo
   if (opts.uncommitted) {
     filtered = filtered.filter((row) => row.uncommitted === true);
   }
+  if (opts.failed) {
+    filtered = filtered.filter((row) => isFailed(row));
+  }
   return filtered;
 }
 
@@ -94,6 +128,7 @@ function filterLabel(opts: HistoryOptions): string {
   const parts: string[] = [];
   if (opts.agent !== undefined) parts.push(`agent=${opts.agent}`);
   if (opts.uncommitted) parts.push('uncommitted');
+  if (opts.failed) parts.push('failed');
   return parts.join(', ');
 }
 
@@ -122,7 +157,7 @@ function emitJson(rows: unknown[]): number {
  * Alias command name: ls.
  * With --json: machine-readable array (prefers `.agent-receipt/index.json` when present).
  *
- * Filter order: load receipts → `--agent` → `--uncommitted` → `--limit` (newest N).
+ * Filter order: load receipts → `--agent` → `--uncommitted` → `--failed` → `--limit` (newest N).
  * An empty store still errors. A filter that matches nothing exits 0.
  */
 export function cmdHistory(cwd: string, opts: HistoryOptions = {}): number {
@@ -130,9 +165,9 @@ export function cmdHistory(cwd: string, opts: HistoryOptions = {}): number {
 
   const idx = loadIndex(cwd);
   if (idx.receipts.length) {
-    const filtered = applyHistoryFilters(idx.receipts, opts);
+    const filtered = applyHistoryFilters(idx.receipts, opts, indexRowFailed);
     const slice = filtered.slice(0, limit);
-    if (opts.json) return emitJson(slice);
+    if (opts.json) return emitJson(slice.map(indexJsonRow));
     if (!slice.length) {
       printEmptyHistory(idx.receipts.length, opts);
       return 0;
@@ -151,6 +186,7 @@ export function cmdHistory(cwd: string, opts: HistoryOptions = {}): number {
           files: [],
         }),
         uncommitted: e.uncommitted === true,
+        failed: indexRowFailed(e),
       };
     });
     printHistoryTable(rows, filtered.length);
@@ -161,35 +197,10 @@ export function cmdHistory(cwd: string, opts: HistoryOptions = {}): number {
   if (!all.length) throw new Error(NO_RECEIPTS);
 
   const glances = all.map((p) => parseReceiptGlance(p));
-  const filtered = applyHistoryFilters(glances, opts);
+  const filtered = applyHistoryFilters(glances, opts, (g) => glanceRowFailed(g.risks));
   const slice = filtered.slice(0, limit);
   if (opts.json) {
-    const rows = slice.map((g) => {
-      const high = g.risks.filter((r) => r.severity === 'high').length;
-      const medium = g.risks.filter((r) => r.severity === 'medium').length;
-      const low = g.risks.filter((r) => r.severity === 'low').length;
-      return {
-        path: g.path,
-        timestamp: g.timestamp ?? null,
-        agent: g.agent ?? null,
-        message: g.message ?? null,
-        head: g.head ?? null,
-        branch: g.branch ?? null,
-        files: g.fileCount ?? g.files.length,
-        insertions: g.insertions ?? 0,
-        deletions: g.deletions ?? 0,
-        risk: {
-          high,
-          medium,
-          low,
-          total: g.riskTotal ?? g.risks.length,
-          maxSeverity:
-            high > 0 ? 'high' : medium > 0 ? 'medium' : low > 0 ? 'low' : null,
-        },
-        sha256: g.sha ?? null,
-      };
-    });
-    return emitJson(rows);
+    return emitJson(slice.map((g) => glanceJsonRow(g)));
   }
   if (!slice.length) {
     printEmptyHistory(all.length, opts);
@@ -203,9 +214,37 @@ export function cmdHistory(cwd: string, opts: HistoryOptions = {}): number {
     files: String(g.fileCount ?? g.files.length),
     summary: shortSummary(g),
     uncommitted: g.uncommitted === true,
+    failed: glanceRowFailed(g.risks),
   }));
   printHistoryTable(rows, filtered.length);
   return 0;
+}
+
+function glanceJsonRow(g: ReceiptGlance): Record<string, unknown> {
+  const high = g.risks.filter((r) => r.severity === 'high').length;
+  const medium = g.risks.filter((r) => r.severity === 'medium').length;
+  const low = g.risks.filter((r) => r.severity === 'low').length;
+  return {
+    path: g.path,
+    timestamp: g.timestamp ?? null,
+    agent: g.agent ?? null,
+    message: g.message ?? null,
+    head: g.head ?? null,
+    branch: g.branch ?? null,
+    uncommitted: g.uncommitted === true,
+    failedOn: glanceRowFailed(g.risks),
+    files: g.fileCount ?? g.files.length,
+    insertions: g.insertions ?? 0,
+    deletions: g.deletions ?? 0,
+    risk: {
+      high,
+      medium,
+      low,
+      total: g.riskTotal ?? g.risks.length,
+      maxSeverity: high > 0 ? 'high' : medium > 0 ? 'medium' : low > 0 ? 'low' : null,
+    },
+    sha256: g.sha ?? null,
+  };
 }
 
 function printHistoryTable(
@@ -217,6 +256,7 @@ function printHistoryTable(
     files: string;
     summary: string;
     uncommitted: boolean;
+    failed: boolean;
   }>,
   total: number,
 ): void {
@@ -233,6 +273,7 @@ function printHistoryTable(
         pad(r.agent, 14) +
         pad(r.risk, 10) +
         pad(r.files, 7) +
+        failedBadge(r.failed) +
         uncommittedBadge(r.uncommitted) +
         r.summary,
     );

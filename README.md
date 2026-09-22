@@ -114,7 +114,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `export` / `html` | Self-contained HTML receipt (or export last); `--out`, `--redact` |
 | `show [path]` | Pretty-print last / given receipt (full body) |
 | `last` | Path + glance of the most recent receipt |
-| `history` / `ls` | List recent receipts (`--agent`, `--uncommitted`, `--json`, `--limit`; `[uncommitted]` badge; index at `.agent-receipt/index.json`) |
+| `history` / `ls` | List recent receipts (`--agent`, `--uncommitted`, `--failed`, `--json`, `--limit`; `[uncommitted]` and `[failed]` badges; index at `.agent-receipt/index.json` stores `failedOn`) |
 | `watch` | Poll git; auto-capture on commits **or dirty tree** (`--once`, `--commits-only`) |
 | `verify [path]` | Hash-check tamper-evident integrity |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
@@ -134,6 +134,8 @@ agent-receipt share --out share.html --md share.md
 agent-receipt history
 agent-receipt history --agent cursor
 agent-receipt history --uncommitted --json
+agent-receipt history --failed
+agent-receipt history --agent ci --failed --json
 agent-receipt ls --agent ci --uncommitted --limit 5
 agent-receipt prune --dry-run
 agent-receipt doctor --strict
@@ -146,7 +148,7 @@ agent-receipt ls --limit 5
 agent-receipt html --redact --out share.html
 ```
 
-`history` / `ls` keep every receipt unless you pass a filter. `--agent <name>` is an exact, case-sensitive match on the receipt `agent` field (`agent: null` or a missing agent does not match). `--uncommitted` keeps dirty-tree snapshots (`uncommitted: true`). They combine with `--limit` and `--json`. Filter order: load receipts, then `--agent`, then `--uncommitted`, then `--limit` (newest N of the filtered set). No matches is exit 0 (`[]` with `--json`). An empty receipt store still errors. Unknown flags and a bare `--agent` exit 1.
+`history` / `ls` keep every receipt unless you pass a filter. `--agent <name>` is an exact, case-sensitive match on the receipt `agent` field (`agent: null` or a missing agent does not match). `--uncommitted` keeps dirty-tree snapshots (`uncommitted: true`). `--failed` keeps gate failures: the index `failedOn` boolean when that field is present (a stored `false` stays out even if risk is high), otherwise high severity only (`risk.high > 0`, `risk.maxSeverity` of `high`, or a high-severity row on a scan). Medium or low alone does not match. They combine with `--limit` and `--json` (still a JSON array; each row includes `failedOn`, and scan rows include `uncommitted`). New captures write `failedOn` on the index and on the companion `.json`. Filter order: load receipts, then `--agent`, then `--uncommitted`, then `--failed`, then `--limit` (newest N of the filtered set). No matches is exit 0 (`[]` with `--json`). An empty receipt store still errors. Unknown flags, a bare `--agent`, and `--failed` with a value exit 1.
 
 ### `capture` flags
 

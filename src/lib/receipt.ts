@@ -274,7 +274,11 @@ export function formatMarkdown(
   return appendHashFooter(lines.join('\n'));
 }
 
-export function formatJson(data: ReceiptData, markdown: string): object {
+export function formatJson(
+  data: ReceiptData,
+  markdown: string,
+  failedOn = false,
+): object {
   const body = canonicalBody(markdown);
   const totalIns = data.files.reduce((a, f) => a + f.insertions, 0);
   const totalDel = data.files.reduce((a, f) => a + f.deletions, 0);
@@ -291,6 +295,7 @@ export function formatJson(data: ReceiptData, markdown: string): object {
     session: data.session ?? null,
     message: data.message ?? null,
     uncommitted: Boolean(data.uncommitted),
+    failedOn: Boolean(failedOn),
     workspace: data.cwd,
     summary: {
       files: data.files.length,
