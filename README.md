@@ -114,7 +114,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `export` / `html` | Self-contained HTML receipt (or export last); `--out`, `--redact` |
 | `show [path]` | Pretty-print last / given receipt (full body) |
 | `last` | Path + glance of the most recent receipt |
-| `history` / `ls` | List recent receipts (`--json`; `[uncommitted]` badge; index at `.agent-receipt/index.json`) |
+| `history` / `ls` | List recent receipts (`--agent`, `--uncommitted`, `--json`, `--limit`; `[uncommitted]` badge; index at `.agent-receipt/index.json`) |
 | `watch` | Poll git; auto-capture on commits **or dirty tree** (`--once`, `--commits-only`) |
 | `verify [path]` | Hash-check tamper-evident integrity |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
@@ -132,6 +132,9 @@ agent-receipt help share
 agent-receipt wrap --agent cursor --message "done"
 agent-receipt share --out share.html --md share.md
 agent-receipt history
+agent-receipt history --agent cursor
+agent-receipt history --uncommitted --json
+agent-receipt ls --agent ci --uncommitted --limit 5
 agent-receipt prune --dry-run
 agent-receipt doctor --strict
 agent-receipt doctor --json
@@ -142,6 +145,8 @@ agent-receipt history --json --limit 5
 agent-receipt ls --limit 5
 agent-receipt html --redact --out share.html
 ```
+
+`history` / `ls` keep every receipt unless you pass a filter. `--agent <name>` is an exact, case-sensitive match on the receipt `agent` field (`agent: null` or a missing agent does not match). `--uncommitted` keeps dirty-tree snapshots (`uncommitted: true`). They combine with `--limit` and `--json`. Filter order: load receipts, then `--agent`, then `--uncommitted`, then `--limit` (newest N of the filtered set). No matches is exit 0 (`[]` with `--json`). An empty receipt store still errors. Unknown flags and a bare `--agent` exit 1.
 
 ### `capture` flags
 
