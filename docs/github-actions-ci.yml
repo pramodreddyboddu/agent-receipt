@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.9: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.10: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -83,3 +83,10 @@ jobs:
           # --event is listing-only. The wrap above must appear; share must not.
           node bin/agent-receipt.js audit --event wrap --json --cwd "$tmp" > "$tmp/audit-wrap.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!Array.isArray(g)||g.length<1||g.some(e=>e.event!=="wrap")){console.error(g); process.exit(1)}' "$tmp/audit-wrap.json"
+          # --agent is an exact match. The wrap above used --agent ci.
+          node bin/agent-receipt.js audit --agent ci --json --cwd "$tmp" > "$tmp/audit-agent.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!Array.isArray(g)||!g.some(e=>e.event==="wrap"&&e.agent==="ci")){console.error(g); process.exit(1)}' "$tmp/audit-agent.json"
+          # --failed keeps failedOn or a nonzero exitCode, combined with --agent.
+          # A clean wrap is absent. An empty array is exit 0, not an error.
+          node bin/agent-receipt.js audit --agent ci --failed --json --cwd "$tmp" > "$tmp/audit-failed.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!Array.isArray(g)||g.some(e=>e.agent!=="ci"||!(e.failedOn===true||e.exitCode!==0))){console.error(g); process.exit(1)}' "$tmp/audit-failed.json"

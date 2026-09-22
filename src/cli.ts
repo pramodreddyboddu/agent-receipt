@@ -61,6 +61,27 @@ function flagPositiveInt(
   return n;
 }
 
+const AUDIT_FLAGS = new Set([
+  'cwd',
+  'json',
+  'verify',
+  'limit',
+  'event',
+  'agent',
+  'failed',
+]);
+
+function assertKnownAuditFlags(flags: Record<string, string | boolean>): void {
+  for (const key of Object.keys(flags)) {
+    if (!AUDIT_FLAGS.has(key)) {
+      throw new Error(
+        `Unknown flag: --${key}. ` +
+          'audit accepts --limit, --json, --event <name>, --agent <name>, --failed, --verify, and --cwd.',
+      );
+    }
+  }
+}
+
 function flagAuditEvent(flags: Record<string, string | boolean>): string | undefined {
   if (flags.event === undefined) return undefined;
   if (typeof flags.event !== 'string' || flags.event.trim() === '') {
@@ -69,6 +90,25 @@ function flagAuditEvent(flags: Record<string, string | boolean>): string | undef
     );
   }
   return flags.event.trim();
+}
+
+function flagAuditAgent(flags: Record<string, string | boolean>): string | undefined {
+  if (flags.agent === undefined) return undefined;
+  if (typeof flags.agent !== 'string' || flags.agent.length === 0) {
+    throw new Error(
+      '--agent requires a name. The match is exact and case-sensitive. ' +
+        'Events with agent null do not match any --agent filter.',
+    );
+  }
+  return flags.agent;
+}
+
+function flagAuditFailed(flags: Record<string, string | boolean>): boolean {
+  if (flags.failed === undefined) return false;
+  if (flags.failed === true || flags.failed === 'true') return true;
+  throw new Error(
+    '--failed does not take a value. It keeps events with failedOn or a nonzero exitCode.',
+  );
 }
 
 /** share redacts unless `--no-redact` (share-safety from 1.0.3). */
@@ -219,11 +259,14 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         });
       case 'audit':
       case 'log':
+        assertKnownAuditFlags(flags);
         return cmdAudit(cwd, {
           json: flagBool(flags, 'json'),
           verify: flagBool(flags, 'verify'),
           limit: flagNumber(flags, 'limit'),
           event: flagAuditEvent(flags),
+          agent: flagAuditAgent(flags),
+          failed: flagAuditFailed(flags),
         });
       case 'prune':
       case 'retain':

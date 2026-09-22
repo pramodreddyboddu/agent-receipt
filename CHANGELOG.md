@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.10] — 2026-09-22
+
+### Added
+
+- `audit --agent <name>` and `log --agent <name>` keep events whose `agent` field equals that name (exact string, case-sensitive). Events with `agent: null` do not match any `--agent` filter. Combines with `--event`, `--failed`, `--limit`, and `--json` (still a JSON array, oldest first). No matches is exit 0 and an empty listing (`[]` with `--json`), not an error. `--verify` ignores `--agent` and checks the whole chain; a short stderr note says so.
+- `audit --failed` and `log --failed` keep events where `failedOn` is true or `exitCode` is not 0. Same combination rules, empty-result exit, and `--verify` behavior as `--agent`.
+- Listing filter order: load events, then `--event` (if set), then `--agent` (if set), then `--failed` (if set), then `--limit` (newest N of the filtered set). Human output is newest last. `--json` is that same slice, oldest first.
+
+### Changed
+
+- Package version bumped to `1.0.10`
+- `audit` / `log` exit 1 on an unknown flag (for example `--agents`) instead of ignoring it. Known flags: `--limit`, `--json`, `--event`, `--agent`, `--failed`, `--verify`, `--cwd`.
+- Docs CI mirror ([`docs/github-actions-ci.yml`](docs/github-actions-ci.yml)) also runs `audit --agent ci --failed`.
+
+### Notes
+
+- Live [`.github/workflows/ci.yml`](.github/workflows/ci.yml) was **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Deferred: cryptographic signing, SSO / IdP, Cloud Agents, a background deleter, live workflow sync, and npm Trusted Publishing (this cut does not publish). `history` does not gain `--agent` in this cut.
+
 ## [1.0.9] — 2026-09-22
 
 ### Added
