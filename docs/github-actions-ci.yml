@@ -58,8 +58,8 @@ jobs:
           git -C "$tmp" commit -m smoke
           # Command comes first. A leading --cwd is parsed as help.
           node bin/agent-receipt.js init --cwd "$tmp"
-          node bin/agent-receipt.js wrap --cwd "$tmp" --agent ci --message smoke --json > "$tmp/wrap.json"
+          node bin/agent-receipt.js wrap --agent ci --message smoke --json --cwd "$tmp" > "$tmp/wrap.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="wrap"||g.exitCode!==0){console.error(g); process.exit(1)}' "$tmp/wrap.json"
-          node bin/agent-receipt.js share --cwd "$tmp" --json > "$tmp/share.json"
+          node bin/agent-receipt.js share --json --cwd "$tmp" > "$tmp/share.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="share"||g.redacted!==true||g.exitCode!==0||typeof g.sha256!=="string"){console.error(g); process.exit(1)}' "$tmp/share.json"
-          node bin/agent-receipt.js audit --cwd "$tmp" --verify
+          node bin/agent-receipt.js audit --verify --cwd "$tmp"
