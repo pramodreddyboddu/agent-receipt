@@ -213,21 +213,46 @@ Examples:
   history: `agent-receipt history — list recent receipts
 
 Usage:
-  agent-receipt history [--limit <N>] [--json]
-  agent-receipt ls [--limit <N>] [--json]   # alias
+  agent-receipt history [--limit <N>] [--json] [--agent <name>] [--uncommitted]
+  agent-receipt ls [--limit <N>] [--json] [--agent <name>] [--uncommitted]
 
 Shows newest-first: time, agent, risk counts, short summary.
 Uncommitted (dirty-tree) receipts get a visible [uncommitted] badge.
-'--json' prints a JSON array (prefers .agent-receipt/index.json).
+'--json' prints a JSON array (prefers .agent-receipt/index.json when present;
+otherwise scans outDir). The scan applies the same filters.
+
+Listing filters (optional; \`ls\` accepts the same flags):
+
+  \`--agent <name>\`   exact, case-sensitive match on the \`agent\` field.
+                     Receipts with \`agent: null\` (or a missing agent) do not
+                     match any \`--agent\` filter.
+  \`--uncommitted\`    keep receipts where \`uncommitted\` is true
+
+Filter order: load receipts → \`--agent\` (if set) → \`--uncommitted\` (if set)
+→ \`--limit\` (newest N of the filtered set) → print.
+Human listing is newest first. \`--json\` prints that same slice.
+
+No matches is exit 0: an empty human listing, or \`[]\` with \`--json\`.
+Not an error. An empty receipt store (nothing under outDir, so no filter
+would help) still errors, same as \`history\` with no flags.
+\`--agent\` requires a name. An unknown flag exits 1.
+
+Known flags: \`--limit\`, \`--json\`, \`--agent\`, \`--uncommitted\`, \`--cwd\`.
 
 Options:
-  --limit <N>            Max rows (default: 20)
+  --limit <N>            Max rows after filters (default: 20)
   --json                 Machine-readable JSON array
+  --agent <name>         Exact agent match (case-sensitive)
+  --uncommitted          Dirty-tree snapshots only
+  --cwd <path>           Run as if started in this directory
 
 Examples:
   agent-receipt history
   agent-receipt history --json --limit 5
-  agent-receipt ls --limit 5
+  agent-receipt history --agent cursor
+  agent-receipt history --uncommitted --json
+  agent-receipt history --agent ci --uncommitted --limit 5
+  agent-receipt ls --agent ci --limit 5
 `,
 
   ls: `See: agent-receipt help history`,
@@ -550,7 +575,7 @@ Commands:
   html [path]            Alias for export as HTML
   show [path]            Pretty-print last / given receipt (full body)
   last                   Path + glance of the most recent receipt
-  history                List recent receipts (time, agent, risk, summary)
+  history                List recent receipts (--agent, --uncommitted, --json)
   ls                     Alias for history
   watch                  Poll git; auto-capture on commits or dirty tree
   verify [path]          Hash-check tamper-evident integrity
@@ -592,6 +617,9 @@ Examples:
   agent-receipt html
   agent-receipt capture --fail-on high
   agent-receipt history --json
+  agent-receipt history --agent cursor
+  agent-receipt history --uncommitted
+  agent-receipt ls --agent ci --limit 5
   agent-receipt watch --once --agent cursor
   agent-receipt watch --commits-only --once
   agent-receipt watch --interval 5

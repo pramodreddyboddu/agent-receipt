@@ -111,6 +111,38 @@ function flagAuditFailed(flags: Record<string, string | boolean>): boolean {
   );
 }
 
+const HISTORY_FLAGS = new Set(['cwd', 'json', 'limit', 'agent', 'uncommitted']);
+
+function assertKnownHistoryFlags(flags: Record<string, string | boolean>): void {
+  for (const key of Object.keys(flags)) {
+    if (!HISTORY_FLAGS.has(key)) {
+      throw new Error(
+        `Unknown flag: --${key}. ` +
+          'history/ls accepts --limit, --json, --agent <name>, --uncommitted, and --cwd.',
+      );
+    }
+  }
+}
+
+function flagHistoryAgent(flags: Record<string, string | boolean>): string | undefined {
+  if (flags.agent === undefined) return undefined;
+  if (typeof flags.agent !== 'string' || flags.agent.length === 0) {
+    throw new Error(
+      '--agent requires a name. The match is exact and case-sensitive. ' +
+        'Receipts with agent null do not match any --agent filter.',
+    );
+  }
+  return flags.agent;
+}
+
+function flagHistoryUncommitted(flags: Record<string, string | boolean>): boolean {
+  if (flags.uncommitted === undefined) return false;
+  if (flags.uncommitted === true || flags.uncommitted === 'true') return true;
+  throw new Error(
+    '--uncommitted does not take a value. It keeps receipts where uncommitted is true.',
+  );
+}
+
 /** share redacts unless `--no-redact` (share-safety from 1.0.3). */
 function resolveShareRedact(flags: Record<string, string | boolean>): boolean {
   if (flagBool(flags, 'no-redact')) return false;
@@ -226,9 +258,12 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         return 0;
       case 'history':
       case 'ls':
+        assertKnownHistoryFlags(flags);
         return cmdHistory(cwd, {
           limit: flagNumber(flags, 'limit'),
           json: flagBool(flags, 'json'),
+          agent: flagHistoryAgent(flags),
+          uncommitted: flagHistoryUncommitted(flags),
         });
       case 'watch': {
         const failOn = resolveFailOn(cwd, flags, true);

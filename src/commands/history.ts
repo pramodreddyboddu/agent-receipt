@@ -3,10 +3,22 @@ import { color, severityColor } from '../lib/color.js';
 import { loadIndex } from '../lib/receipt-index.js';
 
 export interface HistoryOptions {
-  /** Max rows (default 20). */
+  /** Max rows (default 20). Applied after --agent and --uncommitted. */
   limit?: number;
   /** Emit JSON array instead of the table. */
   json?: boolean;
+  /**
+   * Exact, case-sensitive match on `agent`.
+   * `null` and a missing agent do not match. Undefined = no agent filter.
+   */
+  agent?: string;
+  /** Keep receipts where `uncommitted === true`. */
+  uncommitted?: boolean;
+}
+
+interface HistoryFilterable {
+  agent?: string | null;
+  uncommitted?: boolean;
 }
 
 function riskFromCounts(
@@ -58,36 +70,106 @@ function pad(s: string, n: number): string {
   return s + ' '.repeat(n - visible.length);
 }
 
+const NO_RECEIPTS =
+  'No receipts found under the configured outDir.\n' +
+  'Run `agent-receipt capture` first (or `watch` / install-hooks).';
+
+/**
+ * Load order is the caller's job (index when present, else scan).
+ * This applies `--agent` → `--uncommitted`. `--limit` is a separate slice.
+ */
+function applyHistoryFilters<T extends HistoryFilterable>(rows: T[], opts: HistoryOptions): T[] {
+  let filtered = rows;
+  if (opts.agent !== undefined) {
+    const name = opts.agent;
+    filtered = filtered.filter((row) => row.agent === name);
+  }
+  if (opts.uncommitted) {
+    filtered = filtered.filter((row) => row.uncommitted === true);
+  }
+  return filtered;
+}
+
+function filterLabel(opts: HistoryOptions): string {
+  const parts: string[] = [];
+  if (opts.agent !== undefined) parts.push(`agent=${opts.agent}`);
+  if (opts.uncommitted) parts.push('uncommitted');
+  return parts.join(', ');
+}
+
+function printHistoryTips(): void {
+  console.log(color.dim('Tip: agent-receipt last    # glance the newest'));
+  console.log(color.dim('     agent-receipt show    # full Markdown'));
+  console.log(color.dim('     agent-receipt history --json'));
+}
+
+function printEmptyHistory(unfiltered: number, opts: HistoryOptions): void {
+  console.log(color.bold('Recent receipts') + color.dim(' (0 of 0)'));
+  console.log('');
+  const other = `${unfiltered} other receipt${unfiltered === 1 ? '' : 's'}`;
+  console.log(`No receipts match ${filterLabel(opts)} (${other}).`);
+  console.log('');
+  printHistoryTips();
+}
+
+function emitJson(rows: unknown[]): number {
+  console.log(JSON.stringify(rows, null, 2));
+  return 0;
+}
+
 /**
  * List recent receipts: time, agent, risk count, short summary.
  * Alias command name: ls.
  * With --json: machine-readable array (prefers `.agent-receipt/index.json` when present).
+ *
+ * Filter order: load receipts → `--agent` → `--uncommitted` → `--limit` (newest N).
+ * An empty store still errors. A filter that matches nothing exits 0.
  */
 export function cmdHistory(cwd: string, opts: HistoryOptions = {}): number {
   const limit = opts.limit && opts.limit > 0 ? opts.limit : 20;
 
-  if (opts.json) {
-    const idx = loadIndex(cwd);
-    if (idx.receipts.length) {
-      const rows = idx.receipts.slice(0, limit);
-      console.log(JSON.stringify(rows, null, 2));
+  const idx = loadIndex(cwd);
+  if (idx.receipts.length) {
+    const filtered = applyHistoryFilters(idx.receipts, opts);
+    const slice = filtered.slice(0, limit);
+    if (opts.json) return emitJson(slice);
+    if (!slice.length) {
+      printEmptyHistory(idx.receipts.length, opts);
       return 0;
     }
-    // Fall back to scanning receipts dir
-    const all = listReceipts(cwd);
-    if (!all.length) {
-      throw new Error(
-        'No receipts found under the configured outDir.\n' +
-          'Run `agent-receipt capture` first (or `watch` / install-hooks).',
-      );
-    }
-    const rows = all.slice(0, limit).map((p) => {
-      const g = parseReceiptGlance(p);
+    const rows = slice.map((e) => {
+      const risk = e.risk ?? { high: 0, medium: 0, low: 0, total: 0 };
+      return {
+        path: e.path,
+        time: e.timestamp ?? '?',
+        agent: e.agent ?? '—',
+        risk: riskFromCounts(risk.high, risk.medium, risk.low, risk.total),
+        files: String(e.files ?? 0),
+        summary: shortSummary({
+          message: e.message ?? undefined,
+          fileCount: e.files,
+          files: [],
+        }),
+        uncommitted: e.uncommitted === true,
+      };
+    });
+    printHistoryTable(rows, filtered.length);
+    return 0;
+  }
+
+  const all = listReceipts(cwd);
+  if (!all.length) throw new Error(NO_RECEIPTS);
+
+  const glances = all.map((p) => parseReceiptGlance(p));
+  const filtered = applyHistoryFilters(glances, opts);
+  const slice = filtered.slice(0, limit);
+  if (opts.json) {
+    const rows = slice.map((g) => {
       const high = g.risks.filter((r) => r.severity === 'high').length;
       const medium = g.risks.filter((r) => r.severity === 'medium').length;
       const low = g.risks.filter((r) => r.severity === 'low').length;
       return {
-        path: p,
+        path: g.path,
         timestamp: g.timestamp ?? null,
         agent: g.agent ?? null,
         message: g.message ?? null,
@@ -107,56 +189,22 @@ export function cmdHistory(cwd: string, opts: HistoryOptions = {}): number {
         sha256: g.sha ?? null,
       };
     });
-    console.log(JSON.stringify(rows, null, 2));
+    return emitJson(rows);
+  }
+  if (!slice.length) {
+    printEmptyHistory(all.length, opts);
     return 0;
   }
-
-  // Prefer index for text too — it already carries `uncommitted` (same as --json).
-  const idx = loadIndex(cwd);
-  if (idx.receipts.length) {
-    const slice = idx.receipts.slice(0, limit);
-    const rows = slice.map((e) => {
-      const risk = e.risk ?? { high: 0, medium: 0, low: 0, total: 0 };
-      return {
-        path: e.path,
-        time: e.timestamp ?? '?',
-        agent: e.agent ?? '—',
-        risk: riskFromCounts(risk.high, risk.medium, risk.low, risk.total),
-        files: String(e.files ?? 0),
-        summary: shortSummary({
-          message: e.message ?? undefined,
-          fileCount: e.files,
-          files: [],
-        }),
-        uncommitted: Boolean(e.uncommitted),
-      };
-    });
-    printHistoryTable(rows, idx.receipts.length);
-    return 0;
-  }
-
-  const all = listReceipts(cwd);
-  if (!all.length) {
-    throw new Error(
-      'No receipts found under the configured outDir.\n' +
-        'Run `agent-receipt capture` first (or `watch` / install-hooks).',
-    );
-  }
-
-  const rows = all.slice(0, limit).map((p) => {
-    const g = parseReceiptGlance(p);
-    return {
-      path: p,
-      time: g.timestamp ?? '?',
-      agent: g.agent ?? '—',
-      risk: riskCell(g),
-      files: String(g.fileCount ?? g.files.length),
-      summary: shortSummary(g),
-      uncommitted: false,
-    };
-  });
-
-  printHistoryTable(rows, all.length);
+  const rows = slice.map((g) => ({
+    path: g.path,
+    time: g.timestamp ?? '?',
+    agent: g.agent ?? '—',
+    risk: riskCell(g),
+    files: String(g.fileCount ?? g.files.length),
+    summary: shortSummary(g),
+    uncommitted: g.uncommitted === true,
+  }));
+  printHistoryTable(rows, filtered.length);
   return 0;
 }
 
@@ -191,7 +239,5 @@ function printHistoryTable(
   }
   console.log('');
   console.log(color.dim(`newest: ${rows[0].path}`));
-  console.log(color.dim('Tip: agent-receipt last    # glance the newest'));
-  console.log(color.dim('     agent-receipt show    # full Markdown'));
-  console.log(color.dim('     agent-receipt history --json'));
+  printHistoryTips();
 }

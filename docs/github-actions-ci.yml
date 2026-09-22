@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.10: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.11: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -63,6 +63,12 @@ jobs:
           node bin/agent-receipt.js init --cwd "$tmp"
           node bin/agent-receipt.js wrap --agent ci --message smoke --json --cwd "$tmp" > "$tmp/wrap.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="wrap"||g.exitCode!==0){console.error(g); process.exit(1)}' "$tmp/wrap.json"
+          # history --agent is an exact match. The wrap above used --agent ci.
+          node bin/agent-receipt.js history --agent ci --json --cwd "$tmp" > "$tmp/history-agent.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!Array.isArray(g)||!g.length||g.some(e=>e.agent!=="ci")){console.error(g); process.exit(1)}' "$tmp/history-agent.json"
+          # Clean wrap is committed, so --uncommitted matches nothing. Empty is exit 0.
+          node bin/agent-receipt.js history --uncommitted --json --cwd "$tmp" > "$tmp/history-uncommitted.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!Array.isArray(g)||g.some(e=>e.uncommitted!==true)){console.error(g); process.exit(1)}' "$tmp/history-uncommitted.json"
           node bin/agent-receipt.js share --json --cwd "$tmp" > "$tmp/share.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="share"||g.redacted!==true||g.exitCode!==0||typeof g.sha256!=="string"){console.error(g); process.exit(1)}' "$tmp/share.json"
           node bin/agent-receipt.js audit --verify --cwd "$tmp"

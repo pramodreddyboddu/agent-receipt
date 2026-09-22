@@ -1,6 +1,6 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.10 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.11 for teams: install once, capture every session, fail CI
 on high-severity findings, share only redacted HTML, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
@@ -118,7 +118,7 @@ is the artifact, not the gate.
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -217,8 +217,9 @@ error. The step prints the gate JSON from `$RUNNER_TEMP/receipt-gate.json`
 before exiting. You do not need `jq`.
 
 This repo’s own [docs mirror](github-actions-ci.yml) runs a temp-repo
-`wrap --json` + `share --json` smoke, then `doctor --json` and
-`audit --event wrap` and `audit --agent ci --failed`. The live
+`wrap --json` + `share --json` smoke, then `doctor --json`,
+`audit --event wrap`, `audit --agent ci --failed`, and
+`history --agent ci` / `history --uncommitted`. The live
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) does not include
 that smoke yet: the checkout token cannot push workflow files. See
 [Workflow scope](#workflow-scope).
@@ -361,23 +362,44 @@ Commit receipts only when they are the review artifact you meant to keep,
 and prefer `share` output over a raw capture when the audience is wider
 than the people who can already read the git history.
 
+### History
+
+`history` and `ls` list receipts newest first. They use
+`.agent-receipt/index.json` when it has rows, and otherwise scan `outDir`.
+
+```bash
+agent-receipt history --agent cursor
+agent-receipt history --uncommitted --json
+agent-receipt ls --agent ci --uncommitted --limit 5
+```
+
+`--agent <name>` keeps receipts whose `agent` field equals that name (exact
+string, case-sensitive). `agent: null` or a missing agent does not match.
+`--uncommitted` keeps receipts where `uncommitted` is true.
+
+Filter order: load receipts, then `--agent` (if set), then `--uncommitted`
+(if set), then `--limit` (newest N of what remains). `--json` is that same
+slice. No matches is exit 0 and an empty listing (`[]` with `--json`). An
+empty receipt store still errors, same as `history` with no flags. Unknown
+flags exit 1. `--agent` requires a name.
+
 ### Deferred
 
-Not in 1.0.10: cryptographic signing, SSO / IdP, Cloud Agents, a background
+Not in 1.0.11: cryptographic signing, SSO / IdP, Cloud Agents, a background
 job that deletes receipts by itself, live GitHub Actions workflow sync (the
 checkout token has no `workflow` scope), and npm Trusted Publishing (this
 cut does not publish). `prune` stays manual. `doctor --strict` only fails
 unset policy or retention when the receipt directory is already large. CI
 `--fail-on` is still the enforcement point for risk. `doctor --json`,
-`audit --event`, `audit --agent`, and `audit --failed` are checklist and
-listing tools; they do not sign the log. `history` has no `--agent` filter
-in this cut.
+`audit --event`, `audit --agent`, `audit --failed`, `history --agent`, and
+`history --uncommitted` are checklist and listing tools; they do not sign
+the log. `history` does not take `--failed` in this cut.
 
 ### Workflow scope
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.10 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.11 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

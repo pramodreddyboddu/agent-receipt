@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.11] — 2026-09-22
+
+### Added
+
+- `history --agent <name>` and `ls --agent <name>` keep receipts whose `agent` field equals that name (exact string, case-sensitive). Receipts with `agent: null` or a missing agent do not match any `--agent` filter. Combines with `--limit` and `--json`. No matches is exit 0 and an empty listing (`[]` with `--json`), not an error. An empty receipt store still errors, as before.
+- `history --uncommitted` and `ls --uncommitted` keep receipts where `uncommitted` is true. Combines with `--agent`, `--limit`, and `--json`. Same empty-result exit.
+- Listing filter order: load receipts (index when present, otherwise scan `outDir`), then `--agent` (if set), then `--uncommitted` (if set), then `--limit` (newest N of the filtered set). Human listing stays newest first. `--json` is that same slice.
+
+### Changed
+
+- Package version bumped to `1.0.11`
+- `history` / `ls` exit 1 on an unknown flag (for example `--failed` or `--agents`) instead of ignoring it. Known flags: `--limit`, `--json`, `--agent`, `--uncommitted`, `--cwd`. `--agent` requires a name.
+- Docs CI mirror ([`docs/github-actions-ci.yml`](docs/github-actions-ci.yml)) also runs `history --agent ci --json` and `history --uncommitted --json`.
+
+### Notes
+
+- Live [`.github/workflows/ci.yml`](.github/workflows/ci.yml) was **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Deferred: cryptographic signing, SSO / IdP, Cloud Agents, a background deleter, live workflow sync, and npm Trusted Publishing (this cut does not publish). `history` does not gain `--failed` in this cut.
+
 ## [1.0.10] — 2026-09-22
 
 ### Added

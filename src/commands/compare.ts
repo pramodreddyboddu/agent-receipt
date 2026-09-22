@@ -18,6 +18,8 @@ export interface ReceiptGlance {
   deletions?: number;
   riskTotal?: number;
   sha?: string;
+  /** True when the session snapshot line marks a dirty working tree. */
+  uncommitted?: boolean;
 }
 
 /** List receipt .md files newest-first under configured outDir. */
@@ -66,6 +68,7 @@ export function parseReceiptGlance(path: string): ReceiptGlance {
   glance.head = session('HEAD');
   glance.agent = session('Agent');
   glance.message = session('Message');
+  glance.uncommitted = /\*\*Snapshot\*\*:\s*\*\*uncommitted\*\*/.test(text);
 
   const sha = text.match(/agent-receipt-sha256:\s*([a-f0-9]{64})/);
   if (sha) glance.sha = sha[1];
