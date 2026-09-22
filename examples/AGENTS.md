@@ -30,4 +30,5 @@ agent-receipt history
 agent-receipt last
 agent-receipt verify
 agent-receipt share --out share.html   # redacted HTML + verify + TL;DR
+agent-receipt audit --verify          # local wrap/share log (not a signature)
 ```

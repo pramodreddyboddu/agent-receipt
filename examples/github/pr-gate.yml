@@ -1,0 +1,91 @@
+# Fail a pull request on agent-receipt --fail-on + --json.
+# Copy to .github/workflows/agent-receipt-gate.yml
+#
+# Also reusable:
+#   jobs:
+#     receipt:
+#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.6
+#       with:
+#         base: main
+#         fail-on: high
+#         command: wrap
+#
+# Not installed as a live workflow in this repo: pushing .github/workflows
+# needs the OAuth `workflow` scope. See docs/business.md.
+name: agent-receipt gate
+
+on:
+  pull_request:
+  workflow_call:
+    inputs:
+      base:
+        description: Git ref for wrap --base. Empty uses github.base_ref when set.
+        required: false
+        type: string
+        default: ""
+      fail-on:
+        description: high, medium, or low
+        required: false
+        type: string
+        default: high
+      command:
+        description: wrap (default) or share
+        required: false
+        type: string
+        default: wrap
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install agent-receipt
+        run: |
+          set -eu
+          if ! command -v agent-receipt >/dev/null 2>&1; then
+            # Pin a tag once v1.0.6 is tagged. Default branch until then.
+            npm install -g github:pramodreddyboddu/agent-receipt
+          fi
+
+      - name: Fail-on JSON gate
+        env:
+          FAIL_ON: ${{ inputs.fail-on || 'high' }}
+          BASE_IN: ${{ inputs.base || github.base_ref }}
+          GATE_CMD: ${{ inputs.command || 'wrap' }}
+        run: |
+          set -eu
+          base="$BASE_IN"
+          if [ -n "$base" ] && ! git rev-parse --verify "$base" >/dev/null 2>&1; then
+            if git rev-parse --verify "origin/$base" >/dev/null 2>&1; then
+              base="origin/$base"
+            fi
+          fi
+          out="$RUNNER_TEMP/receipt-gate.json"
+          set +e
+          if [ "$GATE_CMD" = "share" ]; then
+            agent-receipt share --fail-on "$FAIL_ON" --json > "$out"
+          else
+            if [ -n "$base" ]; then
+              agent-receipt wrap --base "$base" --fail-on "$FAIL_ON" --json > "$out"
+            else
+              agent-receipt wrap --fail-on "$FAIL_ON" --json > "$out"
+            fi
+          fi
+          code=$?
+          set -e
+          echo "agent-receipt exit $code"
+          cat "$out"
+          # Exit code is the gate. Also require a JSON object so a usage
+          # error that printed nothing cannot pass.
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (g.exitCode !== 0 || g.ok !== true) process.exit(g.exitCode || 1);' "$out"
+          exit "$code"

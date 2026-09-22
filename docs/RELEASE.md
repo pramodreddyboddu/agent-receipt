@@ -26,6 +26,17 @@ Docs mirrors (fallback if OAuth lacks `workflow` scope):
 - `docs/github-actions-ci.yml` → copy to `.github/workflows/ci.yml`
 - `docs/github-actions-release.yml` → copy to `.github/workflows/release.yml`
 
+Exact scope to update the live workflow: OAuth **`workflow`** (plus `repo`).
+
+```bash
+gh auth refresh -h github.com -s workflow
+```
+
+Fine-grained PAT: **Actions: Read and write**. GitHub App: **Workflows**.
+A token whose `gh auth status` scopes are only `gist`, `read:org`, `repo`
+cannot push `.github/workflows/*`. v1.0.6 left `.github/workflows/ci.yml`
+unchanged for that reason; the docs mirror has the `share --json` smoke.
+
 ```bash
 mkdir -p .github/workflows
 cp docs/github-actions-ci.yml .github/workflows/ci.yml
@@ -78,10 +89,10 @@ Requirements (as of npm Trusted Publishing GA):
 # on a clean main tip matching the intended release
 git checkout main && git pull
 # ensure version / CHANGELOG / version.ts already bumped on main
-git tag -a v1.0.5 -m "agent-receipt v1.0.5"
-git push origin v1.0.5
+git tag -a v1.0.6 -m "agent-receipt v1.0.6"
+git push origin v1.0.6
 # Release workflow runs: test → pack:check → npm publish --access public (OIDC)
-gh release create v1.0.5 --title "v1.0.5" --notes-file CHANGELOG.md
+gh release create v1.0.6 --title "v1.0.6" --notes-file CHANGELOG.md
 ```
 
 Or run **Actions → Release → Run workflow** (`workflow_dispatch`) after Trusted Publisher is configured.
@@ -126,7 +137,7 @@ Notes:
 ```bash
 npm i -g github:pramodreddyboddu/agent-receipt
 # or a branch/ref:
-npm i -g github:pramodreddyboddu/agent-receipt#v1.0.5
+npm i -g github:pramodreddyboddu/agent-receipt#v1.0.6
 ```
 
 ## Post-release smoke
@@ -140,6 +151,8 @@ agent-receipt install-hooks
 agent-receipt doctor
 echo bye >> README.md && git add . && git commit -m tweak
 agent-receipt wrap --agent demo --message "smoke"
+agent-receipt share --json
+agent-receipt audit --verify
 agent-receipt last
 agent-receipt history
 agent-receipt verify

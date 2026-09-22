@@ -101,7 +101,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 - You want **hooks / `watch`** so capture is not a forgotten extra step
 - You want CI to **fail on high-severity** findings (`--fail-on high`)
 - You want a **one-shot wrap** at session end, **`share`** for redacted HTML, or an export you can attach
-- You want a **CI gate** (`--json`, stable exit 2 on `--fail-on`) and a team rollout note ([`docs/business.md`](docs/business.md))
+- You want a **CI gate** (`--json`, stable exit 2 on `--fail-on`), a local **audit** log of wrap/share, and a team rollout note ([`docs/business.md`](docs/business.md))
 
 ## Commands
 
@@ -117,7 +117,8 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `history` / `ls` | List recent receipts (`--json`; `[uncommitted]` badge; index at `.agent-receipt/index.json`) |
 | `watch` | Poll git; auto-capture on commits **or dirty tree** (`--once`, `--commits-only`) |
 | `verify [path]` | Hash-check tamper-evident integrity |
-| `doctor` | Health check plus a short prod-ready checklist (hooks, redact default, git clean, Cursor/Grok init) |
+| `audit` / `log` | Local wrap/share log (`.agent-receipt/audit.jsonl`, experimental hash chain) |
+| `doctor` | Health check plus a prod checklist (policy, audit, hooks, redact, git clean, Cursor/Grok) |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
 | `diff [a] [b]` | Alias for `compare` |
 | `install-hooks` | Opt-in post-commit auto-capture (`--pre-push` optional) |
@@ -322,9 +323,10 @@ Full recipe: [`docs/grok-cli.md`](docs/grok-cli.md). The SessionEnd hook drains
 stdin with a byte cap and a short timeout so an open pipe (no EOF) cannot hang
 the session.
 
-Team install, CI gates, and what not to put in receipts:
+Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`docs/business.md`](docs/business.md). Org defaults:
-[`examples/org-policy.yml`](examples/org-policy.yml).
+[`examples/org-policy.yml`](examples/org-policy.yml). PR gate example:
+[`examples/github/pr-gate.yml`](examples/github/pr-gate.yml).
 
 ## Git hooks (local / global install)
 

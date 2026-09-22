@@ -1,7 +1,9 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.5 for teams: install once, capture every session, fail CI
-on high-severity findings, and share only redacted HTML.
+`agent-receipt` 1.0.6 for teams: install once, capture every session, fail CI
+on high-severity findings, share only redacted HTML, and keep a local
+audit log of wrap/share. No SSO and no hosted service — see
+[Enterprise (SSO-free)](#enterprise-sso-free).
 
 This is **tamper-evident**, not access control and not a secret scanner.
 Redaction is a heuristic mask (see [SECURITY.md](../SECURITY.md)). Treat a
@@ -108,7 +110,7 @@ is the artifact, not the gate.
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -158,21 +160,152 @@ before masking, and it will miss novel secret shapes.
 Do not point `--out` or `--md` at the source receipt; share refuses to
 overwrite it.
 
+## Enterprise (SSO-free)
+
+Nothing here phones home. A rollout is a config file, a CI job, and a
+decision about what stays in `.agent-receipt/`. There is no SSO, no org
+admin console, and no Cloud Agents product.
+
+### Org policy
+
+Copy [`examples/org-policy.yml`](../examples/org-policy.yml) onto
+`.agent-receipt.yml` and keep your local `ignore` / `riskAllowlist` lines.
+That turns `redact` on for capture / wrap / watch and sets `failOn: high`.
+`share` already redacts unless `--no-redact`, even without this file.
+
+`doctor` lists this as **policy**. INFO means it is not applied yet. Only
+real **FAIL** rows change the exit code — the checklist does not block a
+laptop that has not adopted the file. CI should still pass `--fail-on`
+so a missing config cannot silently weaken the job.
+
+### CI gate
+
+Hooks stay non-blocking. The failing check belongs in the PR job.
+
+Copy one of:
+
+| Example | What to do with it |
+|---------|--------------------|
+| [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/` and call it after `agent-receipt` is on `PATH` (devDependency or global install). |
+
+Exit codes are unchanged: 0 pass, 2 policy and/or verify failure, 1 usage
+error. The step prints the gate JSON from `$RUNNER_TEMP/receipt-gate.json`
+before exiting. You do not need `jq`.
+
+This repo’s own [docs mirror](github-actions-ci.yml) runs a temp-repo
+`wrap --json` + `share --json` smoke. The live
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) does not include
+that smoke yet: the checkout token cannot push workflow files. See
+[Workflow scope](#workflow-scope).
+
+### Share defaults
+
+`agent-receipt share` redacts unless `--no-redact`. That is the handoff
+for a person outside the repo (HTML, optional `--md`). Do not pass
+`--no-redact` on artifacts that leave the trusted boundary. Redaction is
+still a heuristic — read the HTML once. It masks common cloud tokens
+(GitHub `ghp_` / `gho_` / `ghs_` / `ghu_` / `ghr_`, GitLab `glpat-`, npm,
+Google `AIza` / `ya29.`, AWS `AKIA` / `ASIA`, Stripe, SendGrid, Slack,
+Azure `AccountKey`) and still misses novel shapes.
+
+### Audit log (experimental)
+
+`wrap` and `share` append one line to `.agent-receipt/audit.jsonl`.
+Capture, watch, and export do not.
+
+```bash
+agent-receipt audit            # newest last, human
+agent-receipt audit --json     # array, oldest first
+agent-receipt audit --verify   # exit 0 intact, exit 2 if a line was edited
+agent-receipt log --verify     # alias
+```
+
+Each line has `ts`, `event`, `path`, `sha256`, `agent`, `redacted`,
+`verified`, `failedOn`, `exitCode`, and `prev`. `prev` is the SHA-256 of
+the previous line, or `null` on the first. That is a local hash chain so
+a quiet edit shows up in `--verify`. It is **not** a signature, not a
+key, and not proof of who ran the command. `experimental` is set on
+every line on purpose.
+
+The log does not store diff bodies or `--message` (those are the usual
+places a secret lands). It does store paths and the receipt hash. Treat
+it as internal.
+
+`doctor` reports **audit**: INFO if the file is not there yet, PASS when
+the chain matches, WARN if it does not. WARN does not fail `doctor`.
+
+Editing a line in place breaks the chain on purpose. To rotate, move the
+file aside and let the next wrap/share start a new one (`prev: null`).
+The tool does not delete old lines.
+
+### Retention for `.agent-receipt/`
+
+| Path | Contains | Guidance |
+|------|----------|----------|
+| `receipts/*.md` and sibling `.json` | Diffs, maybe secrets before redaction | Prefer local or a CI artifact with a short retention (14–30 days is a reasonable team default). Do not commit a receipt that captured a live secret — rotate the credential. |
+| `index.json` | Paths, agent, message, risk counts, sha256. No diff body. | Messages are stored in the clear. Keep with the receipts. |
+| `audit.jsonl` | Wrap/share metadata and hashes. No diff, no message. | Safer to keep longer than receipt bodies (90 days is a reasonable default). Still not a public artifact. |
+| `share` HTML / `--md` | Redacted receipt | The file you attach. Glance it first. |
+
+This package gitignores `.agent-receipt/` in its own repo. Your repo
+chooses. A local-only choice:
+
+```gitignore
+.agent-receipt/
+```
+
+Commit receipts only when they are the review artifact you meant to keep,
+and prefer `share` output over a raw capture when the audience is wider
+than the people who can already read the git history.
+
+### Deferred
+
+Not in 1.0.6: cryptographic signing, SSO / IdP, Cloud Agents, automatic
+deletion of old receipts, and audit lines for capture / watch / export.
+`doctor` does not fail the process when org policy is missing — CI `--fail-on`
+is the enforcement point.
+
+### Workflow scope
+
+Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
+in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
+under Token scopes). The token used for this cut had `gist`, `read:org`,
+and `repo` only, so the live workflow file was left unchanged and
+[`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:
+
+```bash
+gh auth refresh -h github.com -s workflow
+cp docs/github-actions-ci.yml .github/workflows/ci.yml
+git add .github/workflows/ci.yml
+git commit -m "ci: share --json smoke"
+git push
+```
+
+Fine-grained personal access tokens need repository **Actions: Read and write**
+(and Contents: Read and write). GitHub Apps need the **Workflows** permission.
+Do not force-push. Do not commit a PAT.
+
 ## SessionEnd stdin contract
 
 Grok (and anything else that execs `.grok/hooks/agent-receipt-wrap.sh` or
 `scripts/grok-wrap.sh`) may write a JSON event on stdin and **leave the pipe
 open**. The scripts must not block waiting for EOF.
 
-- A terminal stdin is not read.
-- Otherwise at most **one read** of `HOOK_STDIN_MAX` bytes (default 65536) is
-  drained. `dd count=1` is one `read(2)`, not a full block, so a short payload
-  returns even when the writer never closes the pipe.
-- That read is capped by `HOOK_STDIN_WAIT_SEC` (default `0.4`) via GNU
-  `timeout` when it is on `PATH`. Without `timeout`, `node` applies the same
-  cap (and stops ~30ms after the first chunk).
-- With neither `timeout` nor `node`, stdin is left unread. That still does
-  not hang. The scripts do not `cat` until EOF.
+- A terminal stdin is not read and is not redirected.
+- Otherwise **`node` is preferred** when it is on `PATH`. It drains until
+  `HOOK_STDIN_MAX` bytes (default 65536, capped at 1 MiB), EOF, or
+  `HOOK_STDIN_WAIT_SEC` (default `0.4`). After the first chunk it stops on
+  ~30ms of quiet, so a short payload returns even when the writer never
+  closes the pipe. Several chunks are consumed, not only the first `read`.
+- If `node` is missing, GNU `timeout` + `dd` does one `read(2)` (`count=1`
+  is not a full block). That path runs only when `timeout` accepts the wait
+  value. BusyBox `timeout` rejects decimals such as `0.4` and is skipped —
+  a failing `timeout` must not look like a successful drain.
+- After that bounded drain, stdin is redirected from `/dev/null`. A host
+  blocked on a full write gets `EPIPE` instead of stalling for the rest of
+  wrap. Oversized payloads (above `HOOK_STDIN_MAX`) can see that `EPIPE`;
+  that is intentional. The scripts do not `cat` until EOF.
 - The payload is discarded. Whether to wrap comes from `git status`, not from
   the JSON. A clean tree exits 0 without wrapping.
 

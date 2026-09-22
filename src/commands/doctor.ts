@@ -17,6 +17,7 @@ import {
 } from '../lib/grok-rule.js';
 import { VERSION } from '../lib/version.js';
 import { color } from '../lib/color.js';
+import { auditLogPath, verifyAuditChain } from '../lib/audit.js';
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'info';
 
@@ -239,6 +240,75 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
     });
   }
 
+  const failOnOk =
+    cfgNow.failOn === 'high' || cfgNow.failOn === 'medium' || cfgNow.failOn === 'low';
+  if (cfgNow.redactInvalid || (cfgNow.failOn !== undefined && !failOnOk)) {
+    checks.push({
+      name: 'policy',
+      status: 'info',
+      detail: `skipped until ${CONFIG_NAME} is valid`,
+    });
+  } else if (cfgNow.redact && failOnOk) {
+    checks.push({
+      name: 'policy',
+      status: 'pass',
+      detail: `org policy: redact on, failOn=${cfgNow.failOn} (capture/wrap/watch/share)`,
+    });
+  } else {
+    const missing: string[] = [];
+    if (!cfgNow.redact) missing.push('redact: true');
+    if (!failOnOk) missing.push('failOn: high');
+    checks.push({
+      name: 'policy',
+      status: 'info',
+      detail:
+        `optional — set ${missing.join(' and ')} (copy examples/org-policy.yml).` +
+        ' share still redacts unless --no-redact. CI should pass --fail-on anyway.',
+    });
+  }
+
+  const auditFile = auditLogPath(cwd);
+  if (existsSync(auditFile)) {
+    const chain = verifyAuditChain(cwd);
+    if (chain.ok && chain.events > 0) {
+      checks.push({
+        name: 'audit',
+        status: 'pass',
+        detail: `${chain.events} event(s), chain OK (experimental — not a signature)`,
+      });
+    } else if (chain.ok) {
+      checks.push({
+        name: 'audit',
+        status: 'info',
+        detail: 'audit log present but empty — wrap and share append a line each',
+      });
+    } else {
+      const where = chain.brokenAt ? ` at line ${chain.brokenAt}` : '';
+      checks.push({
+        name: 'audit',
+        status: 'warn',
+        detail: `chain broken${where}: ${chain.reason} (agent-receipt audit --verify)`,
+      });
+    }
+  } else {
+    let writable = true;
+    const auditDir = join(cwd, '.agent-receipt');
+    if (existsSync(auditDir)) {
+      try {
+        accessSync(auditDir, constants.W_OK);
+      } catch {
+        writable = false;
+      }
+    }
+    checks.push({
+      name: 'audit',
+      status: writable ? 'info' : 'warn',
+      detail: writable
+        ? 'no audit log yet — wrap and share append .agent-receipt/audit.jsonl'
+        : 'cannot write .agent-receipt/audit.jsonl',
+    });
+  }
+
   if (!inRepo) {
     checks.push({
       name: 'git-clean',
@@ -283,7 +353,7 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
     checks.push({
       name: 'grok',
       status: 'pass',
-      detail: 'rule + SessionEnd hook installed (stdin drain does not wait for EOF)',
+      detail: 'rule + SessionEnd hook installed (stdin drained, then closed — open pipe cannot hang wrap)',
     });
   } else if (grokPresent.length > 0) {
     const missing = grokFiles.filter((rel) => !grokPresent.includes(rel));
@@ -317,7 +387,7 @@ function icon(status: CheckStatus): string {
 }
 
 const ENV_CHECKS = new Set(['node', 'git', 'repo', 'outDir', 'cli']);
-const PROD_CHECKS = ['config', 'hooks', 'redact', 'git-clean', 'cursor', 'grok'];
+const PROD_CHECKS = ['config', 'hooks', 'redact', 'policy', 'audit', 'git-clean', 'cursor', 'grok'];
 
 function printCheck(c: DoctorCheck): void {
   console.log(`  [${icon(c.status)}] ${c.name.padEnd(10)} ${c.detail}`);

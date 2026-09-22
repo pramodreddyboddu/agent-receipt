@@ -1,0 +1,61 @@
+# Composite action: fail-on + JSON gate.
+# Copy this directory to .github/actions/agent-receipt/ and call:
+#
+#   - uses: ./.github/actions/agent-receipt
+#     with:
+#       fail-on: high
+#       base: origin/main
+#
+# Expects `agent-receipt` on PATH (npm i -D, or a prior install step).
+# Does not publish or install the package itself.
+name: agent-receipt gate
+description: Run wrap or share with --fail-on and --json. Exit 2 fails the job.
+
+inputs:
+  fail-on:
+    description: high, medium, or low
+    required: false
+    default: high
+  base:
+    description: Optional git ref for wrap --base (ignored for share)
+    required: false
+    default: ""
+  command:
+    description: wrap (default) or share
+    required: false
+    default: wrap
+
+runs:
+  using: composite
+  steps:
+    - name: agent-receipt JSON gate
+      shell: bash
+      env:
+        FAIL_ON: ${{ inputs.fail-on }}
+        BASE_IN: ${{ inputs.base }}
+        GATE_CMD: ${{ inputs.command }}
+      run: |
+        set -eu
+        if [ -x node_modules/.bin/agent-receipt ]; then
+          CLI="node_modules/.bin/agent-receipt"
+        elif command -v agent-receipt >/dev/null 2>&1; then
+          CLI="agent-receipt"
+        else
+          echo "agent-receipt is not on PATH. npm i -D @pramodreddyboddu/agent-receipt or npm i -g github:pramodreddyboddu/agent-receipt" >&2
+          exit 1
+        fi
+        out="${RUNNER_TEMP:-/tmp}/receipt-gate.json"
+        set +e
+        if [ "$GATE_CMD" = "share" ]; then
+          "$CLI" share --fail-on "$FAIL_ON" --json > "$out"
+        elif [ -n "$BASE_IN" ]; then
+          "$CLI" wrap --base "$BASE_IN" --fail-on "$FAIL_ON" --json > "$out"
+        else
+          "$CLI" wrap --fail-on "$FAIL_ON" --json > "$out"
+        fi
+        code=$?
+        set -e
+        echo "agent-receipt exit $code"
+        cat "$out"
+        node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (g.exitCode !== 0 || g.ok !== true) process.exit(g.exitCode || 1);' "$out"
+        exit "$code"
