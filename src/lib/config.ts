@@ -31,6 +31,19 @@ export interface AgentReceiptConfig {
   /** Set when `sign:` is present but not a boolean. */
   signInvalid?: boolean;
   /**
+   * When true, capture / wrap / watch run trusted prune after a successful
+   * write if `maxCount` and/or `maxAgeDays` is set. Absent or false: those
+   * commands never delete. `autoPrune: true` with no retention limit deletes
+   * nothing. CLI `--no-prune` wins, then `--prune`. Auto-prune does not pass
+   * `--force`. A broken audit chain skips the delete, warns on stderr, and
+   * does not fail the capture. share, export, verify, prove, import, and
+   * doctor do not delete. `init --retention` does not set this key.
+   * Not a long-running daemon.
+   */
+  autoPrune?: boolean;
+  /** Set when `autoPrune:` is present but not a boolean. */
+  autoPruneInvalid?: boolean;
+  /**
    * Default `--fail-on` for capture / wrap / watch / share.
    * `verify` ignores this unless `--fail-on` is passed explicitly.
    * Invalid values are kept so `doctor` / `validateConfig` can report them.
@@ -38,7 +51,8 @@ export interface AgentReceiptConfig {
   failOn?: string;
   /**
    * Keep at most this many receipts under outDir. Unset = no count cap.
-   * `prune` is the only command that deletes, and only when a limit is set.
+   * `prune` deletes when a limit is set. capture / wrap / watch do too
+   * when `autoPrune` is true (same trusted path, no `--force`).
    */
   maxCount?: number;
   /** Delete receipts strictly older than this many days. Unset = no age cap. */
@@ -66,6 +80,7 @@ const DEFAULTS: AgentReceiptConfig = {
   riskAllowlist: [],
   redact: false,
   sign: false,
+  autoPrune: false,
 };
 
 const CONFIG_NAME = '.agent-receipt.yml';
@@ -198,6 +213,12 @@ export function loadConfig(cwd: string): AgentReceiptConfig {
     if (typeof parsed.sign === 'boolean') sign = parsed.sign;
     else signInvalid = true;
   }
+  let autoPrune = DEFAULTS.autoPrune;
+  let autoPruneInvalid = false;
+  if (parsed.autoPrune !== undefined) {
+    if (typeof parsed.autoPrune === 'boolean') autoPrune = parsed.autoPrune;
+    else autoPruneInvalid = true;
+  }
   let failOn: string | undefined;
   if (parsed.failOn === undefined || parsed.failOn === false || parsed.failOn === '') {
     failOn = undefined;
@@ -249,6 +270,8 @@ export function loadConfig(cwd: string): AgentReceiptConfig {
     redactInvalid: redactInvalid || undefined,
     sign,
     signInvalid: signInvalid || undefined,
+    autoPrune,
+    autoPruneInvalid: autoPruneInvalid || undefined,
     failOn,
     maxCount,
     maxAgeDays,
@@ -295,6 +318,12 @@ export function validateConfig(cfg: AgentReceiptConfig): string[] {
   }
   if (cfg.signInvalid || (cfg.sign !== undefined && typeof cfg.sign !== 'boolean')) {
     problems.push('sign must be true or false');
+  }
+  if (
+    cfg.autoPruneInvalid ||
+    (cfg.autoPrune !== undefined && typeof cfg.autoPrune !== 'boolean')
+  ) {
+    problems.push('autoPrune must be true or false');
   }
   if (
     cfg.failOn !== undefined &&
@@ -359,13 +388,19 @@ riskAllowlist: []
 # stays fail-closed and is independent of this key.
 # sign: true  # after keygen; CLI --no-sign overrides
 
-# Retention is opt-in. Nothing is deleted until you set one of these
-# and run \`agent-receipt prune\` (preview with \`--dry-run\`).
-# \`agent-receipt init --retention\` sets both keys (100 receipts / 30 days).
-# Trusted prune refuses to delete when audit.jsonl exists and the chain
-# is broken. \`prune --force\` deletes anyway. Capture / wrap / watch do not prune.
+# Retention is opt-in. Nothing is deleted until you set maxCount and/or
+# maxAgeDays. \`agent-receipt init --retention\` sets both keys
+# (100 receipts / 30 days) and does not turn autoPrune on.
+# \`agent-receipt prune\` applies the limits (preview with \`--dry-run\`).
+# \`autoPrune: true\` (or \`init --auto-prune\`) runs that same trusted prune
+# after a successful capture, wrap, or watch. Both are required.
+# CLI \`--no-prune\` wins, then \`--prune\`. Auto-prune does not pass
+# \`--force\`. A broken audit chain skips the delete, warns, and does
+# not fail the capture. Manual \`prune --force\` is break-glass.
+# Not a daemon.
 # maxCount: 100
 # maxAgeDays: 30
+# autoPrune: true
 
 # Fingerprint trust store (known-keys allowlist). Opt-in. Not a CA.
 # Union with .agent-receipt/trusted-keys.txt (one lowercase 64-hex
@@ -451,9 +486,13 @@ riskAllowlist: []
     and no session \`--message\`.
 
 13. Retention is opt-in. \`agent-receipt init --retention\` sets
-    \`maxCount: 100\` and \`maxAgeDays: 30\`. Preview with
-    \`agent-receipt prune --dry-run\`, then \`agent-receipt prune\`.
-    Trusted prune refuses to delete when the audit chain is broken
+    \`maxCount: 100\` and \`maxAgeDays: 30\` and does not turn
+    \`autoPrune\` on. Add \`autoPrune: true\` or run
+    \`agent-receipt init --auto-prune\` so capture, wrap, and watch
+    delete after a successful write (same trusted prune, no \`--force\`).
+    A broken audit chain skips that delete and does not fail the capture.
+    Preview with \`agent-receipt prune --dry-run\`, then
+    \`agent-receipt prune\`. Manual prune exits 1 on a broken chain
     (\`prune --force\` is break-glass). See \`docs/business.md\`.
 
 14. Agent-specific tips: see \`docs/agents.md\` in the package / repo.

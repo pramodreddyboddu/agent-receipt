@@ -28,6 +28,12 @@ import type { SignatureStatus } from './sign.js';
  * Package verify adds `signed`, `fingerprint`, `filesOk`, `manifestOk`,
  * and `manifestSig`. `import` also adds `importPath`, `importSigPath`,
  * and `dryRun`. Those keys are omitted on a plain receipt verify.
+ *
+ * `autoPrune`, `pruned`, and `pruneReason` are set by capture and wrap
+ * `--json` only when this run attempted auto-prune. They are omitted when
+ * auto-prune was off so existing objects stay stable. `pruneReason` is
+ * null when trusted prune ran, or a short skip code (`retention-off`,
+ * `chain-broken`, `error`). A chain skip does not change `exitCode`.
  */
 export interface GateRisk {
   high: number;
@@ -98,6 +104,18 @@ export interface GateReport {
   importSigPath?: string | null;
   /** Set by `import`. True when paths were planned and nothing was written. */
   dryRun?: boolean;
+  /**
+   * Set by capture and wrap `--json` when this run attempted auto-prune.
+   * Omitted when auto-prune was off.
+   */
+  autoPrune?: boolean;
+  /** Receipts deleted by that attempt. Omitted when auto-prune was off. */
+  pruned?: number;
+  /**
+   * Null when trusted prune ran. Otherwise `retention-off`, `chain-broken`,
+   * or `error`. Omitted when auto-prune was off.
+   */
+  pruneReason?: string | null;
 }
 
 export type GateFields = Omit<GateReport, 'ok' | 'version' | 'exitCode' | 'trailingIgnored'> & {
@@ -155,6 +173,9 @@ export function finalizeGate(fields: GateFields): GateReport {
     ...(fields.importPath !== undefined ? { importPath: fields.importPath } : {}),
     ...(fields.importSigPath !== undefined ? { importSigPath: fields.importSigPath } : {}),
     ...(fields.dryRun !== undefined ? { dryRun: fields.dryRun } : {}),
+    ...(fields.autoPrune !== undefined ? { autoPrune: fields.autoPrune } : {}),
+    ...(fields.pruned !== undefined ? { pruned: fields.pruned } : {}),
+    ...(fields.pruneReason !== undefined ? { pruneReason: fields.pruneReason } : {}),
   };
 }
 

@@ -11,6 +11,7 @@ import {
   riskToGate,
 } from '../lib/gate.js';
 import { recordAuditEvent } from '../lib/audit.js';
+import { autoPruneGateFields, maybeAutoPrune } from '../lib/auto-prune.js';
 
 export interface WrapOptions {
   agent?: string;
@@ -29,6 +30,13 @@ export interface WrapOptions {
    * Missing keys print a tip and do not fail the wrap.
    */
   sign?: boolean;
+  /**
+   * After the wrap audit line, run trusted prune when retention is enabled.
+   * Does not pass `--force`. A broken chain warns and does not change the
+   * wrap exit code. The inner capture does not prune (it records no audit
+   * line of its own). Off by default.
+   */
+  autoPrune?: boolean;
 }
 
 export interface WrapResult {
@@ -108,6 +116,22 @@ export function cmdWrap(cwd: string, opts: WrapOptions = {}): WrapResult {
   const verifiedReport = cmdVerify(cwd, capture.path, { quiet });
   const verified = verifiedReport.ok;
 
+  const exitCode = !verified || capture.failedOn ? 2 : 0;
+  recordAuditEvent(cwd, {
+    event: 'wrap',
+    path: capture.path,
+    sha256: verifiedReport.sha256 || capture.sha256,
+    agent: opts.agent ?? 'wrap',
+    redacted: capture.redacted,
+    verified,
+    failedOn: capture.failedOn,
+    exitCode,
+  });
+
+  const autoPruneResult = opts.autoPrune
+    ? maybeAutoPrune(cwd, { enabled: true, json: quiet })
+    : undefined;
+
   if (opts.json) {
     const reason = !verified
       ? verifiedReport.reason || 'verify failed'
@@ -132,21 +156,10 @@ export function cmdWrap(cwd: string, opts: WrapOptions = {}): WrapResult {
         ignored: capture.ignored,
         trailingIgnored: verifiedReport.trailingIgnored,
         reason,
+        ...autoPruneGateFields(autoPruneResult),
       }),
     );
   }
-
-  const exitCode = !verified || capture.failedOn ? 2 : 0;
-  recordAuditEvent(cwd, {
-    event: 'wrap',
-    path: capture.path,
-    sha256: verifiedReport.sha256 || capture.sha256,
-    agent: opts.agent ?? 'wrap',
-    redacted: capture.redacted,
-    verified,
-    failedOn: capture.failedOn,
-    exitCode,
-  });
 
   return {
     path: capture.path,

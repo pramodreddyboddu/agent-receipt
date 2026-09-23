@@ -30,6 +30,11 @@ export interface PruneOptions {
    * is present and `verifyAuditChain` fails.
    */
   force?: boolean;
+  /**
+   * Suppress human and JSON output. Used by auto-prune after capture, wrap,
+   * and watch so the caller can print one short line. Manual prune never sets this.
+   */
+  silent?: boolean;
 }
 
 /** Identity fields shared with an audit line. No message and no diff body. */
@@ -103,7 +108,13 @@ function refusalReason(detail: string): string {
   return `trusted prune refused: ${detail}. Nothing was deleted. Pass --force to delete anyway.`;
 }
 
-function emitReport(report: PruneReport, json: boolean | undefined, human: () => void): PruneReport {
+function emitReport(
+  report: PruneReport,
+  json: boolean | undefined,
+  human: () => void,
+  silent?: boolean,
+): PruneReport {
+  if (silent) return report;
   if (json) {
     console.log(JSON.stringify(report));
     if (!report.ok && report.reason) console.error(report.reason);
@@ -251,7 +262,7 @@ export function cmdPrune(cwd: string, opts: PruneOptions = {}): PruneReport {
         'Set maxCount and/or maxAgeDays in .agent-receipt.yml, or pass --max-count / --max-age-days.',
       );
       console.log(color.dim('Preview with: agent-receipt prune --dry-run'));
-    });
+    }, opts.silent);
   }
 
   assertPruneOutDir(cwd, receiptsDir(cwd));
@@ -299,7 +310,7 @@ export function cmdPrune(cwd: string, opts: PruneOptions = {}): PruneReport {
         console.log('No receipts matched the limits. Trust still failed, so this is not a clean prune.');
       }
       console.log('Nothing deleted.');
-    });
+    }, opts.silent);
   }
 
   if (dryRun) {
@@ -349,7 +360,7 @@ export function cmdPrune(cwd: string, opts: PruneOptions = {}): PruneReport {
         );
       }
       console.log('Nothing deleted.');
-    });
+    }, opts.silent);
   }
 
   deletePlanned(cwd, plan.delete);
@@ -411,5 +422,5 @@ export function cmdPrune(cwd: string, opts: PruneOptions = {}): PruneReport {
         ),
       );
     }
-  });
+  }, opts.silent);
 }

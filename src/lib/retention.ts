@@ -2,8 +2,9 @@
  * Opt-in retention for receipts under outDir.
  *
  * Nothing is deleted unless `maxCount` and/or `maxAgeDays` is set
- * (config or CLI) and `prune` is run without `--dry-run`. Capture,
- * wrap, and watch do not prune.
+ * (config or CLI) and `prune` runs without `--dry-run`. capture, wrap,
+ * and watch call that same path after a successful write when `autoPrune`
+ * is on (no `--force`). A broken audit chain still refuses the delete.
  */
 import {
   closeSync,

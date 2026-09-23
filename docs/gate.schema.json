@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/gate.schema.json",
   "title": "GateReport",
-  "description": "One JSON object printed on stdout by `agent-receipt capture|wrap|share|verify|import --json`. Human progress stays on stderr. This is the CI gate, not the companion receipt file (docs/receipt.schema.json). `ok` is true only when `exitCode` is 0. Exit 0 passes. Exit 2 is a --fail-on match and/or a verify failure (the artifact is still written when capture/wrap/share got that far). Exit 1 is a usage or runtime error (`reason` is set); it is not a policy failure. `verified` is null when the command did not run verify (capture, and usage errors). `trailingIgnored` is a boolean when a body was hashed (verify, and wrap/share after they verify) and null when trailing content was not evaluated (capture, and usage errors). Config `failOn` is not applied by verify unless `--fail-on` is explicit. Optional `signature` is present on verify --json only when --require-sig ran after a passing hash, and always on verify --package / import. Optional `sigPath` is present on share --json (string or null). Optional `packagePath` is present on share --json when --package wrote a directory, and on verify --package / import (the package directory). htmlPath and markdownPath then point at receipt.html and receipt.md. verify --package and import also add signed, fingerprint, filesOk, manifestOk, and manifestSig. import adds importPath, importSigPath, and dryRun. Those optional keys are omitted on a plain receipt verify. Required keys are unchanged.",
+  "description": "One JSON object printed on stdout by `agent-receipt capture|wrap|share|verify|import --json`. Human progress stays on stderr. This is the CI gate, not the companion receipt file (docs/receipt.schema.json). `ok` is true only when `exitCode` is 0. Exit 0 passes. Exit 2 is a --fail-on match and/or a verify failure (the artifact is still written when capture/wrap/share got that far). Exit 1 is a usage or runtime error (`reason` is set); it is not a policy failure. `verified` is null when the command did not run verify (capture, and usage errors). `trailingIgnored` is a boolean when a body was hashed (verify, and wrap/share after they verify) and null when trailing content was not evaluated (capture, and usage errors). Config `failOn` is not applied by verify unless `--fail-on` is explicit. Optional `signature` is present on verify --json only when --require-sig ran after a passing hash, and always on verify --package / import. Optional `sigPath` is present on share --json (string or null). Optional `packagePath` is present on share --json when --package wrote a directory, and on verify --package / import (the package directory). htmlPath and markdownPath then point at receipt.html and receipt.md. verify --package and import also add signed, fingerprint, filesOk, manifestOk, and manifestSig. import adds importPath, importSigPath, and dryRun. Those optional keys are omitted on a plain receipt verify. capture and wrap --json add optional autoPrune, pruned, and pruneReason only when that run attempted auto-prune. They are omitted when auto-prune was off. pruneReason is null when trusted prune ran, or retention-off, chain-broken, or error. A chain skip does not change exitCode. Required keys are unchanged.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -186,6 +186,19 @@
     "dryRun": {
       "type": "boolean",
       "description": "Optional. import --json. True when paths were planned and nothing was written."
+    },
+    "autoPrune": {
+      "type": "boolean",
+      "description": "Optional. capture and wrap --json set this true when this run attempted auto-prune (config autoPrune or --prune, and not --no-prune). Omitted when auto-prune was off."
+    },
+    "pruned": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Optional. Receipts deleted by that auto-prune. Zero when the attempt deleted nothing. Omitted when auto-prune was off."
+    },
+    "pruneReason": {
+      "type": ["string", "null"],
+      "description": "Optional. null when trusted prune ran (including zero deletes). Short skip or error code otherwise: retention-off, chain-broken, or error. Omitted when auto-prune was off. A chain-broken skip does not change exitCode."
     }
   }
 }

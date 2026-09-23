@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.25: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.26: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -238,3 +238,17 @@ jobs:
           # A clean wrap is absent. An empty array is exit 0, not an error.
           node bin/agent-receipt.js audit --agent ci --failed --json --cwd "$tmp" > "$tmp/audit-failed.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!Array.isArray(g)||g.some(e=>e.agent!=="ci"||!(e.failedOn===true||e.exitCode!==0))){console.error(g); process.exit(1)}' "$tmp/audit-failed.json"
+          # v1.0.26: autoPrune + maxCount deletes older receipts after wrap
+          # and appends one prune audit line per delete. A broken audit chain
+          # still exits 0 and deletes nothing. Not a daemon.
+          node -e 'const fs=require("fs"); const p=process.argv[1]; const lines=fs.readFileSync(p,"utf8").split("\n"); function setKey(key,value){ let found=false; for (let i=0;i<lines.length;i++){ if(lines[i].startsWith(key+":")){ lines[i]=key+": "+value; found=true; } } if(!found) lines.push(key+": "+value); } setKey("maxCount","1"); setKey("autoPrune","true"); fs.writeFileSync(p, lines.join("\n").replace(/\n*$/,"\n"));' "$tmp/.agent-receipt.yml"
+          count_receipts() { find "$tmp/.agent-receipt/receipts" -maxdepth 1 -type f -name 'receipt-*.md' ! -name '*.prove.md' | wc -l; }
+          node bin/agent-receipt.js wrap --agent ci --message auto-prune --json --cwd "$tmp" > "$tmp/wrap-autoprune.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="wrap"||g.exitCode!==0||g.autoPrune!==true||typeof g.pruned!=="number"||g.pruned<1||g.pruneReason!==null){console.error(g); process.exit(1)} const lines=fs.readFileSync(process.argv[2],"utf8").trim().split("\n").filter(Boolean).map(function(line){return JSON.parse(line)}); const prunes=lines.filter(function(e){return e.event==="prune"}); if(prunes.length<1||prunes.length!==g.pruned){console.error(prunes.length,g); process.exit(1)}' "$tmp/wrap-autoprune.json" "$tmp/.agent-receipt/audit.jsonl"
+          test "$(count_receipts | tr -d ' ')" = "1"
+          printf '%s\n' '{"event":"wrap"}' >> "$tmp/.agent-receipt/audit.jsonl"
+          before=$(count_receipts | tr -d ' ')
+          node bin/agent-receipt.js wrap --agent ci --message auto-prune-broken --json --cwd "$tmp" > "$tmp/wrap-autoprune-broken.json" 2> "$tmp/wrap-autoprune-broken.err"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="wrap"||g.exitCode!==0||g.autoPrune!==true||g.pruned!==0||g.pruneReason!=="chain-broken"){console.error(g); process.exit(1)} const err=fs.readFileSync(process.argv[2],"utf8"); if(err.indexOf("chain")===-1||err.indexOf("prune --force")===-1){console.error(err); process.exit(1)}' "$tmp/wrap-autoprune-broken.json" "$tmp/wrap-autoprune-broken.err"
+          after=$(count_receipts | tr -d ' ')
+          test "$after" = "$((before + 1))"

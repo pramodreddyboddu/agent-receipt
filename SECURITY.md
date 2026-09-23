@@ -78,9 +78,11 @@ tokens such as GitHub `gho_`/`ghs_`, GitLab `glpat-`, Google, npm, Stripe,
 SendGrid, Slack, Azure `AccountKey`, OpenAI `sk-` / Anthropic `sk-ant-`,
 Hugging Face `hf_`, Groq `gsk_`, xAI `xai-`, and `Authorization: Bearer`, and
 omits nested prior-receipt bodies). Redaction is not a DLP guarantee. `prune`
-deletes receipt files only when you set `maxCount` / `maxAgeDays` and run it
+deletes receipt files only when you set `maxCount` / `maxAgeDays` and run it,
+or when `autoPrune: true` (or `--prune`) is also set so capture, wrap, and
+watch run that same path after a successful write
 (default is keep everything) and then appends one audit line per receipt
-deleted (`--dry-run` does not). Trusted prune refuses that delete when
+deleted (`--dry-run` does not). Auto-prune does not pass `--force`. Trusted prune refuses that delete when
 `.agent-receipt/audit.jsonl` exists and the hash chain is broken
 (`prune --force` is break-glass). `init --retention` sets the two limits.
 See [`docs/business.md`](docs/business.md) for what not to put in receipts.

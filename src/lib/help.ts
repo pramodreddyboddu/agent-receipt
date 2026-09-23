@@ -4,14 +4,15 @@ const TOPICS: Record<string, string> = {
   init: `agent-receipt init — write config + setup notes
 
 Usage:
-  agent-receipt init [--cursor] [--grok] [--org] [--retention] [--cwd <path>]
+  agent-receipt init [--cursor] [--grok] [--org] [--retention] [--auto-prune] [--cwd <path>]
 
 Options:
   --cursor               Drop .cursor/rules/agent-receipt.mdc (agent runs capture)
   --grok                 Drop .grok rule + SessionEnd hook (dirty-tree wrap, --redact)
   --org                  Set redact: true and failOn: high (alias: --policy)
   --policy               Alias of --org
-  --retention            Set maxCount: 100 and maxAgeDays: 30
+  --retention            Set maxCount: 100 and maxAgeDays: 30 (does not set autoPrune)
+  --auto-prune           Set autoPrune: true (does not replace ignore, redact, or limits)
 
 \`--org\` and \`--policy\` are the same path. No network.
 
@@ -38,10 +39,19 @@ example — do not copy it over a local ignore list.
 (\`maxCount: 100\`, \`maxAgeDays: 30\` — the disk-pressure / org-policy
 tips). A missing file is a normal init config with those keys enabled.
 An existing file rewrites only those keys. \`ignore\`, \`redact\`,
-\`failOn\`, \`outDir\`, and comments stay. Re-running when both are
+\`failOn\`, \`outDir\`, \`autoPrune\`, and comments stay. Re-running when both are
 already set exits 0 and does not rewrite them. Prints whether each key
 was set or unchanged, then suggests \`prune --dry-run\`. No network.
 Trusted prune still refuses to delete when the audit chain is broken.
+\`--retention\` does not turn \`autoPrune\` on.
+
+\`--auto-prune\` sets \`autoPrune: true\` the same way. It does not replace
+\`ignore\`, \`redact\`, \`failOn\`, or the retention limits, and it does not
+delete anything by itself. Combine with \`--retention\` when you want both.
+Capture, wrap, and watch then run trusted prune after a successful write
+when a limit is set. That path does not pass \`--force\`. A broken audit
+chain skips the delete and does not fail the capture. \`--no-prune\` overrides
+for one run. Not a daemon.
 
 Creates:
   .agent-receipt.yml          config (outDir, agent, ignore globs, …)
@@ -55,6 +65,8 @@ Examples:
   agent-receipt init --org
   agent-receipt init --policy
   agent-receipt init --retention
+  agent-receipt init --auto-prune
+  agent-receipt init --retention --auto-prune
   agent-receipt init --cursor
   agent-receipt init --grok
   agent-receipt init --cwd ~/code/my-app
@@ -94,7 +106,18 @@ Options:
                          Not a CA. CI composite sign: true fails closed
                          without keys (docs/ci-signed-gate.md).
   --no-sign              Force signing off (overrides config sign: true)
+  --prune                After a successful write, run trusted prune when
+                         maxCount and/or maxAgeDays is set. Also on when
+                         config autoPrune: true. Does not pass --force.
+                         A broken audit chain skips the delete, warns on
+                         stderr, and does not change this command's exit code.
+  --no-prune             Force auto-prune off (overrides config and --prune)
   --cwd <path>           Run as if started in this directory
+
+\`--no-prune\` wins, then \`--prune\`, then config \`autoPrune: true\`.
+Absent or false: this command does not delete. \`autoPrune: true\` with no
+retention limit deletes nothing. share, export, verify, prove, import,
+and doctor do not auto-prune. Not a daemon.
 
 Config \`.agent-receipt.yml\` may set \`redact: true\`, \`failOn: high\`, and
 \`sign: true\` (see examples/org-policy.yml). Those apply when the flags
@@ -147,7 +170,18 @@ Options:
                          CI composite sign: true fails closed without keys
                          (docs/ci-signed-gate.md).
   --no-sign              Force signing off (overrides config sign: true)
+  --prune                After a successful write, run trusted prune when
+                         retention is enabled (also on when config
+                         autoPrune: true). No --force. A broken audit chain
+                         warns and does not change the exit code.
+  --no-prune             Force auto-prune off (overrides config and --prune)
   --cwd <path>           Run as if started in this directory
+
+\`--no-prune\` wins, then \`--prune\`, then config \`autoPrune: true\`.
+\`--json\` adds \`autoPrune\`, \`pruned\`, and \`pruneReason\` only when this
+run attempted auto-prune. Those keys are omitted when it was off.
+\`pruneReason\` is null when the trusted prune ran, or \`retention-off\`,
+\`chain-broken\`, or \`error\`.
 
 \`sign: true\` in \`.agent-receipt.yml\` signs this command when neither
 flag is passed. \`init --org\` does not set \`sign\` (keys may be absent).
@@ -393,7 +427,7 @@ Examples:
   watch: `agent-receipt watch — poll git and auto-capture on commits or dirty tree
 
 Usage:
-  agent-receipt watch [--interval <sec>] [--once] [--commits-only] [--agent <name>] [--message <text>] [--fail-on …] [--sign] [--no-sign]
+  agent-receipt watch [--interval <sec>] [--once] [--commits-only] [--agent <name>] [--message <text>] [--fail-on …] [--sign] [--no-sign] [--prune] [--no-prune]
 
 Defaults: poll every 5 seconds; watch **commits + dirty tree** until Ctrl+C.
 Dirty-tree captures are labeled **uncommitted**.
@@ -414,11 +448,17 @@ Options:
                          when config sign: true). Missing keys tip and leave
                          the receipt unsigned. Not exit 2. Not a CA.
   --no-sign              Force signing off (overrides config sign: true)
+  --prune                After each successful capture, run trusted prune
+                         when retention is enabled (also on when config
+                         autoPrune: true). No --force. A broken chain warns
+                         and does not change the exit code.
+  --no-prune             Force auto-prune off (overrides config and --prune)
   --cwd <path>           Run as if started in this directory
 
+\`--no-prune\` wins, then \`--prune\`, then config \`autoPrune: true\`.
 Config \`sign: true\` is passed through to each capture. \`init --org\` does
 not set \`sign\`. \`--no-sign\` overrides. share, export, prove, and verify
-do not read this key.
+do not read this key. Auto-prune runs after the watch audit line. Not a daemon.
 
 When HEAD moves A → B, capture uses --since A so all commits in the interval are included.
 When the working tree changes (and HEAD did not), capture uses --uncommitted.
@@ -885,8 +925,14 @@ Usage:
 Nothing is deleted unless a limit is set. Limits come from
 \`.agent-receipt.yml\` (\`maxCount\`, \`maxAgeDays\`) or from the flags below.
 Flags override config for this run. Omit both and prune exits 0 without
-deleting. Capture, wrap, and watch never prune on their own.
-\`init --retention\` sets \`maxCount: 100\` and \`maxAgeDays: 30\`.
+deleting. Capture, wrap, and watch run this same path after a successful
+write when \`autoPrune: true\` or \`--prune\` is set (both a limit and the
+flag are required). That auto path does not pass \`--force\` and does not
+change the capture exit code: a broken chain warns on stderr and deletes
+nothing. Manual \`prune\` still exits 1 on a broken chain.
+\`init --retention\` sets \`maxCount: 100\` and \`maxAgeDays: 30\` and does
+not turn \`autoPrune\` on. \`init --auto-prune\` sets only \`autoPrune: true\`.
+\`--no-prune\` on capture, wrap, or watch forces auto-prune off for that run.
 
 Trusted prune: when \`.agent-receipt/audit.jsonl\` exists, the hash chain
 is checked before any delete. A broken chain exits 1, deletes nothing,
@@ -986,6 +1032,11 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
   retention     maxCount / maxAgeDays (opt-in). Over the cap or a large outDir is a warning.
                 Unset fails under --strict on any outDir, including a small one.
                 Default doctor leaves unset retention as INFO/WARN.
+  autoPrune     Optional. INFO when unset or false. PASS when true and a
+                retention limit is set. WARN when true but maxCount and
+                maxAgeDays are unset (names init --retention). That WARN
+                does not fail doctor or doctor --strict. Unset autoPrune
+                does not fail --strict. Not a daemon.
   git-clean     working tree clean? Dirty is a warning, not a failure
   cursor        init --cursor rule present?
   grok          init --grok rule + SessionEnd hook present?
@@ -1004,9 +1055,11 @@ Default \`doctor\` still leaves unset retention as INFO when the directory
 is small, and WARN when it is under pressure (100 receipts or 20 MB).
 A configured limit that would still delete files stays a warning — run
 \`prune\`. \`--strict\` does not scan diffs.
-\`init --retention\` sets maxCount: 100 and maxAgeDays: 30. Trusted prune
+\`init --retention\` sets maxCount: 100 and maxAgeDays: 30 and does not
+turn autoPrune on. \`init --auto-prune\` sets autoPrune: true. Trusted prune
 refuses to delete when the audit chain is broken unless you pass
-\`prune --force\`.
+\`prune --force\`. Auto-prune never passes \`--force\`. Unset autoPrune does
+not fail doctor or doctor --strict.
 CI \`--fail-on\` remains the risk gate.
 
 \`--json\` prints one object on stdout and does not change the exit code:
@@ -1110,7 +1163,7 @@ Usage:
   agent-receipt <command> [options]
 
 Commands:
-  init                   Write config + notes (--org sets redact + failOn; --retention; --cursor, --grok)
+  init                   Write config + notes (--org sets redact + failOn; --retention; --auto-prune; --cursor, --grok)
   capture                Capture a git snapshot receipt (Markdown)
   wrap                   End-of-session: capture + TL;DR + verify
   share [path]           Redact + HTML (+ optional md, or --package handoff dir) + verify + TL;DR
@@ -1129,7 +1182,7 @@ Commands:
   prove [path]           Prove-this-run: verify + audit link + signature status (--page writes foo.prove.md)
   audit                  List the compliance log (--event, --agent, --failed filter the listing)
   log                    Alias for audit
-  prune                  Delete old receipts under outDir (opt-in; trusted prune; --dry-run, --force)
+  prune                  Delete old receipts under outDir (opt-in; trusted prune; --dry-run, --force). autoPrune runs this after capture/wrap/watch
   retain                 Alias for prune
   doctor                 Health check (--json; --strict fails unset policy, unset retention, a broken audit chain, and an invalid trust store)
   compare [a] [b]        Diff two receipts (default: last vs previous)
@@ -1153,6 +1206,7 @@ Quickstart (≈ 60 seconds):
 Examples:
   agent-receipt init --org
   agent-receipt init --retention
+  agent-receipt init --auto-prune
   agent-receipt init --cursor
   agent-receipt init --grok
   agent-receipt wrap --agent cursor --message "session done"

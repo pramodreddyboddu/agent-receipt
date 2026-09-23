@@ -77,14 +77,14 @@ describe('v1.0.23 trust show', () => {
     assert.match(changelog, /was not edited|not\*\* updated/);
     assert.match(changelog, /not a CA/i);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.25');
+    assert.equal(pkg.version, '1.0.26');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.25');
-    assert.equal(lock.packages[''].version, '1.0.25');
+    assert.equal(lock.version, '1.0.26');
+    assert.equal(lock.packages[''].version, '1.0.26');
     assert.equal(lock.packages[''].dependencies, undefined);
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.25/);
+    assert.match(versionTs, /1\.0\.26/);
 
     const help = cli(root, ['help', 'trust']);
     assert.match(help, /trust show \[--json\]/);

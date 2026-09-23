@@ -66,6 +66,17 @@ function resolveSign(cwd: string, flags: Record<string, string | boolean>): bool
   return loadConfig(cwd).sign === true;
 }
 
+/**
+ * `--no-prune` wins, then `--prune`, then config `autoPrune: true`.
+ * capture / wrap / watch only. Does not pass `--force`. A broken audit
+ * chain warns and does not change the command exit code.
+ */
+function resolveAutoPrune(cwd: string, flags: Record<string, string | boolean>): boolean {
+  if (flagBool(flags, 'no-prune')) return false;
+  if (flagBool(flags, 'prune')) return true;
+  return loadConfig(cwd).autoPrune === true;
+}
+
 function flagPositiveInt(
   flags: Record<string, string | boolean>,
   name: string,
@@ -285,6 +296,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           grok: flagBool(flags, 'grok'),
           org: flagBool(flags, 'org', 'policy'),
           retention: flagBool(flags, 'retention'),
+          autoPrune: flagBool(flags, 'auto-prune'),
         });
         return 0;
       case 'capture': {
@@ -308,6 +320,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           uncommitted: flagBool(flags, 'uncommitted'),
           redact: resolveRedact(cwd, flags),
           sign: resolveSign(cwd, flags),
+          autoPrune: resolveAutoPrune(cwd, flags),
         });
         return result.failedOn ? 2 : 0;
       }
@@ -323,6 +336,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           full: flagBool(flags, 'full'),
           uncommitted: flagBool(flags, 'uncommitted'),
           sign: resolveSign(cwd, flags),
+          autoPrune: resolveAutoPrune(cwd, flags),
         });
         if (result.failedOn) return 2;
         return result.verified ? 0 : 2;
@@ -385,6 +399,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           commitsOnly: flagBool(flags, 'commits-only'),
           redact: resolveRedact(cwd, flags),
           sign: resolveSign(cwd, flags),
+          autoPrune: resolveAutoPrune(cwd, flags),
         });
       }
       case 'verify': {
