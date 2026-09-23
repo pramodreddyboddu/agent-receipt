@@ -273,7 +273,7 @@ describe('v1.0.15 gate schema and drop-in examples', () => {
     const gate = readFileSync(join(root, 'examples', 'github', 'pr-gate.yml'), 'utf8');
     assert.match(gate, /upload-artifact/);
     assert.match(gate, /prove/);
-    assert.match(gate, /v1\.0\.15/);
+    assert.match(gate, /v1\.0\.16/);
     assert.match(gate, /--fail-on/);
     const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     assert.match(changelog, /## \[1\.0\.15\]/);
@@ -281,9 +281,9 @@ describe('v1.0.15 gate schema and drop-in examples', () => {
     assert.match(changelog, /trusted prune/i);
     assert.match(changelog, /no minisign|signing or attest/i);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.15');
+    assert.equal(pkg.version, '1.0.16');
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.15/);
+    assert.match(versionTs, /1\.0\.16/);
     const helpInit = cli(root, ['help', 'init']);
     assert.match(helpInit, /--retention/);
     assert.match(helpInit, /maxCount: 100/);

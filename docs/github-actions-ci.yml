@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.15: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.16: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -48,6 +48,8 @@ jobs:
           node bin/agent-receipt.js help prune
           node bin/agent-receipt.js help doctor
           node bin/agent-receipt.js help prove
+          node bin/agent-receipt.js help keygen
+          node bin/agent-receipt.js help sign
           node bin/agent-receipt.js version
           node bin/agent-receipt.js --version
       - name: share --json smoke
@@ -69,7 +71,15 @@ jobs:
           node -e 'const fs=require("fs"); const schema=JSON.parse(fs.readFileSync("docs/gate.schema.json","utf8")); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const req=schema.required||[]; if(!req.length){console.error("schema required empty"); process.exit(1)} for (const k of req) { if(!Object.prototype.hasOwnProperty.call(g,k)) { console.error("missing "+k); process.exit(1);} }' "$tmp/wrap.json"
           # prove-this-run: hash ok, trailing content evaluated, audit linked.
           node bin/agent-receipt.js prove --json --cwd "$tmp" > "$tmp/prove.json"
-          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="prove"||g.verified!==true||g.trailingIgnored!==false||g.exitCode!==0||!g.audit||g.audit.present!==true||g.audit.chainOk!==true||g.audit.matched!==true||typeof g.audit.events!=="number"||typeof g.sha256!=="string"){console.error(g); process.exit(1)}' "$tmp/prove.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="prove"||g.verified!==true||g.trailingIgnored!==false||g.exitCode!==0||!g.audit||g.audit.present!==true||g.audit.chainOk!==true||g.audit.matched!==true||typeof g.audit.events!=="number"||typeof g.sha256!=="string"||!g.signature||g.signature.present!==false||g.signature.ok!==null){console.error(g); process.exit(1)}' "$tmp/prove.json"
+          # v1.0.16: local Ed25519 attest of the receipt sha256. Unsigned prove
+          # above stays exit 0. keygen, sign, then prove reports signature.ok.
+          node bin/agent-receipt.js keygen --json --cwd "$tmp" > "$tmp/keygen.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="keygen"||g.exitCode!==0||g.created!==true||g.rotated!==false||typeof g.fingerprint!=="string"||g.fingerprint.length!==64){console.error(g); process.exit(1)}' "$tmp/keygen.json"
+          node bin/agent-receipt.js sign --json --cwd "$tmp" > "$tmp/sign.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="sign"||g.exitCode!==0||g.verified!==true||typeof g.sha256!=="string"||g.sha256.length!==64||typeof g.fingerprint!=="string"||typeof g.sigPath!=="string"){console.error(g); process.exit(1)}' "$tmp/sign.json"
+          node bin/agent-receipt.js prove --json --cwd "$tmp" > "$tmp/prove-signed.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const k=JSON.parse(fs.readFileSync(process.argv[2],"utf8")); if(!g.ok||g.verified!==true||g.exitCode!==0||!g.signature||g.signature.present!==true||g.signature.ok!==true||g.signature.alg!=="ed25519"||g.signature.fingerprint!==k.fingerprint){console.error(g); process.exit(1)}' "$tmp/prove-signed.json" "$tmp/keygen.json"
           node bin/agent-receipt.js last --json --cwd "$tmp" > "$tmp/last.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="last"||typeof g.path!=="string"||typeof g.sha256!=="string"||g.sha256.length!==64){console.error(g); process.exit(1)}' "$tmp/last.json"
           # history --agent is an exact match. The wrap above used --agent ci.

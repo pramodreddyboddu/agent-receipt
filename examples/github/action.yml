@@ -14,7 +14,7 @@
 #       fail-on: high
 #       base: origin/main
 #       install: true
-#       from: github:pramodreddyboddu/agent-receipt#v1.0.15
+#       from: github:pramodreddyboddu/agent-receipt#v1.0.16
 #       prove: true
 #
 # `install` defaults to false. When true, the step runs
@@ -54,7 +54,7 @@ inputs:
     required: false
     default: "false"
   from:
-    description: npm spec used when install is true. Pin with #v1.0.15 once the tag exists.
+    description: npm spec used when install is true. Pin with #v1.0.16 once the tag exists.
     required: false
     default: github:pramodreddyboddu/agent-receipt
   prove:

@@ -21,6 +21,8 @@ export { cmdHistory } from './commands/history.js';
 export { cmdWatch, clampInterval } from './commands/watch.js';
 export { cmdVerify } from './commands/verify.js';
 export { cmdProve } from './commands/prove.js';
+export { cmdKeygen } from './commands/keygen.js';
+export { cmdSign } from './commands/sign.js';
 export { cmdInstallHooks, cmdUninstallHooks } from './commands/hooks.js';
 export { cmdDoctor, runDoctorChecks } from './commands/doctor.js';
 export {
@@ -36,6 +38,16 @@ export {
   canonicalBody,
   hasTrailingAfterIntegrity,
 } from './lib/hash.js';
+export {
+  fingerprint,
+  loadKeys,
+  ensureKeyDir,
+  verifySignature,
+  signaturePathFor,
+  inspectReceiptSignature,
+  isLocalKeyMaterialPath,
+  createSignatureDocument,
+} from './lib/sign.js';
 export {
   analyzeRisks,
   summarizeRisks,

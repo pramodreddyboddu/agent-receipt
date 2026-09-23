@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/signature.schema.json",
+  "title": "ReceiptSignature",
+  "description": "Sidecar written by `agent-receipt sign` next to a Markdown receipt (`foo.md` → `foo.sig.json`). The signature is over the UTF-8 bytes of the receipt sha256 hex string (the same hex verify uses), not the raw Markdown. `publicKey` is the SPKI PEM so a peer can verify without `.agent-receipt/keys/`. The private key is never included. This is a local Ed25519 attest, not a CA or PKI certificate. `verify` stays hash-only; `prove` reports this sidecar when it is present.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["alg", "version", "sha256", "fingerprint", "signature", "publicKey"],
+  "properties": {
+    "alg": {
+      "const": "ed25519",
+      "description": "Signature algorithm. Only Ed25519 in this version."
+    },
+    "version": {
+      "const": 1,
+      "description": "Sidecar schema version."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Receipt sha256 hex that was signed, as 64 lowercase hex characters."
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Key fingerprint: lowercase hex SHA-256 of the DER-encoded SPKI bytes of publicKey."
+    },
+    "signature": {
+      "type": "string",
+      "description": "Base64-encoded raw 64-byte Ed25519 signature over the UTF-8 bytes of sha256."
+    },
+    "publicKey": {
+      "type": "string",
+      "description": "SPKI PEM public key. Peers verify with this key. Must not be a private key."
+    }
+  }
+}

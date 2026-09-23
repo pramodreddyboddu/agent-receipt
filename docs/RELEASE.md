@@ -16,6 +16,7 @@ want a public release. This checklist is the playbook when you are ready.
 - [ ] README 60-second path still works from a fresh clone / GitHub install
 - [ ] `docs/receipt.schema.json` matches current companion `--json` shape
 - [ ] `docs/gate.schema.json` matches the CI gate object (`capture` / `wrap` / `share` / `verify --json`)
+- [ ] `docs/signature.schema.json` matches the `sign` sidecar (`foo.sig.json`) when that file is present
 - [ ] Example receipt under `examples/` still looks sane (`verify` on it optional)
 
 ## CI workflow
@@ -35,14 +36,15 @@ gh auth refresh -h github.com -s workflow
 
 Fine-grained PAT: **Actions: Read and write**. GitHub App: **Workflows**.
 A token whose `gh auth status` scopes are only `gist`, `read:org`, `repo`
-cannot push `.github/workflows/*`. v1.0.6 through v1.0.15 left
+cannot push `.github/workflows/*`. v1.0.6 through v1.0.16 left
 `.github/workflows/ci.yml` unchanged for that reason; the docs mirror has
 the `share --json` smoke, `prove --json`, `last --json`, a `prune --dry-run`
 check, a `docs/gate.schema.json` required-key check on `wrap.json`,
 fail-closed `doctor --strict` (fails unset policy, passes after
 `init --org`), `doctor --json`, `audit --event wrap`,
 `audit --agent ci --failed`, and `history --agent ci` /
-`history --uncommitted` / `history --failed`. The drop-in PR gate
+`history --uncommitted` / `history --failed`, plus a 1.0.16 `keygen` /
+`sign` / `prove --json` signature smoke. The drop-in PR gate
 (`examples/github/pr-gate.yml`, `examples/github/action.yml`) is an example
 to copy, not this repo's live workflow.
 

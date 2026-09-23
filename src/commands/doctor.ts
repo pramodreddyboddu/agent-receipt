@@ -20,6 +20,7 @@ import { VERSION } from '../lib/version.js';
 import { color } from '../lib/color.js';
 import { auditLogPath, verifyAuditChain } from '../lib/audit.js';
 import { outDirUnderPressure, retentionCheck } from '../lib/retention.js';
+import { loadKeys, privateKeyPath, publicKeyPath } from '../lib/sign.js';
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'info';
 
@@ -102,6 +103,52 @@ function orgPolicyUnset(cfg: AgentReceiptConfig): boolean {
 function retentionLimitsUnset(cfg: AgentReceiptConfig): boolean {
   if (cfg.retentionInvalid?.length) return false;
   return cfg.maxCount == null && cfg.maxAgeDays == null;
+}
+
+/**
+ * Local Ed25519 keys are optional. Missing keys stay INFO and do not fail
+ * default doctor or `--strict`. A half pair or unreadable files are WARN.
+ */
+function signingKeysCheck(cwd: string): DoctorCheck {
+  const havePriv = existsSync(privateKeyPath(cwd));
+  const havePub = existsSync(publicKeyPath(cwd));
+  if (!havePriv && !havePub) {
+    return {
+      name: 'keys',
+      status: 'info',
+      detail:
+        'no local Ed25519 keys — optional: agent-receipt keygen (verify stays hash-only)',
+    };
+  }
+  if (havePub && !havePriv) {
+    return {
+      name: 'keys',
+      status: 'warn',
+      detail: 'public key present but private key missing — agent-receipt keygen --force',
+    };
+  }
+  if (havePriv && !havePub) {
+    return {
+      name: 'keys',
+      status: 'warn',
+      detail: 'private key present but public key missing — agent-receipt keygen --force',
+    };
+  }
+  try {
+    const keys = loadKeys(cwd);
+    return {
+      name: 'keys',
+      status: 'pass',
+      detail: `local Ed25519 key fingerprint ${keys.fingerprint}`,
+    };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return {
+      name: 'keys',
+      status: 'warn',
+      detail: `Ed25519 keys unreadable (${detail})`,
+    };
+  }
 }
 
 /**
@@ -393,6 +440,8 @@ export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCh
     });
   }
 
+  checks.push(signingKeysCheck(cwd));
+
   checks.push(retentionCheck(cwd, cfgNow));
 
   if (!inRepo) {
@@ -480,6 +529,7 @@ const PROD_CHECKS = [
   'redact',
   'policy',
   'audit',
+  'keys',
   'retention',
   'git-clean',
   'cursor',

@@ -25,10 +25,22 @@ You should hear back within a few days. Coordinated disclosure is preferred.
 ## What this tool is (and is not)
 
 `agent-receipt` produces **tamper-evident** Markdown/HTML receipts (SHA-256 of the
-canonical body). `audit` adds an experimental hash chain over capture, watch,
-wrap, share, export, and prune-delete events (`.agent-receipt/audit.jsonl`). It is **not**:
+canonical body). `verify` recomputes that hash and stays hash-only. `audit`
+adds an experimental hash chain over capture, watch, wrap, share, export, and
+prune-delete events (`.agent-receipt/audit.jsonl`). That chain is not a
+signature.
 
-- Cryptographic signing (no keys, no PKI, including the audit log)
+`keygen` / `sign` (1.0.16) add a **thin local Ed25519 attest** of the receipt
+sha256 hex. The sidecar (`foo.sig.json`) carries the signature and the SPKI
+public key. The private key is PKCS8 PEM mode `0600` under
+`.agent-receipt/keys/` and is never written into a receipt or sidecar.
+There is no CA, no PKI, no key escrow, and no auto-sign on capture.
+`prove` reports the sidecar when it is present. A missing sidecar does not
+fail `verify` or `prove`.
+
+It is **not**:
+
+- A certificate authority or a PKI product (no minisign, GPG, or OpenPGP)
 - A substitute for `gitleaks`, secret scanning CI, or code review
 - A guarantee that a session was safe to ship
 

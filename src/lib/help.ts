@@ -373,11 +373,79 @@ content after ## Integrity was ignored by the hash. Exit codes are unchanged.
 Wrap and share set the same field when they verified a body. Capture leaves
 it null (capture does not report a verify result).
 
+verify stays hash-only. It does not require or check a signature sidecar.
+Unsigned receipts still pass. \`prove\` reports signature status when a
+\`.sig.json\` file is present. \`sign\` writes that sidecar.
+
 Examples:
   agent-receipt verify
   agent-receipt verify receipt.md
   agent-receipt verify --json
   agent-receipt verify --fail-on high --json
+`,
+
+  keygen: `agent-receipt keygen — create a local Ed25519 keypair
+
+Usage:
+  agent-receipt keygen [--force] [--json] [--cwd <path>]
+
+Writes a keypair under \`.agent-receipt/keys/\` (already gitignored):
+
+  ed25519.private    PKCS8 PEM private key (mode 0600)
+  ed25519.public     SPKI PEM public key
+
+The key fingerprint is the lowercase hex SHA-256 of the DER SPKI bytes
+(64 hex chars). No network. No CA, no PKI, no key escrow. The private
+key is never printed and is never copied into a receipt or sidecar.
+
+When both files already exist, keygen exits 0 and prints the fingerprint
+plus "unchanged". It does not rewrite them. \`--force\` rotates (overwrites)
+the pair. An incomplete pair (only one file) exits 1 unless \`--force\`.
+
+--json prints one object:
+  ok, command ("keygen"), version, exitCode, fingerprint,
+  privateKeyPath, publicKeyPath, created, rotated, reason
+
+Examples:
+  agent-receipt keygen
+  agent-receipt keygen --json
+  agent-receipt keygen --force
+`,
+
+  sign: `agent-receipt sign — attest the receipt sha256 with the local key
+
+Usage:
+  agent-receipt sign [path] [--json] [--cwd <path>]
+
+Resolves the receipt the same way verify does (newest when path is omitted).
+Recomputes the Markdown hash first. If the hash fails, sign exits 2 and
+does not write a sidecar.
+
+Then it requires the keygen keypair. Missing keys exit 1 and name
+\`keygen\`. On success it writes \`foo.sig.json\` next to \`foo.md\`
+(overwrite if it already exists). The signature is over the UTF-8 bytes
+of the sha256 hex string — the same hex verify uses — not the raw Markdown.
+
+Sidecar fields: alg ("ed25519"), version (1), sha256, fingerprint,
+signature (base64 raw 64-byte signature), publicKey (SPKI PEM). The
+public key is embedded so a peer can verify without the local keys
+directory. The private key is never written.
+
+capture, wrap, and share do not sign. verify stays hash-only. prove
+reports the sidecar when it is present.
+
+--json prints one object (command "sign"):
+  ok, version, exitCode, verified, path, sigPath, sha256, fingerprint, reason
+
+Exit codes:
+  0  hash matched and sidecar written
+  2  hash failure (no sidecar written)
+  1  usage, missing receipt, or missing keys
+
+Examples:
+  agent-receipt sign
+  agent-receipt sign receipt.md --json
+  agent-receipt keygen && agent-receipt sign && agent-receipt prove --json
 `,
 
   prove: `agent-receipt prove — prove-this-run (integrity + audit link)
@@ -390,8 +458,17 @@ Recomputes the same SHA-256 as verify, then reports the path, hash,
 verified, trailingIgnored, redacted, risk summary, TL;DR, agent,
 uncommitted, failedOn, and a best-effort audit link.
 
-This is tamper-evident prove-this-run. It is not a cryptographic signature.
-This cut does not add keys, minisign, or GPG.
+This is tamper-evident prove-this-run. The hash and the audit link are
+not a cryptographic signature. A local Ed25519 sidecar is reported when
+present. verify stays hash-only. There is no CA and no PKI.
+
+Signature status (foo.md → foo.sig.json, written by \`sign\`):
+  - No sidecar: present false, ok null. Exit rules are unchanged for that alone.
+  - Present and valid for the current receipt sha256: ok true, plus alg and
+    the key fingerprint
+  - Present but invalid, mismatched, or malformed JSON: ok false, exit 2
+
+--json adds signature { present, ok, alg, fingerprint, reason }.
 
 Audit link (still not a signature):
   - No .agent-receipt/audit.jsonl: present false, chainOk null, matched false
@@ -415,12 +492,14 @@ true and the exit is 2 even if the hash matches.
   path, sha256, tldr, agent,
   risk { high, medium, low, total, maxSeverity } or null,
   audit { present, chainOk, events, matched, reason },
+  signature { present, ok, alg, fingerprint, reason },
   reason
   ok is true only when exitCode is 0.
 
 Exit codes:
-  0  verified, and there is no audit log or the chain is intact
-  2  verify failed, the audit chain is broken, or --fail-on tripped
+  0  verified, audit log absent or intact, and signature absent or valid
+  2  verify failed, the audit chain is broken, a signature sidecar is
+     present but invalid, or --fail-on tripped
   1  usage or runtime (missing receipt, unknown flag, bad --fail-on)
 
 Examples:
@@ -577,6 +656,11 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
                 \`init --org\` sets both keys.
   audit         .agent-receipt/audit.jsonl chain OK? Missing is info.
                 Broken is a warning by default, and FAIL with --strict.
+  keys          Local Ed25519 keypair (optional). INFO when absent.
+                PASS shows the key fingerprint. WARN if the private key
+                is missing while the public key is present, or the files
+                are unreadable. Missing keys do not fail doctor or
+                doctor --strict.
   retention     maxCount / maxAgeDays (opt-in). Over the cap or a large outDir is a warning.
                 Unset fails under --strict only when outDir is under pressure.
   git-clean     working tree clean? Dirty is a warning, not a failure
@@ -712,8 +796,10 @@ Commands:
   history                List recent receipts (--agent, --uncommitted, --failed, --json)
   ls                     Alias for history
   watch                  Poll git; auto-capture on commits or dirty tree
-  verify [path]          Hash-check tamper-evident integrity
-  prove [path]           Prove-this-run: verify + audit link (not a signature)
+  keygen                 Create a local Ed25519 keypair under .agent-receipt/keys
+  sign [path]            Attest the receipt sha256 into a .sig.json sidecar
+  verify [path]          Hash-check tamper-evident integrity (hash-only)
+  prove [path]           Prove-this-run: verify + audit link + signature status
   audit                  List the compliance log (--event, --agent, --failed filter the listing)
   log                    Alias for audit
   prune                  Delete old receipts under outDir (opt-in; trusted prune; --dry-run, --force)
@@ -764,6 +850,8 @@ Examples:
   agent-receipt watch --interval 5
   agent-receipt last
   agent-receipt last --json
+  agent-receipt keygen
+  agent-receipt sign
   agent-receipt verify
   agent-receipt prove
   agent-receipt prove --json
@@ -783,7 +871,7 @@ Examples:
 Docs: https://github.com/pramodreddyboddu/agent-receipt
 Agent tips: docs/agents.md · docs/grok-cli.md · examples/ (Cursor, Grok, Claude Code, Aider)
 Prod / CI: docs/business.md · examples/org-policy.yml · examples/github/
-Schema: docs/receipt.schema.json · docs/gate.schema.json · Release: docs/RELEASE.md
+Schema: docs/receipt.schema.json · docs/gate.schema.json · docs/signature.schema.json · Release: docs/RELEASE.md
 `;
 }
 
