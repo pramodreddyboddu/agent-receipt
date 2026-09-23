@@ -4,7 +4,7 @@
 # Also reusable:
 #   jobs:
 #     receipt:
-#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.19
+#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.20
 #       with:
 #         base: main
 #         fail-on: high
@@ -15,7 +15,7 @@
 #         trusted-keys: ""
 #
 # Install pin: npm install -g github:pramodreddyboddu/agent-receipt
-# Or, once the tag exists: github:pramodreddyboddu/agent-receipt#v1.0.19
+# Or, once the tag exists: github:pramodreddyboddu/agent-receipt#v1.0.20
 # Always pass --fail-on (this job does; default high) so a missing
 # .agent-receipt.yml cannot silently weaken the gate.
 # After a successful wrap or share, trailingIgnored is a boolean when set.
@@ -38,7 +38,7 @@
 # fingerprints copied to .agent-receipt/trusted-keys.txt before wrap when
 # set, and again before the signed prove. A non-empty value is installed
 # as given (this job does not append the temp fingerprint). Empty plus
-# require-sig writes the keygen fingerprint as the allowlist so
+# require-sig runs `agent-receipt trust add --self` after temp keygen so
 # signature.trusted is true. Not a CA.
 # A green gate uploads actions/upload-artifact@v4 (name agent-receipt-gate):
 # receipt-gate.json, plus the Markdown at the gate JSON `path` when that
@@ -84,7 +84,7 @@ on:
         type: boolean
         default: false
       trusted-keys:
-        description: Optional known-keys allowlist. File path or comma-separated 64-hex fingerprints. Empty with require-sig auto-trusts the job fingerprint. Non-empty installs that list only. Not a CA.
+        description: Optional known-keys allowlist. File path or comma-separated 64-hex fingerprints. Empty with require-sig runs trust add --self on the job key. Non-empty installs that list only. Not a CA.
         required: false
         type: string
         default: ""
@@ -109,7 +109,7 @@ jobs:
           set -eu
           if ! command -v agent-receipt >/dev/null 2>&1; then
             # Pin the GitHub install. Use a tag once it exists, for example:
-            #   npm install -g github:pramodreddyboddu/agent-receipt#v1.0.19
+            #   npm install -g github:pramodreddyboddu/agent-receipt#v1.0.20
             npm install -g github:pramodreddyboddu/agent-receipt
           fi
 
@@ -232,9 +232,14 @@ jobs:
           agent-receipt keygen --json > "$kg"
           fp=$(node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (g.ok !== true || typeof g.fingerprint !== "string" || !/^[0-9a-f]{64}$/.test(g.fingerprint)) { console.error(g); process.exit(1); } process.stdout.write(g.fingerprint);' "$kg")
           if [ "$allowlist" -eq 0 ]; then
-            mkdir -p .agent-receipt
-            printf '%s\n' "$fp" > .agent-receipt/trusted-keys.txt
-            echo "auto-trusted job fingerprint (not a CA)"
+            # Same outcome as writing the fingerprint: the allowlist lists
+            # this job's key so prove signature.trusted is true. Not a CA.
+            agent-receipt trust add --self
+            if ! grep -Eq "^${fp}$" .agent-receipt/trusted-keys.txt; then
+              echo "trust add --self did not allowlist the job fingerprint" >&2
+              exit 1
+            fi
+            echo "auto-trusted job fingerprint via trust add --self (not a CA)"
           fi
           agent-receipt sign
           out="$RUNNER_TEMP/receipt-prove-sig.json"

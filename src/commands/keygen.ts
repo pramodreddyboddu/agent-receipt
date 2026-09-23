@@ -43,6 +43,7 @@ function emit(report: KeygenReport, json: boolean): KeygenReport {
   console.log(`  public: ${report.publicKeyPath}`);
   console.log(`  fingerprint: ${report.fingerprint}`);
   console.log(color.dim('Next: agent-receipt sign'));
+  console.log(color.dim('Allowlist this key: agent-receipt trust add --self'));
   return report;
 }
 

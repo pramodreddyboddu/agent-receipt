@@ -100,7 +100,7 @@ describe('audit --agent and --failed', () => {
     ]);
     for (const ev of ci) {
       assert.equal(ev.agent, 'ci');
-      assert.equal(ev.version, '1.0.19');
+      assert.equal(ev.version, '1.0.20');
     }
 
     const upper = parseJsonStdout(cliResult(dir, ['log', '--agent', 'CI', '--json']));
@@ -264,7 +264,7 @@ describe('audit --agent and --failed', () => {
     assert.equal(Array.isArray(chain), false);
     assert.equal(chain.ok, true);
     assert.equal(chain.command, 'audit');
-    assert.equal(chain.version, '1.0.19');
+    assert.equal(chain.version, '1.0.20');
     assert.equal(chain.events, ROWS.length);
     assert.equal(chain.brokenAt, null);
 

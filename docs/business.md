@@ -1,6 +1,6 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.19 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.20 for teams: install once, capture every session, fail CI
 on high-severity findings, share only redacted HTML, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
@@ -129,7 +129,7 @@ is the artifact, not the gate. The gate object itself is
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -233,7 +233,7 @@ Copy one of:
 | Example | What to do with it |
 |---------|--------------------|
 | [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. After a green gate it runs `prove --json` (`prove` defaults to true) and uploads `receipt-gate.json` plus the receipt Markdown (`actions/upload-artifact@v4`, name `agent-receipt-gate`). |
-| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.19`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.20`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
 
 ### Drop-in
 
@@ -252,7 +252,7 @@ true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
 - uses: ./.github/actions/agent-receipt
   with:
     install: true
-    from: github:pramodreddyboddu/agent-receipt#v1.0.19
+    from: github:pramodreddyboddu/agent-receipt#v1.0.20
     prove: true
     fail-on: high
     base: origin/main
@@ -266,17 +266,19 @@ The action input fails the step.
 
 ```bash
 agent-receipt keygen
-printf '%s\n' "<fingerprint>" > .agent-receipt/trusted-keys.txt
+agent-receipt trust add --self
 agent-receipt wrap --sign --fail-on high --json
 agent-receipt prove --json
 agent-receipt verify --require-sig
 ```
 
 `prove` reports `signature.ok`. With the allowlist, `signature.trusted` is
-true and `verify --require-sig` exits 0. [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml)
+true and `verify --require-sig` exits 0. `trust add --self` writes the local
+keygen fingerprint into `.agent-receipt/trusted-keys.txt`. It does not create
+keys and it is not a CA. [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml)
 temp-`keygen`s when `require-sig` is true. If `trusted-keys` is empty, that
-job fingerprint is written as the allowlist. A non-empty list is installed
-as given. Full recipe: [`ci-signed-gate.md`](ci-signed-gate.md).
+job runs `trust add --self`. A non-empty list is installed as given. Full
+recipe: [`ci-signed-gate.md`](ci-signed-gate.md).
 
 Or copy [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) to
 `.github/workflows/agent-receipt-gate.yml`. That job always passes `--fail-on`
@@ -546,7 +548,9 @@ listing (`[]` with `--json`). An empty receipt store still errors, same as
 A signed CI drop-in landed in 1.0.19 (`sign` on the composite action and
 `pr-gate.yml`, auto-trust of the temp fingerprint when `require-sig` is set
 and `trusted-keys` is empty, and [`ci-signed-gate.md`](ci-signed-gate.md)).
-It is not a CA. Config `sign: true` and `trust add --self` are still deferred.
+`trust add --self` landed in 1.0.20: it loads the local keygen fingerprint
+into `.agent-receipt/trusted-keys.txt`. The pr-gate auto-trust path uses that
+command. It is not a CA. Config `sign: true` is still deferred.
 A thin known-keys allowlist landed in 1.0.18 (`.agent-receipt/trusted-keys.txt`,
 config `trustedFingerprints`, `verify --require-sig` and `prove` when the
 store is non-empty, `doctor` trust row, `trust list|add|rm`, and opt-in
@@ -583,7 +587,7 @@ are checklist and listing tools; they do not sign the audit log.
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.19 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.20 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

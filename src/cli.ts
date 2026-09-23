@@ -148,7 +148,7 @@ function flagHistoryUncommitted(flags: Record<string, string | boolean>): boolea
 }
 
 const PROVE_FLAGS = new Set(['cwd', 'json', 'fail-on', 'trusted-key']);
-const TRUST_FLAGS = new Set(['cwd', 'json']);
+const TRUST_FLAGS = new Set(['cwd', 'json', 'self']);
 
 const FP64 = /^[0-9a-f]{64}$/;
 
@@ -393,11 +393,12 @@ export async function run(argv: string[] = process.argv): Promise<number> {
       case 'trust': {
         for (const key of Object.keys(flags)) {
           if (!TRUST_FLAGS.has(key)) {
-            throw new Error(`Unknown flag: --${key}. trust accepts --json and --cwd.`);
+            throw new Error(`Unknown flag: --${key}. trust accepts --json, --self, and --cwd.`);
           }
         }
         const result = cmdTrust(cwd, positional[0], positional[1], {
           json: flagBool(flags, 'json'),
+          self: flagBool(flags, 'self'),
         });
         return result.exitCode;
       }

@@ -7,9 +7,7 @@ A job can require an Ed25519 sidecar and a known fingerprint. This is not a CA, 
 ```bash
 agent-receipt keygen
 # or restore .agent-receipt/keys before the step
-
-# one lowercase 64-hex fingerprint per line
-printf '%s\n' "<fingerprint>" > .agent-receipt/trusted-keys.txt
+agent-receipt trust add --self
 
 agent-receipt wrap --sign --fail-on high --json
 agent-receipt prove --json
@@ -27,7 +25,7 @@ CLI `wrap --sign` with missing keys prints a `keygen` tip and leaves the receipt
 | File | What it does |
 |------|----------------|
 | [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. `sign: true` passes `--sign` to `wrap` and fails closed without keys. `trusted-keys` is installed before wrap, sign, prove, and verify. `require-sig: true` runs `verify --require-sig` on the gate path. |
-| [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Workflow to copy. `require-sig: true` temp-`keygen`s (no org secret). When `trusted-keys` is empty, the job writes that fingerprint into `.agent-receipt/trusted-keys.txt` so `signature.trusted` is true. A non-empty `trusted-keys` value is installed as given. |
+| [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Workflow to copy. `require-sig: true` temp-`keygen`s (no org secret). When `trusted-keys` is empty, the job runs `agent-receipt trust add --self` so `signature.trusted` is true. A non-empty `trusted-keys` value is installed as given. |
 
 Recommended action inputs, after `keygen` or a restored keypair:
 
@@ -39,10 +37,10 @@ trusted-keys: "<path-or-comma-fps>"
 
 `share` re-signs published Markdown when local keys exist. It has no `--sign` flag. The examples run `sign` on the gate receipt path when `sign: true` and that path has no sidecar. HTML stays unsigned.
 
-Pin comments are `v1.0.19` (`github:pramodreddyboddu/agent-receipt#v1.0.19` once the tag exists).
+Pin comments are `v1.0.20` (`github:pramodreddyboddu/agent-receipt#v1.0.20` once the tag exists). After `keygen`, `trust add --self` allowlists that fingerprint. Not a CA.
 
 ## Live workflows
 
 This repo does not install the example under [`.github/workflows/`](../.github/workflows). Pushing that tree needs the OAuth `workflow` scope. Copy the example in your own repo. The smoke that runs `wrap --sign` lives in [`docs/github-actions-ci.yml`](github-actions-ci.yml).
 
-Still deferred: full PKI/CA, minisign, GPG/OpenPGP, a config `sign: true` default, `trust add --self`, an HTML/share signed package, a background deleter, and a prove-for-humans one-pager.
+Still deferred: full PKI/CA, minisign, GPG/OpenPGP, a config `sign: true` default, an HTML/share signed package, a background deleter, a prove-for-humans one-pager, and multi-agent receipt linking. `trust add --self` is a local allowlist write, not a CA.

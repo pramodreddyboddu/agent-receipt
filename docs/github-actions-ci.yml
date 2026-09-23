@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.19: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.20: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -128,6 +128,18 @@ jobs:
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.exitCode!==0||!g.signature||g.signature.ok!==true||g.signature.trusted!==true){console.error(g); process.exit(1)}' "$tmp/prove-wrap-trust.json"
           node bin/agent-receipt.js verify --require-sig --json --cwd "$tmp" > "$tmp/verify-wrap-trust.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.exitCode!==0||!g.signature||g.signature.ok!==true||g.signature.trusted!==true){console.error(g); process.exit(1)}' "$tmp/verify-wrap-trust.json"
+          rm -f "$tmp/.agent-receipt/trusted-keys.txt"
+          # v1.0.20: trust add --self writes the local keygen fingerprint
+          # into trusted-keys.txt. prove signature.trusted is true and
+          # verify --require-sig exits 0. A second call is idempotent.
+          node bin/agent-receipt.js trust add --self --json --cwd "$tmp" > "$tmp/trust-self.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const k=JSON.parse(fs.readFileSync(process.argv[2],"utf8")); if(g.ok!==true||g.command!=="trust"||g.action!=="add"||g.exitCode!==0||g.added!==true||g.fingerprint!==k.fingerprint||!g.fingerprints||g.fingerprints.indexOf(k.fingerprint)===-1){console.error(g); process.exit(1)} const text=fs.readFileSync(process.argv[3],"utf8"); if(text.indexOf(k.fingerprint)===-1){console.error(text); process.exit(1)}' "$tmp/trust-self.json" "$tmp/keygen.json" "$tmp/.agent-receipt/trusted-keys.txt"
+          node bin/agent-receipt.js prove --json --cwd "$tmp" > "$tmp/prove-self-trust.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.exitCode!==0||!g.signature||g.signature.ok!==true||g.signature.trusted!==true){console.error(g); process.exit(1)}' "$tmp/prove-self-trust.json"
+          node bin/agent-receipt.js verify --require-sig --json --cwd "$tmp" > "$tmp/verify-self-trust.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.exitCode!==0||!g.signature||g.signature.ok!==true||g.signature.trusted!==true){console.error(g); process.exit(1)}' "$tmp/verify-self-trust.json"
+          node bin/agent-receipt.js trust add --self --json --cwd "$tmp" > "$tmp/trust-self-again.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.action!=="add"||g.added!==false||g.exitCode!==0){console.error(g); process.exit(1)}' "$tmp/trust-self-again.json"
           rm -f "$tmp/.agent-receipt/trusted-keys.txt"
           node bin/agent-receipt.js last --json --cwd "$tmp" > "$tmp/last.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="last"||typeof g.path!=="string"||typeof g.sha256!=="string"||g.sha256.length!==64){console.error(g); process.exit(1)}' "$tmp/last.json"
