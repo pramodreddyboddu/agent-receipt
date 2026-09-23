@@ -216,6 +216,8 @@ Markdown sidecar handoff (HTML is never signed):
   - \`--json\` adds \`packagePath\` and points \`htmlPath\` / \`markdownPath\` / \`sigPath\`
     at the files inside the package. Without \`--package\`, those fields stay
     as they are today and \`packagePath\` is omitted.
+  - Peers check the directory with \`verify --package\` (alias \`--pack\`) or
+    copy the proved Markdown with \`import\`. See \`help verify\` and \`help import\`.
 
 Options:
   --out <path>           HTML output (default: sibling .html). With --package,
@@ -440,10 +442,45 @@ Examples:
 
 Usage:
   agent-receipt verify [path]
+  agent-receipt verify --package <dir>
+  agent-receipt verify --pack <dir>
 
 Recomputes SHA-256 over the Markdown body (everything except the Integrity
 section / hash marker) and compares it to the embedded marker.
 Exit 0 = OK, exit 2 = mismatch / missing hash (or --fail-on met), exit 1 = usage error.
+
+\`--package\` (alias \`--pack\`) checks a share package directory from
+\`share --package\` instead of a single receipt. A path to \`manifest.json\`
+resolves to its parent directory. A directory that already contains
+\`manifest.json\` with kind \`agent-receipt-share\` is detected without the
+flag. \`--package\` forces package mode and exits 1 when the path is not a
+package. A normal \`.md\` path stays a plain receipt verify.
+
+Package checks, fail closed:
+  - \`manifest.json\` kind \`agent-receipt-share\`, version 1, required fields,
+    and lowercase hex shapes. Malformed is exit 1.
+  - Every \`manifest.files\` entry exists and matches \`sha256FileBytes\`.
+    \`signed: true\` requires \`receipt.sig.json\`. \`signed: false\` rejects
+    that sidecar. A byte mismatch is exit 2.
+  - \`receipt.md\` is verified with the same hash as \`verify\`. The canonical
+    sha256 must equal \`manifest.sha256\`.
+  - A present \`receipt.sig.json\` is inspected. Valid is reported. Invalid
+    exits 2 even without \`--require-sig\`. Missing is fine when the manifest
+    is unsigned. \`--require-sig\` requires a valid sidecar and, when a
+    known-keys allowlist is active, a trusted fingerprint.
+  - A present \`manifest.sig.json\` must verify over the hex SHA-256 of the
+    current \`manifest.json\` bytes. Absent is fine. Invalid exits 2.
+  - HTML is a file hash only. The HTML body is not signed.
+
+Human stdout prints VERIFIED or FAILED, the package path, sha256, signed,
+fingerprint, file-hash, receipt verify, signature, manifestSig, and a tip
+to open \`receipt.html\`.
+
+\`--json\` stays command \`"verify"\` and adds packagePath, signed, fingerprint,
+filesOk, manifestOk, manifestSig, and signature. Required gate keys are
+unchanged. Plain \`verify --json\` on a \`.md\` file omits those fields.
+Exit 2 is an integrity or signature-policy failure. Exit 1 is usage,
+missing, or malformed.
 
 By design, trailing appends after ## Integrity are ignored by the hash (they
 do not affect verify). A note is printed when such trailing content is present.
@@ -458,10 +495,11 @@ content after ## Integrity was ignored by the hash. Exit codes are unchanged.
 Wrap and share set the same field when they verified a body. Capture leaves
 it null (capture does not report a verify result).
 
-Default verify stays hash-only. It does not require or check a signature
-sidecar. Unsigned receipts still pass, including when a sidecar is missing
-or invalid. \`prove\` reports signature status when a \`.sig.json\` file is
-present. \`sign\` writes that sidecar.
+Default verify of a Markdown receipt stays hash-only. It does not require
+or check a signature sidecar. On a plain \`.md\` path, unsigned receipts
+still pass, including when a sidecar is missing or invalid. Package verify
+is different: a present invalid sidecar exits 2. \`prove\` reports signature
+status when a \`.sig.json\` file is present. \`sign\` writes that sidecar.
 
 --require-sig (alias --require-signature) is opt-in. The hash check runs
 first. A hash failure still exits 2 and does not soften. After a matching
@@ -474,7 +512,8 @@ There is no config key for this flag. capture, wrap, and share do not
 turn it on.
 
 --json with --require-sig adds signature { present, ok, alg, fingerprint, reason, trusted }
-after the hash passes. Without --require-sig the gate omits signature.
+after the hash passes. Without --require-sig, a plain receipt gate omits
+signature. \`verify --package --json\` always includes signature.
 \`trusted\` is true when a non-empty known-keys allowlist lists the sidecar
 fingerprint, false when that allowlist rejects it, and null when the
 allowlist is inactive.
@@ -508,6 +547,41 @@ Examples:
   agent-receipt verify --require-sig receipt.md --json
   agent-receipt verify --require-sig --trusted-key <64-hex-fingerprint>
   agent-receipt verify --fail-on high --json
+  agent-receipt verify --package foo.share
+  agent-receipt verify --pack foo.share --json
+  agent-receipt verify foo.share
+  agent-receipt verify --package foo.share/manifest.json --require-sig
+`,
+
+  import: `agent-receipt import — copy a verified share package into the local store
+
+Usage:
+  agent-receipt import <packageDir> [--dry-run] [--json]
+  agent-receipt import <packageDir> --require-sig
+
+Runs the same checks as \`verify --package\`. On success, copies \`receipt.md\`
+and \`receipt.sig.json\` (when that sidecar is in the package) into the
+configured outDir as \`receipt-import-<sha256-12>.md\` and a sibling
+\`.sig.json\`. The name uses the first 12 hex chars of the canonical receipt
+sha256. HTML and \`manifest.json\` are not copied and are not receipts.
+
+A failed verify does not copy. \`--dry-run\` prints the planned paths and
+writes nothing. \`--json\` is command \`"import"\` and adds importPath,
+importSigPath, and dryRun. Those paths are null when verify failed.
+
+Import does not append the audit log and does not add an index row. It is
+verify plus copy, not a local capture. The copied Markdown keeps the source
+integrity footer, so it is a receipt file under outDir. \`history\` lists
+\`index.json\` when that catalog has rows, so the import does not appear
+there unless the index is empty (the directory scan). \`last\` follows mtime
+and can show a fresh import. \`prune\` can delete \`receipt-import-*.md\`
+with other receipts. Not a CA. The HTML body stays unsigned.
+
+Examples:
+  agent-receipt import foo.share
+  agent-receipt import foo.share --dry-run
+  agent-receipt import foo.share --json
+  agent-receipt import foo.share --require-sig
 `,
 
   keygen: `agent-receipt keygen — create a local Ed25519 keypair
@@ -1050,7 +1124,8 @@ Commands:
   keygen                 Create a local Ed25519 keypair under .agent-receipt/keys
   sign [path]            Attest the receipt sha256 into a .sig.json sidecar
   trust                  Known-keys allowlist: list, show, add <fp>, add --self, rm <fp>
-  verify [path]          Hash-check integrity (hash-only; --require-sig opts in)
+  verify [path]          Hash-check integrity (hash-only; --package checks a share dir; --require-sig opts in)
+  import <dir>           Verify a share package, then copy receipt.md into outDir
   prove [path]           Prove-this-run: verify + audit link + signature status (--page writes foo.prove.md)
   audit                  List the compliance log (--event, --agent, --failed filter the listing)
   log                    Alias for audit
@@ -1107,6 +1182,8 @@ Examples:
   agent-receipt trust add --self
   agent-receipt sign
   agent-receipt verify
+  agent-receipt verify --package foo.share
+  agent-receipt import foo.share
   agent-receipt verify --require-sig
   agent-receipt trust list
   agent-receipt trust show

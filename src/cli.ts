@@ -10,6 +10,9 @@ import { cmdInit } from './commands/init.js';
 import { cmdCapture } from './commands/capture.js';
 import { cmdShow } from './commands/show.js';
 import { cmdVerify } from './commands/verify.js';
+import { cmdVerifyPackage } from './commands/verify-package.js';
+import { cmdImport } from './commands/import.js';
+import { sharePackageAutoDetected } from './lib/share-package.js';
 import { cmdProve, printProveError } from './commands/prove.js';
 import { cmdKeygen, printKeygenError } from './commands/keygen.js';
 import { cmdSign, printSignError } from './commands/sign.js';
@@ -26,7 +29,7 @@ import { cmdAudit } from './commands/audit.js';
 import { cmdPrune } from './commands/prune.js';
 import { cmdTrust } from './commands/trust.js';
 
-const JSON_GATE_COMMANDS = new Set(['capture', 'wrap', 'share', 'verify']);
+const JSON_GATE_COMMANDS = new Set(['capture', 'wrap', 'share', 'verify', 'import']);
 
 /**
  * `--fail-on` on the CLI wins. Otherwise capture/wrap/watch/share honor
@@ -387,8 +390,56 @@ export async function run(argv: string[] = process.argv): Promise<number> {
       case 'verify': {
         const explicitFail = flags['fail-on'] !== undefined;
         const failOn = explicitFail ? parseFailOn(flags['fail-on']) : undefined;
-        const result = cmdVerify(cwd, positional[0], {
+        const packageMode = flagBool(flags, 'package', 'pack');
+        const pathArg = positional[0];
+        const auto = !packageMode && Boolean(pathArg) && sharePackageAutoDetected(cwd, pathArg);
+        if (packageMode || auto) {
+          if (!pathArg) {
+            throw new Error(
+              'verify --package requires a share package directory or manifest.json.',
+            );
+          }
+          const result = cmdVerifyPackage(cwd, pathArg, {
+            json: flagBool(flags, 'json'),
+            failOn,
+            requireSig: flagBool(flags, 'require-sig', 'require-signature'),
+            trustedKeys: flagTrustedKeys(flags),
+          });
+          return result.exitCode;
+        }
+        const result = cmdVerify(cwd, pathArg, {
           json: flagBool(flags, 'json'),
+          failOn,
+          requireSig: flagBool(flags, 'require-sig', 'require-signature'),
+          trustedKeys: flagTrustedKeys(flags),
+        });
+        return result.exitCode;
+      }
+      case 'import': {
+        const pathArg = positional[0];
+        if (!pathArg) {
+          throw new Error('import requires a share package directory or manifest.json.');
+        }
+        for (const key of Object.keys(flags)) {
+          if (
+            key !== 'cwd' &&
+            key !== 'json' &&
+            key !== 'dry-run' &&
+            key !== 'require-sig' &&
+            key !== 'require-signature' &&
+            key !== 'trusted-key' &&
+            key !== 'fail-on'
+          ) {
+            throw new Error(
+              `Unknown flag: --${key}. import accepts --dry-run, --json, --require-sig, --trusted-key, --fail-on, and --cwd.`,
+            );
+          }
+        }
+        const explicitFail = flags['fail-on'] !== undefined;
+        const failOn = explicitFail ? parseFailOn(flags['fail-on']) : undefined;
+        const result = cmdImport(cwd, pathArg, {
+          json: flagBool(flags, 'json'),
+          dryRun: flagBool(flags, 'dry-run'),
           failOn,
           requireSig: flagBool(flags, 'require-sig', 'require-signature'),
           trustedKeys: flagTrustedKeys(flags),

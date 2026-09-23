@@ -1,5 +1,6 @@
 import { VERSION } from './version.js';
 import type { RiskSummary } from './risk.js';
+import type { ManifestSigReport } from './share-package.js';
 import type { SignatureStatus } from './sign.js';
 
 /**
@@ -22,7 +23,11 @@ import type { SignatureStatus } from './sign.js';
  * check passes. Other commands omit it. `sigPath` is set by `share --json`
  * (string when a Markdown sidecar was copied or re-signed, otherwise null).
  * `packagePath` is set by `share --json` only when `--package` wrote a
- * directory. `htmlPath`, `markdownPath`, and `sigPath` then point inside it.
+ * directory, and by `verify --package` / `import` (the package directory).
+ * `htmlPath`, `markdownPath`, and `sigPath` then point inside it on share.
+ * Package verify adds `signed`, `fingerprint`, `filesOk`, `manifestOk`,
+ * and `manifestSig`. `import` also adds `importPath`, `importSigPath`,
+ * and `dryRun`. Those keys are omitted on a plain receipt verify.
  */
 export interface GateRisk {
   high: number;
@@ -72,6 +77,27 @@ export interface GateReport {
    * stay on `htmlPath`, `markdownPath`, and `sigPath`.
    */
   packagePath?: string | null;
+  /**
+   * Set by `verify --package` and `import`. True when the manifest says
+   * `receipt.sig.json` is part of the package. Omitted on plain verify.
+   */
+  signed?: boolean;
+  /**
+   * Manifest fingerprint (64-hex or null). Omitted on plain verify.
+   */
+  fingerprint?: string | null;
+  /** Every `manifest.files` entry matched, and the signed bit agrees. */
+  filesOk?: boolean;
+  /** Manifest `sha256` matches the canonical receipt hash. */
+  manifestOk?: boolean;
+  /** Optional manifest sidecar. Null only when the check did not run. */
+  manifestSig?: ManifestSigReport | null;
+  /** Set by `import` when a copy was written or a dry-run named a path. */
+  importPath?: string | null;
+  /** Sibling sidecar copied or planned by `import`. Null when the package is unsigned. */
+  importSigPath?: string | null;
+  /** Set by `import`. True when paths were planned and nothing was written. */
+  dryRun?: boolean;
 }
 
 export type GateFields = Omit<GateReport, 'ok' | 'version' | 'exitCode' | 'trailingIgnored'> & {
@@ -121,6 +147,14 @@ export function finalizeGate(fields: GateFields): GateReport {
     ...(fields.signature !== undefined ? { signature: fields.signature } : {}),
     ...(fields.sigPath !== undefined ? { sigPath: fields.sigPath } : {}),
     ...(fields.packagePath !== undefined ? { packagePath: fields.packagePath } : {}),
+    ...(fields.signed !== undefined ? { signed: fields.signed } : {}),
+    ...(fields.fingerprint !== undefined ? { fingerprint: fields.fingerprint } : {}),
+    ...(fields.filesOk !== undefined ? { filesOk: fields.filesOk } : {}),
+    ...(fields.manifestOk !== undefined ? { manifestOk: fields.manifestOk } : {}),
+    ...(fields.manifestSig !== undefined ? { manifestSig: fields.manifestSig } : {}),
+    ...(fields.importPath !== undefined ? { importPath: fields.importPath } : {}),
+    ...(fields.importSigPath !== undefined ? { importSigPath: fields.importSigPath } : {}),
+    ...(fields.dryRun !== undefined ? { dryRun: fields.dryRun } : {}),
   };
 }
 

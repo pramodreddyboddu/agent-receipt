@@ -14,7 +14,7 @@
 #       fail-on: high
 #       base: origin/main
 #       install: true
-#       from: github:pramodreddyboddu/agent-receipt#v1.0.24
+#       from: github:pramodreddyboddu/agent-receipt#v1.0.25
 #       prove: true
 #       sign: true
 #       require-sig: true
@@ -70,6 +70,7 @@
 # trust add --self when require-sig is true and trusted-keys is empty.
 # `share --package` (v1.0.24) is not a new action input. It writes a handoff
 # directory (HTML + Markdown + optional receipt.sig.json). HTML stays unsigned.
+# `verify --package` (v1.0.25) checks that directory. Not a new action input.
 #
 # Outputs (empty string when the field is missing): ok, exit-code, sha256,
 # path, gate-json (absolute path of the gate JSON file).
@@ -99,7 +100,7 @@ inputs:
     required: false
     default: "false"
   from:
-    description: npm spec used when install is true. Pin with #v1.0.24 once the tag exists.
+    description: npm spec used when install is true. Pin with #v1.0.25 once the tag exists.
     required: false
     default: github:pramodreddyboddu/agent-receipt
   prove:
