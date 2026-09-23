@@ -6,6 +6,7 @@ import { prepareRedactedBody } from '../lib/redact.js';
 import { appendHashFooter, verifyMarkdown } from '../lib/hash.js';
 import { recordAuditEvent } from '../lib/audit.js';
 import { color } from '../lib/color.js';
+import { handoffMarkdownSignature } from '../lib/sign.js';
 
 export interface ExportOptions {
   /** Output path (.html or .md). Default: sibling .html next to the receipt. */
@@ -30,6 +31,10 @@ export interface ExportResult {
   redacted: boolean;
   /** Markdown body that was written, or rendered into HTML. */
   markdown: string;
+  /** Sidecar copied or re-signed beside a Markdown export. Null for HTML. */
+  sigPath: string | null;
+  /** Tip when a rewritten Markdown export was left unsigned. */
+  signatureTip: string | null;
 }
 
 function agentLabel(markdown: string): string | null {
@@ -55,7 +60,9 @@ export function cmdExport(
   opts: ExportOptions = {},
 ): ExportResult {
   const source = resolveReceiptPath(cwd, pathArg);
-  let markdown = readFileSync(source, 'utf8');
+  const original = readFileSync(source, 'utf8');
+  const sourceSha256 = verifyMarkdown(original).actual;
+  let markdown = original;
   const agent = agentLabel(markdown);
   const redacted = Boolean(opts.redact);
 
@@ -111,14 +118,39 @@ export function cmdExport(
     throw new Error(`Export markdown failed integrity self-check: ${check.reason}`);
   }
 
+  let sigPath: string | null = null;
+  let signatureTip: string | null = null;
+  let signatureAction: 'copied' | 'resigned' | 'unsigned' | null = null;
+  if (format === 'markdown' && check.ok) {
+    const handoff = handoffMarkdownSignature({
+      cwd,
+      sourcePath: source,
+      sourceSha256,
+      publishedPath: outPath,
+      publishedSha256: check.actual,
+    });
+    sigPath = handoff.sigPath;
+    signatureTip = handoff.tip;
+    signatureAction = handoff.action;
+  }
+
   log(color.green('✓') + ` Wrote ${format}: ${outPath}`);
   log(color.dim(`  source: ${source}`));
   if (redacted) {
     log(color.yellow('  ⚠ Redacted — high/secret findings masked.'));
   }
+  if (signatureTip) {
+    log(color.yellow(`  ${signatureTip}`));
+  } else if (sigPath) {
+    const how = signatureAction === 'copied' ? 'copied' : 're-signed';
+    log(color.dim(`  sig: ${sigPath} (${how})`));
+  }
   log(color.dim('  Open in a browser (HTML) or share the file as-is.'));
+  if (format === 'html') {
+    log(color.dim('  HTML is unsigned. Peers verify and sign the Markdown receipt.'));
+  }
 
-  return { path: outPath, source, format, redacted, markdown };
+  return { path: outPath, source, format, redacted, markdown, sigPath, signatureTip };
 }
 
 /** Alias used by the `html` command. */

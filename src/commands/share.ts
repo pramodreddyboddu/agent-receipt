@@ -48,6 +48,8 @@ export interface ShareResult {
   redacted: boolean;
   sha256: string | null;
   exitCode: 0 | 2;
+  /** Sidecar copied or re-signed beside published Markdown. Null otherwise. */
+  sigPath: string | null;
 }
 
 function sibling(source: string, suffix: string): string {
@@ -67,6 +69,11 @@ function agentFromReceipt(markdown: string): string | null {
  *
  * A source that fails `verify` is not rewritten — share will not re-hash
  * a tampered receipt into a "clean" HTML file.
+ *
+ * Markdown handoff: a published `.md` whose sha256 matches the source and
+ * has a valid source sidecar gets that sidecar copied. A redacted re-hash
+ * is re-signed when local keys exist, and left unsigned (no stale sidecar)
+ * when they do not. HTML is not signed.
  */
 export function cmdShare(
   cwd: string,
@@ -91,6 +98,7 @@ export function cmdShare(
     tldr: string;
     reason: string | null;
     trailingIgnored: boolean;
+    sigPath: string | null;
   }): ShareResult => {
     const exitCode: 0 | 2 = !partial.verified || failedOn ? 2 : 0;
     if (opts.json) {
@@ -113,6 +121,7 @@ export function cmdShare(
           ignored: null,
           trailingIgnored: partial.trailingIgnored,
           reason: partial.reason,
+          sigPath: partial.sigPath,
         }),
       );
     } else if (failedOn && opts.failOn && partial.verified) {
@@ -141,6 +150,7 @@ export function cmdShare(
       redacted: redact,
       sha256: partial.sha256,
       exitCode,
+      sigPath: partial.sigPath,
     };
   };
 
@@ -157,6 +167,7 @@ export function cmdShare(
       tldr,
       reason: sourceCheck.reason,
       trailingIgnored: Boolean(sourceCheck.trailingIgnored),
+      sigPath: null,
     });
   }
 
@@ -187,6 +198,8 @@ export function cmdShare(
   });
 
   let markdownPath: string | null = null;
+  let sigPath: string | null = null;
+  let signatureTip: string | null = null;
   if (mdOut) {
     const md = cmdExport(cwd, source, {
       out: mdOut,
@@ -196,6 +209,8 @@ export function cmdShare(
       audit: false,
     });
     markdownPath = md.path;
+    sigPath = md.sigPath;
+    signatureTip = md.signatureTip;
   }
 
   const publishedTldr = extractTldr(html.markdown) ?? tldr;
@@ -215,10 +230,12 @@ export function cmdShare(
     }
   }
 
+  if (signatureTip) say(color.yellow(signatureTip));
   if (!quiet) {
     say(color.bold('TL;DR') + `  ${publishedTldr}`);
     say(color.bold('html') + `   ${html.path}`);
     if (markdownPath) say(color.bold('md') + `     ${markdownPath}`);
+    if (sigPath) say(color.bold('sig') + `    ${sigPath}`);
     say(color.bold('source') + ` ${source}`);
     say('');
     if (markdownPath) {
@@ -240,5 +257,6 @@ export function cmdShare(
     tldr: publishedTldr,
     reason,
     trailingIgnored,
+    sigPath,
   });
 }

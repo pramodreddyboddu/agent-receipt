@@ -91,30 +91,35 @@ describe('v1.0.14 fail-closed org policy', () => {
     assert.equal(check(strict.body, 'policy').status, 'fail');
     assert.match(check(strict.body, 'policy').detail, /init --org/);
     assert.doesNotMatch(check(strict.body, 'policy').detail, /under pressure/);
-    assert.equal(check(strict.body, 'retention').status, 'info');
+    assert.equal(check(strict.body, 'retention').status, 'fail');
+    assert.match(check(strict.body, 'retention').detail, /init --retention/);
 
     const human = cliResult(dir, ['doctor', '--strict']);
     assert.equal(human.code, 1, human.out);
     assert.match(human.out, /\[FAIL\].*policy/);
-    assert.match(human.out, /\[INFO\].*retention/);
+    assert.match(human.out, /\[FAIL\].*retention/);
     assert.doesNotMatch(human.out, /Ready/);
   });
 
-  it('keeps --strict exit 0 on a small outDir when only retention is unset', () => {
+  it('fails unset retention under --strict on a small outDir when policy is set', () => {
     const dir = initRepo('agent-receipt-1014-ret-small-');
     writeFileSync(
       join(dir, '.agent-receipt.yml'),
       'outDir: .agent-receipt/receipts\nredact: true\nfailOn: high\n',
     );
+    const plain = doctorJson(dir, []);
+    assert.equal(plain.code, 0, plain.out + plain.err);
+    assert.equal(check(plain.body, 'retention').status, 'info');
     const strict = doctorJson(dir, ['--strict']);
-    assert.equal(strict.code, 0, strict.out + strict.err);
-    assert.equal(strict.body.ok, true);
+    assert.equal(strict.code, 1, strict.out + strict.err);
+    assert.equal(strict.body.ok, false);
     assert.equal(check(strict.body, 'policy').status, 'pass');
-    assert.equal(check(strict.body, 'retention').status, 'info');
+    assert.equal(check(strict.body, 'retention').status, 'fail');
+    assert.match(check(strict.body, 'retention').detail, /any outDir/);
     const human = cliResult(dir, ['doctor', '--strict']);
-    assert.equal(human.code, 0, human.out);
-    assert.match(human.out, /Ready/);
-    assert.match(human.out, /\[INFO\].*retention/);
+    assert.equal(human.code, 1, human.out);
+    assert.match(human.out, /\[PASS\].*policy/);
+    assert.match(human.out, /\[FAIL\].*retention/);
   });
 
   it('still fails unset retention under --strict when outDir is under pressure', () => {
@@ -134,7 +139,7 @@ describe('v1.0.14 fail-closed org policy', () => {
     assert.equal(check(strict.body, 'policy').status, 'pass');
     assert.equal(check(strict.body, 'retention').status, 'fail');
     assert.match(check(strict.body, 'retention').detail, /100 receipt/);
-    assert.match(check(strict.body, 'retention').detail, /under pressure/);
+    assert.match(check(strict.body, 'retention').detail, /init --retention/);
     const human = cliResult(dir, ['doctor', '--strict']);
     assert.equal(human.code, 1, human.out);
     assert.match(human.out, /\[FAIL\].*retention/);
@@ -160,10 +165,10 @@ describe('v1.0.14 fail-closed org policy', () => {
     assert.equal(/^maxAgeDays:/m.test(yml), false);
 
     const strict = doctorJson(dir, ['--strict']);
-    assert.equal(strict.code, 0, strict.out + strict.err);
+    assert.equal(strict.code, 1, strict.out + strict.err);
     assert.equal(check(strict.body, 'policy').status, 'pass');
     assert.notEqual(check(strict.body, 'audit').status, 'fail');
-    assert.equal(check(strict.body, 'retention').status, 'info');
+    assert.equal(check(strict.body, 'retention').status, 'fail');
   });
 
   it('init --org preserves ignore and other keys, and is idempotent', () => {
@@ -276,7 +281,7 @@ describe('v1.0.14 docs', () => {
     );
     const readme = readFileSync(join(root, 'README.md'), 'utf8');
     assert.match(readme, /init --org/);
-    assert.match(readme, /Unset retention fails only under receipt-dir pressure/);
+    assert.match(readme, /pressure-gates unset retention/);
     const policy = readFileSync(join(root, 'examples', 'org-policy.yml'), 'utf8');
     assert.match(policy, /init --org/);
     assert.match(policy, /always fails unset org policy/);
@@ -300,9 +305,9 @@ describe('v1.0.14 docs', () => {
     assert.match(action, /trailingIgnored/);
     assert.match(action, /exitCode !== 0 \|\| g\.ok !== true/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.16');
+    assert.equal(pkg.version, '1.0.17');
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.16/);
+    assert.match(versionTs, /1\.0\.17/);
     const helpInit = cli(root, ['help', 'init']);
     assert.match(helpInit, /--org/);
     assert.match(helpInit, /--policy/);
@@ -311,7 +316,7 @@ describe('v1.0.14 docs', () => {
     const helpDoctor = cli(root, ['help', 'doctor']);
     assert.match(helpDoctor, /broken audit chain/);
     assert.match(helpDoctor, /even when outDir is small/);
-    assert.match(helpDoctor, /Unset retention still fails only when/);
+    assert.match(helpDoctor, /Unset retention fails under --strict on any outDir/);
     assert.doesNotMatch(helpDoctor, /and\/or retention still fail only when/);
     assert.match(cli(root, ['help']), /--org sets redact/);
   });

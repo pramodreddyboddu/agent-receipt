@@ -78,7 +78,7 @@ function parseJsonStdout(r) {
 function assertDoctorShape(body, { strict, exitCode }) {
   assert.equal(body.ok, exitCode === 0);
   assert.equal(body.command, 'doctor');
-  assert.equal(body.version, '1.0.16');
+  assert.equal(body.version, '1.0.17');
   assert.equal(body.exitCode, exitCode);
   assert.equal(body.strict, strict);
   assert.deepEqual(
@@ -144,7 +144,7 @@ describe('doctor --json', () => {
     assert.match(cli(dir, ['help', 'doctor']), /--json/);
   });
 
-  it('fails unset policy under --strict on a small directory and keeps retention info', () => {
+  it('fails unset policy and unset retention under --strict on a small directory', () => {
     const dir = keep(initRepo('agent-receipt-doctor-json-small-'));
     const human = cliResult(dir, ['doctor', '--strict']);
     const json = cliResult(dir, ['doctor', '--strict', '--json']);
@@ -155,7 +155,7 @@ describe('doctor --json', () => {
     assertDoctorShape(body, { strict: true, exitCode: 1 });
     assert.equal(body.ok, false);
     assert.equal(body.checks.find((c) => c.id === 'policy').status, 'fail');
-    assert.equal(body.checks.find((c) => c.id === 'retention').status, 'info');
+    assert.equal(body.checks.find((c) => c.id === 'retention').status, 'fail');
     const live = runDoctorChecks(dir, { strict: true });
     for (const row of body.checks) {
       assert.equal(row.status, live.find((c) => c.name === row.id).status);
@@ -268,7 +268,7 @@ describe('audit --event', () => {
     );
     for (const ev of wraps) {
       assert.equal(ev.event, 'wrap');
-      assert.equal(ev.version, '1.0.16');
+      assert.equal(ev.version, '1.0.17');
     }
 
     const newestWrap = parseJsonStdout(
@@ -302,7 +302,7 @@ describe('audit --event', () => {
     const chain = parseJsonStdout(verified);
     assert.equal(chain.ok, true);
     assert.equal(chain.command, 'audit');
-    assert.equal(chain.version, '1.0.16');
+    assert.equal(chain.version, '1.0.17');
     assert.equal(chain.events, 3);
     assert.equal(chain.brokenAt, null);
 

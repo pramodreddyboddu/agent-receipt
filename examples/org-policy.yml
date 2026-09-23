@@ -11,8 +11,8 @@
 #   agent-receipt doctor
 #   agent-receipt doctor --strict   # unset redact+failOn always FAIL,
 #                                  # even on a small or empty outDir.
-#                                  # Unset retention still fails only when
-#                                  # outDir is under pressure.
+#                                  # Unset retention also fails --strict
+#                                  # on any outDir (init --retention).
 #   agent-receipt doctor --json     # one JSON object on stdout; exits unchanged
 #
 # share redacts even when `redact` is false. This file turns redact on for
@@ -28,7 +28,8 @@
 #   agent-receipt history --failed
 #   agent-receipt history --agent ci --failed
 # Prove-this-run (hash + audit link + signature status). Config failOn is
-# not applied unless you pass --fail-on. verify stays hash-only.
+# not applied unless you pass --fail-on. Default verify stays hash-only.
+#   agent-receipt verify --require-sig
 #   agent-receipt prove --json
 # Local Ed25519 attest (not a CA). Private key stays in .agent-receipt/keys/:
 #   agent-receipt keygen
@@ -36,8 +37,8 @@
 # Newest receipt as one JSON object (wins over --path):
 #   agent-receipt last --json
 # doctor --strict always fails unset org policy (redact + failOn), including
-# a small outDir, and fails a broken audit chain. Unset retention still
-# fails only when outDir is under pressure (100 receipts or 20 MB).
+# a small outDir, fails unset retention on any outDir, and fails a broken
+# audit chain. Default doctor still pressure-gates unset retention.
 # Tip: agent-receipt init --org
 # Tip: agent-receipt init --retention
 #   sets maxCount: 100 and maxAgeDays: 30 without replacing ignore / redact.
@@ -56,7 +57,7 @@
 # Gate JSON schema: docs/gate.schema.json (next to docs/receipt.schema.json)
 # Signature sidecar: docs/signature.schema.json
 # Drop-in CI: examples/github/action.yml and examples/github/pr-gate.yml
-#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.16
+#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.17
 #   prove after a green gate; upload receipt-gate.json
 
 outDir: .agent-receipt/receipts

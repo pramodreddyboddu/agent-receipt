@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/gate.schema.json",
   "title": "GateReport",
-  "description": "One JSON object printed on stdout by `agent-receipt capture|wrap|share|verify --json`. Human progress stays on stderr. This is the CI gate, not the companion receipt file (docs/receipt.schema.json). `ok` is true only when `exitCode` is 0. Exit 0 passes. Exit 2 is a --fail-on match and/or a verify failure (the artifact is still written when capture/wrap/share got that far). Exit 1 is a usage or runtime error (`reason` is set); it is not a policy failure. `verified` is null when the command did not run verify (capture, and usage errors). `trailingIgnored` is a boolean when a body was hashed (verify, and wrap/share after they verify) and null when trailing content was not evaluated (capture, and usage errors). Config `failOn` is not applied by verify unless `--fail-on` is explicit.",
+  "description": "One JSON object printed on stdout by `agent-receipt capture|wrap|share|verify --json`. Human progress stays on stderr. This is the CI gate, not the companion receipt file (docs/receipt.schema.json). `ok` is true only when `exitCode` is 0. Exit 0 passes. Exit 2 is a --fail-on match and/or a verify failure (the artifact is still written when capture/wrap/share got that far). Exit 1 is a usage or runtime error (`reason` is set); it is not a policy failure. `verified` is null when the command did not run verify (capture, and usage errors). `trailingIgnored` is a boolean when a body was hashed (verify, and wrap/share after they verify) and null when trailing content was not evaluated (capture, and usage errors). Config `failOn` is not applied by verify unless `--fail-on` is explicit. Optional `signature` is present on verify --json only when --require-sig ran after a passing hash. Optional `sigPath` is present on share --json (string or null). Both are omitted otherwise. Required keys are unchanged.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -118,6 +118,23 @@
     "reason": {
       "type": ["string", "null"],
       "description": "Human reason for exit 1, or for an exit 2 policy/verify failure. Null when the gate passed."
+    },
+    "signature": {
+      "type": ["object", "null"],
+      "description": "Optional. verify --json includes this only when --require-sig was passed and the hash check passed. Omitted when the signature was not required. Same fields as prove signature.",
+      "additionalProperties": false,
+      "required": ["present", "ok", "alg", "fingerprint", "reason"],
+      "properties": {
+        "present": { "type": "boolean" },
+        "ok": { "type": ["boolean", "null"] },
+        "alg": { "type": ["string", "null"] },
+        "fingerprint": { "type": ["string", "null"] },
+        "reason": { "type": ["string", "null"] }
+      }
+    },
+    "sigPath": {
+      "type": ["string", "null"],
+      "description": "Optional. share --json sets the sidecar path copied or re-signed beside published Markdown, or null when none was attached. Omitted on capture, wrap, and verify."
     }
   }
 }

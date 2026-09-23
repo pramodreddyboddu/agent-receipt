@@ -1,5 +1,6 @@
 import { VERSION } from './version.js';
 import type { RiskSummary } from './risk.js';
+import type { SignatureStatus } from './sign.js';
 
 /**
  * One-line stdout object for CI. Human progress stays on stderr when --json
@@ -16,6 +17,10 @@ import type { RiskSummary } from './risk.js';
  * `trailingIgnored` is a boolean when this command hashed a body (verify,
  * and wrap/share after they verify). It is null when trailing content was
  * not evaluated (capture, and usage errors).
+ *
+ * `signature` is set only by `verify --json --require-sig` after the hash
+ * check passes. Other commands omit it. `sigPath` is set by `share --json`
+ * (string when a Markdown sidecar was copied or re-signed, otherwise null).
  */
 export interface GateRisk {
   high: number;
@@ -49,6 +54,16 @@ export interface GateReport {
    */
   trailingIgnored: boolean | null;
   reason: string | null;
+  /**
+   * Set by `verify --json` when `--require-sig` ran after a passing hash.
+   * Omitted when the signature was not required.
+   */
+  signature?: SignatureStatus | null;
+  /**
+   * Set by `share --json`. Path of the sidecar copied or re-signed beside
+   * published Markdown, or null when none was attached. Omitted otherwise.
+   */
+  sigPath?: string | null;
 }
 
 export type GateFields = Omit<GateReport, 'ok' | 'version' | 'exitCode' | 'trailingIgnored'> & {
@@ -95,6 +110,8 @@ export function finalizeGate(fields: GateFields): GateReport {
     ignored: fields.ignored,
     trailingIgnored: fields.trailingIgnored ?? null,
     reason: fields.reason,
+    ...(fields.signature !== undefined ? { signature: fields.signature } : {}),
+    ...(fields.sigPath !== undefined ? { sigPath: fields.sigPath } : {}),
   };
 }
 

@@ -14,8 +14,9 @@
 #       fail-on: high
 #       base: origin/main
 #       install: true
-#       from: github:pramodreddyboddu/agent-receipt#v1.0.16
+#       from: github:pramodreddyboddu/agent-receipt#v1.0.17
 #       prove: true
+#       require-sig: false
 #
 # `install` defaults to false. When true, the step runs
 # `npm install -g <from>` (default from:
@@ -25,6 +26,11 @@
 # `prove` defaults to false. After a green wrap/share gate (ok true,
 # exit 0) it runs `prove --json` and fails the step unless prove is ok
 # (verified true, exitCode 0). The prove JSON is printed.
+#
+# `require-sig` defaults to false (v1.0.17). After a green gate it runs
+# `verify --require-sig --json` on the gate receipt path and fails unless
+# signature.ok is true. CI must `keygen` + `sign` (or restore keys) before
+# this input. The action does not create keys. Unsigned receipts exit 2.
 #
 # Outputs (empty string when the field is missing): ok, exit-code, sha256,
 # path, gate-json (absolute path of the gate JSON file).
@@ -54,11 +60,15 @@ inputs:
     required: false
     default: "false"
   from:
-    description: npm spec used when install is true. Pin with #v1.0.16 once the tag exists.
+    description: npm spec used when install is true. Pin with #v1.0.17 once the tag exists.
     required: false
     default: github:pramodreddyboddu/agent-receipt
   prove:
     description: After a green gate, run prove --json and fail unless ok, verified, and exitCode 0.
+    required: false
+    default: "false"
+  require-sig:
+    description: After a green gate, run verify --require-sig on the receipt path. CI must keygen + sign (or restore keys) first. Default false. Unsigned receipts exit 2.
     required: false
     default: "false"
 
@@ -92,6 +102,7 @@ runs:
         INSTALL: ${{ inputs.install }}
         FROM_SPEC: ${{ inputs.from }}
         PROVE: ${{ inputs.prove }}
+        REQUIRE_SIG: ${{ inputs.require-sig }}
       run: |
         set -eu
         if [ "$INSTALL" = "true" ]; then
@@ -174,6 +185,27 @@ runs:
         const g = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
         if (g.ok !== true || g.verified !== true || g.exitCode !== 0) {
           console.error('prove is not ok');
+          process.exit(g.exitCode || 1);
+        }
+        NODE
+        fi
+        if [ "$REQUIRE_SIG" = "true" ]; then
+          # v1.0.17. The job must already have signed this receipt
+          # (agent-receipt keygen && agent-receipt sign, or restored keys).
+          # This step does not create keys.
+          sig_out="${RUNNER_TEMP:-/tmp}/receipt-require-sig.json"
+          receipt_path=$(node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (typeof g.path!=="string" || !g.path) { console.error("gate path missing"); process.exit(1); } process.stdout.write(g.path);' "$out")
+          set +e
+          "$CLI" verify --require-sig --json "$receipt_path" > "$sig_out"
+          scode=$?
+          set -e
+          echo "agent-receipt verify --require-sig exit $scode"
+          cat "$sig_out"
+          node - "$sig_out" <<'NODE'
+        const fs = require("fs");
+        const g = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+        if (g.ok !== true || g.exitCode !== 0 || !g.signature || g.signature.ok !== true) {
+          console.error("verify --require-sig failed");
           process.exit(g.exitCode || 1);
         }
         NODE

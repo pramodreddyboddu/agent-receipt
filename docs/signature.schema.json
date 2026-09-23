@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/signature.schema.json",
   "title": "ReceiptSignature",
-  "description": "Sidecar written by `agent-receipt sign` next to a Markdown receipt (`foo.md` → `foo.sig.json`). The signature is over the UTF-8 bytes of the receipt sha256 hex string (the same hex verify uses), not the raw Markdown. `publicKey` is the SPKI PEM so a peer can verify without `.agent-receipt/keys/`. The private key is never included. This is a local Ed25519 attest, not a CA or PKI certificate. `verify` stays hash-only; `prove` reports this sidecar when it is present.",
+  "description": "Sidecar written by `agent-receipt sign` next to a Markdown receipt (`foo.md` → `foo.sig.json`). The signature is over the UTF-8 bytes of the receipt sha256 hex string (the same hex verify uses), not the raw Markdown. `publicKey` is the SPKI PEM so a peer can verify without `.agent-receipt/keys/`. The private key is never included. This is a local Ed25519 attest, not a CA or PKI certificate. Default `verify` stays hash-only. `verify --require-sig` requires this sidecar. `prove` reports it when it is present. `share` and Markdown `export` copy it when the published sha256 matches, or re-sign the published Markdown when the body was rewritten and local keys exist. HTML is unsigned.",
   "type": "object",
   "additionalProperties": false,
   "required": ["alg", "version", "sha256", "fingerprint", "signature", "publicKey"],

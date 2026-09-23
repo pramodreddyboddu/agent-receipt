@@ -19,19 +19,19 @@ import {
 import { VERSION } from '../lib/version.js';
 import { color } from '../lib/color.js';
 import { auditLogPath, verifyAuditChain } from '../lib/audit.js';
-import { outDirUnderPressure, retentionCheck } from '../lib/retention.js';
+import { retentionCheck } from '../lib/retention.js';
 import { loadKeys, privateKeyPath, publicKeyPath } from '../lib/sign.js';
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'info';
 
 export interface DoctorOptions {
   /**
-   * Exit non-zero when the audit chain is broken, and when org policy
-   * (`redact: true` and a valid `failOn`) is unset — on any outDir size.
-   * Unset retention still fails only when outDir is under pressure
-   * (100 receipts or 20 MB). Default doctor leaves a broken chain as WARN
-   * and leaves unset policy / retention as WARN/INFO. This is not the CI
-   * `--fail-on` risk gate.
+   * Exit non-zero when the audit chain is broken, when org policy
+   * (`redact: true` and a valid `failOn`) is unset, and when retention
+   * (`maxCount` / `maxAgeDays`) is unset — on any outDir size.
+   * Default doctor leaves a broken chain as WARN and leaves unset policy
+   * and retention as WARN/INFO (retention stays pressure-gated). This is
+   * not the CI `--fail-on` risk gate.
    */
   strict?: boolean;
   /**
@@ -152,17 +152,11 @@ function signingKeysCheck(cwd: string): DoctorCheck {
 }
 
 /**
- * Under `--strict`, unset org policy is always FAIL (any outDir size).
- * Unset retention is FAIL only when the receipt dir is under pressure.
- * No pressure leaves the retention row as-is.
+ * Under `--strict`, unset org policy and unset retention are always FAIL
+ * (any outDir size). A configured limit that would still delete stays WARN.
+ * Default doctor does not call this.
  */
 function applyStrictGates(cwd: string, checks: DoctorCheck[]): DoctorCheck[] {
-  let pressured = false;
-  try {
-    pressured = outDirUnderPressure(cwd);
-  } catch {
-    pressured = false;
-  }
   const cfg = loadConfig(cwd);
   return checks.map((c) => {
     if (c.name === 'policy' && c.status !== 'fail' && orgPolicyUnset(cfg)) {
@@ -175,7 +169,6 @@ function applyStrictGates(cwd: string, checks: DoctorCheck[]): DoctorCheck[] {
       };
     }
     if (
-      pressured &&
       c.name === 'retention' &&
       (c.status === 'warn' || c.status === 'info') &&
       retentionLimitsUnset(cfg)
@@ -185,7 +178,7 @@ function applyStrictGates(cwd: string, checks: DoctorCheck[]): DoctorCheck[] {
         status: 'fail',
         detail:
           c.detail +
-          ' Strict: set maxCount and/or maxAgeDays while outDir is under pressure.',
+          ' Strict: set maxCount and/or maxAgeDays (agent-receipt init --retention). Unset retention fails --strict on any outDir.',
       };
     }
     return c;
@@ -411,8 +404,9 @@ export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCh
       const where = chain.brokenAt ? ` at line ${chain.brokenAt}` : '';
       const detail = `chain broken${where}: ${chain.reason} (agent-receipt audit --verify)`;
       // Broken chain is WARN by default. `--strict` promotes it to FAIL
-      // even when outDir is small. Unset policy fails under --strict with
-      // no pressure gate. Unset retention stays pressure-gated.
+      // even when outDir is small. Unset policy and unset retention fail
+      // under --strict with no pressure gate. Default retention stays
+      // pressure-gated.
       checks.push({
         name: 'audit',
         status: opts.strict ? 'fail' : 'warn',
@@ -562,9 +556,9 @@ function printCheck(c: DoctorCheck): void {
  * Run environment health checks.
  * Exit 0 if no FAIL, exit 1 otherwise.
  * WARN/INFO are non-fatal, including unset org policy and retention.
- * `--strict` promotes a broken audit chain to FAIL always, and promotes
- * unset org policy (redact + failOn) to FAIL on any outDir size.
- * Unset retention still becomes FAIL only when outDir is under pressure
+ * `--strict` promotes a broken audit chain, unset org policy
+ * (redact + failOn), and unset retention (maxCount / maxAgeDays) to FAIL
+ * on any outDir size. Default doctor still pressure-gates unset retention
  * (100 receipts or 20 MB). CI `--fail-on` remains the risk gate.
  * `--json` prints one object on stdout and does not change the exit code.
  */
@@ -602,7 +596,7 @@ export function cmdDoctor(cwd: string, opts: DoctorOptions = {}): number {
   if (opts.strict) {
     console.log(
       color.dim(
-        'strict: a broken audit chain fails. Unset org policy (redact + failOn) fails even when outDir is small (init --org). Unset retention fails only when outDir is under pressure (100 receipts or 20 MB). CI --fail-on is still the risk gate.',
+        'strict: a broken audit chain fails. Unset org policy (redact + failOn) fails even when outDir is small (init --org). Unset retention (maxCount / maxAgeDays) fails on any outDir (init --retention). CI --fail-on is still the risk gate.',
       ),
     );
   }

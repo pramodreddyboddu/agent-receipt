@@ -116,19 +116,19 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `init [--cursor] [--grok] [--org] [--retention]` | Write `.agent-receipt.yml` + notes. `--org` (alias `--policy`) sets `redact: true` and `failOn: high` without replacing local `ignore`. `--retention` sets `maxCount: 100` and `maxAgeDays: 30` the same way. `--cursor` / `--grok` drop agent rules |
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON) |
 | `wrap` | End of session: capture (+ `--uncommitted` if dirty) → TL;DR + path → verify |
-| `share [path]` | One shot: redact → HTML (+ optional Markdown) → verify → paths + TL;DR |
-| `export` / `html` | Self-contained HTML receipt (or export last); `--out`, `--redact` |
+| `share [path]` | One shot: redact → HTML (+ optional Markdown) → verify → paths + TL;DR. Markdown sidecar is copied or re-signed; HTML stays unsigned |
+| `export` / `html` | Self-contained HTML receipt (or Markdown); `--out`, `--redact`. Markdown uses the same sidecar handoff. HTML stays unsigned |
 | `show [path]` | Pretty-print last / given receipt (full body) |
 | `last` | Path + glance of the most recent receipt. `--json` prints one object (`path`, `sha256`, agent, `failedOn`, `uncommitted`, TL;DR). `--json` wins over `--path` |
 | `history` / `ls` | List recent receipts (`--agent`, `--uncommitted`, `--failed`, `--json`, `--limit`; `[uncommitted]` and `[failed]` badges; index at `.agent-receipt/index.json` stores `failedOn`) |
 | `watch` | Poll git; auto-capture on commits **or dirty tree** (`--once`, `--commits-only`) |
 | `keygen [--force]` | Create a local Ed25519 keypair under `.agent-receipt/keys/` (PKCS8 private, SPKI public). Idempotent; `--force` rotates. No network |
 | `sign [path]` | Hash-check a receipt, then write `foo.sig.json` over the sha256 hex. Missing keys exit 1. Hash failure exits 2 and writes nothing. Not run by capture/wrap/share |
-| `verify [path]` | Hash-check tamper-evident integrity. Stays hash-only (unsigned receipts still pass). `--json` includes `trailingIgnored` (boolean) |
+| `verify [path]` | Hash-check tamper-evident integrity. Default stays hash-only (unsigned receipts still pass). `--require-sig` requires a valid `*.sig.json`. `--json` includes `trailingIgnored` (boolean) |
 | `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, an audit-log link, and signature status when a sidecar is present. `--json` adds `signature`. Config `failOn` is not applied |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
 | `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default). Trusted prune refuses the delete when the audit chain is broken (`--force` is break-glass) |
-| `doctor` | Health check plus a prod checklist (policy, audit, keys, retention, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`) and a broken audit chain on any receipt dir. Unset retention fails only under receipt-dir pressure. Missing signing keys stay INFO |
+| `doctor` | Health check plus a prod checklist (policy, audit, keys, retention, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`), unset retention (`maxCount` / `maxAgeDays`), and a broken audit chain on any receipt dir. Default doctor still pressure-gates unset retention. Missing signing keys stay INFO |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
 | `diff [a] [b]` | Alias for `compare` |
 | `install-hooks` | Opt-in post-commit auto-capture (`--pre-push` optional) |
@@ -359,9 +359,10 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.16`, optional `prove`) and
+`github:pramodreddyboddu/agent-receipt#v1.0.17`, optional `prove`, optional
+`require-sig`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
-green gate, upload `receipt-gate.json`). Gate JSON:
+green gate, optional temp keygen + `verify --require-sig`, upload `receipt-gate.json`). Gate JSON:
 [`docs/gate.schema.json`](docs/gate.schema.json). `init --retention` sets
 `maxCount: 100` and `maxAgeDays: 30`. Trusted prune refuses a broken audit
 chain unless you pass `prune --force`.
@@ -452,15 +453,26 @@ broken, a present `.sig.json` does not verify, or you passed `--fail-on`
 and it tripped. A missing sidecar does not fail prove. Config `failOn`
 does not apply. `prove --json` prints one object, including `signature`.
 
+`verify --require-sig` (alias `--require-signature`) opts in to that sidecar.
+The hash check still runs first. After it matches, a missing sidecar exits 2
+(`signature required: signature absent`) and a bad sidecar exits 2 with the
+signature reason. Default `verify` stays hash-only. There is no config key
+and no CA.
+
 `keygen` writes a local Ed25519 keypair (Node `crypto` only) under
 `.agent-receipt/keys/`. `sign` attests the receipt sha256 hex into
 `foo.sig.json`, embedding the SPKI public key so a peer can check it
 without that directory. The private key never leaves `.agent-receipt/keys/`
-and is never written into a receipt or sidecar. Capture, wrap, and share
-do not sign. `verify` remains the tamper-evident hash check.
+and is never written into a receipt or sidecar. Capture and wrap do not
+sign. `share` and Markdown `export` copy a valid sidecar when the published
+sha256 matches the source. When redact rewrites the body, they re-sign the
+published Markdown if local keys exist, and otherwise leave it unsigned
+(no stale sidecar) with a short `keygen` / `sign` tip. HTML stays unsigned.
+Peers verify and sign the Markdown.
 
-Thin local Ed25519 attest landed in 1.0.16. Full PKI/CA, minisign, GPG,
-and auto-sign on capture are still deferred.
+Thin local Ed25519 attest landed in 1.0.16. `verify --require-sig` and the
+portable sidecar handoff landed in 1.0.17. Full PKI/CA, a fingerprint trust
+store, minisign, GPG, and auto-sign on capture are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
 

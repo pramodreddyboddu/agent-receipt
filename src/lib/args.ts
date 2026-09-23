@@ -10,6 +10,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const rest = command === 'help' && args[0]?.startsWith('-') ? args : args.slice(1);
   const positional: string[] = [];
   const flags: Record<string, string | boolean> = {};
+  // Flags that never take a value, so a following receipt path stays positional.
+  const valueless = new Set(['require-sig', 'require-signature']);
 
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -23,6 +25,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
         flags[a.slice(2, eq)] = a.slice(eq + 1);
       } else {
         const key = a.slice(2);
+        if (valueless.has(key)) {
+          flags[key] = true;
+          continue;
+        }
         const next = rest[i + 1];
         if (next && !next.startsWith('-')) {
           flags[key] = next;

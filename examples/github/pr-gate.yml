@@ -4,21 +4,26 @@
 # Also reusable:
 #   jobs:
 #     receipt:
-#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.16
+#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.17
 #       with:
 #         base: main
 #         fail-on: high
 #         command: wrap
 #         prove: true
+#         require-sig: true
 #
 # Install pin: npm install -g github:pramodreddyboddu/agent-receipt
-# Or, once the tag exists: github:pramodreddyboddu/agent-receipt#v1.0.16
+# Or, once the tag exists: github:pramodreddyboddu/agent-receipt#v1.0.17
 # Always pass --fail-on (this job does; default high) so a missing
 # .agent-receipt.yml cannot silently weaken the gate.
 # After a successful wrap or share, trailingIgnored is a boolean when set.
 # prove (default true) runs `agent-receipt prove --json` after a green
 # gate and fails unless ok, verified, and exitCode 0. Share-only runs
 # still prove the latest receipt.
+# require-sig (default false, v1.0.17) temp-keygens in the job (no org
+# secret), signs the receipt, then requires prove signature.ok and
+# verify --require-sig. That key is not a CA. Restore your own keys
+# before the step if the fingerprint must stay stable.
 # A green gate uploads actions/upload-artifact@v4 (name agent-receipt-gate):
 # receipt-gate.json, plus the Markdown at the gate JSON `path` when that
 # file is still there. A missing receipt does not fail the job.
@@ -51,6 +56,11 @@ on:
         required: false
         type: boolean
         default: true
+      require-sig:
+        description: After a green gate, temp-keygen, sign, require prove signature.ok, and run verify --require-sig. No org secret. Default false.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -72,7 +82,7 @@ jobs:
           set -eu
           if ! command -v agent-receipt >/dev/null 2>&1; then
             # Pin the GitHub install. Use a tag once it exists, for example:
-            #   npm install -g github:pramodreddyboddu/agent-receipt#v1.0.16
+            #   npm install -g github:pramodreddyboddu/agent-receipt#v1.0.17
             npm install -g github:pramodreddyboddu/agent-receipt
           fi
 
@@ -126,6 +136,22 @@ jobs:
           cat "$out"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (g.ok !== true || g.verified !== true || g.exitCode !== 0) { console.error("prove is not ok"); process.exit(g.exitCode || 1); }' "$out"
           exit "$code"
+
+      - name: Sign and require signature
+        if: steps.gate.outcome == 'success' && inputs.require-sig == true
+        run: |
+          set -eu
+          # Temp keypair for this job. No org secret. Not a CA.
+          # keygen leaves an existing pair unchanged. Restore keys first
+          # when the fingerprint must be stable, then this step signs.
+          agent-receipt keygen
+          agent-receipt sign
+          out="$RUNNER_TEMP/receipt-prove-sig.json"
+          agent-receipt prove --json > "$out"
+          echo "agent-receipt prove (signed)"
+          cat "$out"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (g.ok !== true || g.verified !== true || g.exitCode !== 0 || !g.signature || g.signature.ok !== true || g.signature.alg !== "ed25519") { console.error("prove signature is not ok"); process.exit(g.exitCode || 1); }' "$out"
+          agent-receipt verify --require-sig
 
       - name: Stage gate artifacts
         if: always()

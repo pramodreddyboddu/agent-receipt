@@ -259,7 +259,8 @@ export function printProveError(reason: string): void {
 
 /**
  * Thin prove-this-run: same Markdown hash as verify, plus an audit-log link
- * and optional Ed25519 sidecar status. `verify` stays hash-only.
+ * and optional Ed25519 sidecar status. Default `verify` stays hash-only.
+ * `verify --require-sig` is the opt-in that fails when the sidecar is missing.
  * Exit 0 when the hash matches, the audit log is absent or intact, and any
  * sidecar is valid. Exit 2 when verify fails, the chain is broken, a present
  * sidecar is invalid, or `--fail-on` trips. A missing sidecar does not fail.

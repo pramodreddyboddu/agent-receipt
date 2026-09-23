@@ -25,18 +25,22 @@ You should hear back within a few days. Coordinated disclosure is preferred.
 ## What this tool is (and is not)
 
 `agent-receipt` produces **tamper-evident** Markdown/HTML receipts (SHA-256 of the
-canonical body). `verify` recomputes that hash and stays hash-only. `audit`
-adds an experimental hash chain over capture, watch, wrap, share, export, and
-prune-delete events (`.agent-receipt/audit.jsonl`). That chain is not a
-signature.
+canonical body). Default `verify` recomputes that hash and stays hash-only.
+`verify --require-sig` (1.0.17) additionally requires a valid `*.sig.json`.
+`audit` adds an experimental hash chain over capture, watch, wrap, share,
+export, and prune-delete events (`.agent-receipt/audit.jsonl`). That chain
+is not a signature.
 
 `keygen` / `sign` (1.0.16) add a **thin local Ed25519 attest** of the receipt
 sha256 hex. The sidecar (`foo.sig.json`) carries the signature and the SPKI
 public key. The private key is PKCS8 PEM mode `0600` under
 `.agent-receipt/keys/` and is never written into a receipt or sidecar.
-There is no CA, no PKI, no key escrow, and no auto-sign on capture.
-`prove` reports the sidecar when it is present. A missing sidecar does not
-fail `verify` or `prove`.
+There is no CA, no PKI, no key escrow, no fingerprint trust store, and no
+auto-sign on capture. `prove` reports the sidecar when it is present. A
+missing sidecar does not fail default `verify` or `prove`. It does fail
+`verify --require-sig`. `share` and Markdown `export` copy a matching
+sidecar or re-sign the published Markdown when local keys exist. They do
+not attach a stale sidecar, and they do not sign HTML.
 
 It is **not**:
 

@@ -156,7 +156,7 @@ describe('prune audit events', () => {
     assert.equal(preview.code, 0, preview.err);
     const report = JSON.parse(preview.out);
     assert.equal(report.command, 'prune');
-    assert.equal(report.version, '1.0.16');
+    assert.equal(report.version, '1.0.17');
     assert.equal(report.exitCode, 0);
     assert.equal(report.audited, 0);
     assert.equal(report.dryRun, true);
@@ -227,7 +227,7 @@ describe('prune audit events', () => {
     assert.equal(events[0].prev, null);
     assert.equal(events[1].prev, sha256Hex(lines[0] + '\n'));
     for (const ev of events) {
-      assert.equal(ev.version, '1.0.16');
+      assert.equal(ev.version, '1.0.17');
       assert.equal(ev.experimental, true);
       assert.equal(ev.failedOn, false);
       assert.equal(ev.exitCode, 0);
@@ -257,7 +257,7 @@ describe('prune audit events', () => {
     const chain = JSON.parse(verified.out);
     assert.equal(chain.ok, true);
     assert.equal(chain.command, 'audit');
-    assert.equal(chain.version, '1.0.16');
+    assert.equal(chain.version, '1.0.17');
     assert.equal(chain.events, 2);
 
     const again = cliResult(dir, ['prune', '--max-count', '5', '--json']);
@@ -296,14 +296,14 @@ describe('doctor --strict', () => {
     assert.equal(row(dir, 'policy').status, 'info');
     assert.equal(row(dir, 'retention').status, 'info');
     assert.equal(row(dir, 'policy', { strict: true }).status, 'fail');
-    assert.equal(row(dir, 'retention', { strict: true }).status, 'info');
+    assert.equal(row(dir, 'retention', { strict: true }).status, 'fail');
     const plain = cliResult(dir, ['doctor']);
     const strict = cliResult(dir, ['doctor', '--strict']);
     assert.equal(plain.code, 0, plain.out);
     assert.equal(strict.code, 1, strict.out + strict.err);
     assert.match(strict.out, /strict:/);
     assert.match(strict.out, /\[FAIL\].*policy/);
-    assert.match(strict.out, /\[INFO\].*retention/);
+    assert.match(strict.out, /\[FAIL\].*retention/);
     assert.match(cli(dir, ['help', 'doctor']), /--strict/);
   });
 

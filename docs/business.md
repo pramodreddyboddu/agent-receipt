@@ -1,6 +1,6 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.16 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.17 for teams: install once, capture every session, fail CI
 on high-severity findings, share only redacted HTML, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
@@ -63,7 +63,8 @@ A broken `.agent-receipt/audit.jsonl` chain is WARN on default `doctor` and
 does not change the exit code. `doctor --strict` promotes that row to FAIL
 (exit 1) even when `outDir` is small. Unset org policy (`redact` + `failOn`)
 is also FAIL under `--strict` on a small or empty `outDir`. Unset retention
-stays INFO/WARN until the directory is under pressure.
+fails `--strict` on any `outDir`. Default `doctor` still leaves that row
+INFO/WARN until the directory is under pressure.
 
 ## Org policy
 
@@ -128,7 +129,7 @@ is the artifact, not the gate. The gate object itself is
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -207,10 +208,12 @@ receipt risk summary. `doctor` does not.
 fails a broken audit chain (the audit row becomes `fail`, exit 1). It also
 fails unset org policy (`redact: true` and `failOn`) on any `outDir`,
 including a small or empty one. `doctor --json` reports that policy check
-as `fail`. Unset retention still fails only when `outDir` is under pressure
-(100 receipts or 20 MB). A limit that is set but would still delete files
-stays a warning until you run `prune`. Default `doctor` still only warns
-on a broken chain and leaves unset policy as INFO.
+as `fail`. Unset retention (`maxCount` / `maxAgeDays`) also fails `--strict`
+on any `outDir`, including a small or empty one. Set it with
+`agent-receipt init --retention`. A limit that is set but would still delete
+files stays a warning until you run `prune`. Default `doctor` still only
+warns on a broken chain, leaves unset policy as INFO, and pressure-gates
+unset retention (100 receipts or 20 MB).
 
 ```bash
 agent-receipt init --org
@@ -230,7 +233,7 @@ Copy one of:
 | Example | What to do with it |
 |---------|--------------------|
 | [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. After a green gate it runs `prove --json` (`prove` defaults to true) and uploads `receipt-gate.json` plus the receipt Markdown (`actions/upload-artifact@v4`, name `agent-receipt-gate`). |
-| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.16`) and `prove`. Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.17`), `prove`, and `require-sig` (default false; CI must `keygen` + `sign` first). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
 
 ### Drop-in
 
@@ -249,7 +252,7 @@ true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
 - uses: ./.github/actions/agent-receipt
   with:
     install: true
-    from: github:pramodreddyboddu/agent-receipt#v1.0.16
+    from: github:pramodreddyboddu/agent-receipt#v1.0.17
     prove: true
     fail-on: high
     base: origin/main
@@ -273,7 +276,8 @@ capture). The job still fails when `exitCode !== 0` or `ok !== true`.
 
 This repo’s own [docs mirror](github-actions-ci.yml) runs a temp-repo
 `wrap --json` + `prove --json` + `last --json` + `share --json` smoke, then
-proves `doctor --strict` fails unset org policy and passes after `init --org`,
+proves `doctor --strict` fails unset org policy and unset retention, and
+passes after `init --org` plus `init --retention`,
 plus `doctor --json`, `audit --event wrap`, `audit --agent ci --failed`,
 `history --agent ci` / `history --uncommitted`, and `history --failed`. The live
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) does not include
@@ -352,7 +356,8 @@ line). Index rows that were already missing are not events.
 the chain matches, WARN if it does not. WARN does not fail default `doctor`.
 `doctor --strict` turns that broken chain into FAIL and exits 1. Unset org
 policy also fails under `--strict` with no pressure gate. Unset retention
-still fails under `--strict` only when `outDir` is under pressure.
+fails under `--strict` on any `outDir`. Default `doctor` still pressure-gates
+that row.
 
 Editing a line in place breaks the chain on purpose. To rotate, move the
 file aside and let the next command start a new one (`prev: null`).
@@ -362,7 +367,8 @@ file aside and let the next command start a new one (`prev: null`).
 
 `prove` is the one-screen check that a receipt still matches its hash and
 that the local audit log still links it. It also reports a local Ed25519
-sidecar when `sign` wrote one. `verify` stays hash-only. This is not a CA.
+sidecar when `sign` wrote one. Default `verify` stays hash-only.
+`verify --require-sig` requires a valid sidecar. This is not a CA.
 The private key never leaves `.agent-receipt/keys/`.
 
 ```bash
@@ -380,8 +386,12 @@ fingerprint is the lowercase hex SHA-256 of the DER SPKI bytes. Re-running
 without `--force` leaves the pair unchanged. `sign` hash-checks the receipt
 first (exit 2, no sidecar, when the hash fails), then signs the sha256 hex
 string as UTF-8 bytes. `foo.md` gets `foo.sig.json` with `alg`, `version`,
-`sha256`, `fingerprint`, `signature`, and `publicKey`. Capture, wrap, and
-share do not call `sign`.
+`sha256`, `fingerprint`, `signature`, and `publicKey`. Capture and wrap do
+not call `sign`. `share` and Markdown `export` copy a valid sidecar when
+the published sha256 matches, and re-sign the published Markdown when the
+body was rewritten and local keys exist. A rewritten file with no keys is
+left unsigned (no stale sidecar). HTML is unsigned. Peers verify and sign
+the Markdown. `verify --require-sig` is how a peer requires that sidecar.
 
 `prove --json` is one object: `ok`, `command` (`prove`), `version`,
 `exitCode`, `verified`, `trailingIgnored`, `failedOn`, `failOn`, `redacted`,
@@ -450,16 +460,18 @@ Rules:
   are already gone.
 - `--dry-run` does not delete, does not rewrite the index, and does not append `audit.jsonl`.
 - An applied delete appends one `prune` audit line per receipt (no diff, no `--message`). `prune --json` repeats those identity fields on each `deleted` row and sets `audited` to the number of lines written (`0` on dry-run).
-- **Trusted prune.** When `.agent-receipt/audit.jsonl` exists, `prune` runs `verifyAuditChain` before it deletes anything. A broken chain exits 1, deletes nothing, and appends no audit line. Dry-run exits 1 as well: the JSON may still list candidates in `deleted`, with `ok: false`, `chainOk: false`, `auditPresent: true`, and a `reason`. It does not claim those deletes will proceed. A missing audit log is fine. `prune --force` is break-glass and deletes even when the chain is broken. `agent-receipt init --retention` sets `maxCount: 100` and `maxAgeDays: 30` without replacing `ignore` or `redact`. Retention must not paper over a broken audit chain. `doctor --strict` still fails unset retention only under pressure.
+- **Trusted prune.** When `.agent-receipt/audit.jsonl` exists, `prune` runs `verifyAuditChain` before it deletes anything. A broken chain exits 1, deletes nothing, and appends no audit line. Dry-run exits 1 as well: the JSON may still list candidates in `deleted`, with `ok: false`, `chainOk: false`, `auditPresent: true`, and a `reason`. It does not claim those deletes will proceed. A missing audit log is fine. `prune --force` is break-glass and deletes even when the chain is broken. `agent-receipt init --retention` sets `maxCount: 100` and `maxAgeDays: 30` without replacing `ignore` or `redact`. Retention must not paper over a broken audit chain. `doctor --strict` fails unset retention on any `outDir`. Default `doctor` still pressure-gates that row.
 - `maxCount` and `maxAgeDays` must be integers `>= 1`. `0` is rejected so
   a typo cannot wipe the directory.
 - `doctor` **retention**: INFO when opt-in is off and the directory is
   small; WARN when 100 or more receipts **or** 20 MB or more sit in
   `outDir` with no limit, or when a configured limit would delete
   something; FAIL when the keys are invalid or `outDir` is unsafe to
-  prune. WARN does not fail default `doctor`. With `--strict`, that WARN
-  becomes FAIL when the limit is unset and the directory is already at
-  100 receipts or 20 MB. A set limit that would still delete stays WARN.
+  prune. WARN does not fail default `doctor`. With `--strict`, unset
+  `maxCount` / `maxAgeDays` is FAIL on any `outDir`, including a small or
+  empty one (`agent-receipt init --retention`). A set limit that would
+  still delete stays WARN. Default `doctor` still warns only at 100
+  receipts or 20 MB when the limit is unset.
 
 This package gitignores `.agent-receipt/` in its own repo. Your repo
 chooses. A local-only choice:
@@ -506,10 +518,15 @@ listing (`[]` with `--json`). An empty receipt store still errors, same as
 
 ### Deferred
 
-Thin local Ed25519 attest landed in 1.0.16 (`keygen`, `sign`, prove
-`signature`, `docs/signature.schema.json`). It signs the receipt sha256 with
-a key that stays under `.agent-receipt/keys/`. It is not a CA. Full PKI/CA,
-minisign, GPG, and auto-sign on capture are still deferred. Drop-in CI/PR
+`verify --require-sig` and the portable Markdown sidecar handoff landed in
+1.0.17. Share and export copy a valid sidecar when the published sha256
+matches, and re-sign a rewritten Markdown file when local keys exist.
+`doctor --strict` now fails unset retention on any `outDir`. Default
+`doctor` stays pressure-gated. Thin local Ed25519 attest landed in 1.0.16
+(`keygen`, `sign`, prove `signature`, `docs/signature.schema.json`). It
+signs the receipt sha256 with a key that stays under `.agent-receipt/keys/`.
+It is not a CA. Full PKI/CA, a fingerprint trust store, minisign, GPG, and
+auto-sign on capture are still deferred. Drop-in CI/PR
 gate polish landed in 1.0.15 (composite action with `install` / `prove` /
 step outputs, `pr-gate.yml` prove + artifact upload, and
 `docs/gate.schema.json`). Trusted retention landed as `init --retention`
@@ -521,11 +538,8 @@ those keys). Prove-this-run UX landed in 1.0.13 (`prove`, audit link,
 `last --json`, `trailingIgnored` on the gate). Also deferred: SSO / IdP,
 Cloud Agents, a background job that deletes receipts by itself, live GitHub
 Actions workflow sync (the checkout token has no `workflow` scope), and npm
-Trusted Publishing (this cut does not publish). `prune` stays manual. Unset
-retention under `doctor --strict` stays pressure-gated (100 receipts or
-20 MB); always-fail for unset retention is deferred. Missing signing keys
-do not fail `doctor` or `doctor --strict`. CI `--fail-on` is still the
-enforcement point for risk. A broken audit chain still fails `--strict`.
+Trusted Publishing (this cut does not publish). `prune` stays manual.
+Missing signing keys do not fail `doctor` or `doctor --strict`. CI `--fail-on` is still the enforcement point for risk. A broken audit chain still fails `--strict`.
 `doctor --json`, `audit --event`, `audit --agent`, `audit --failed`,
 `history --agent`, `history --uncommitted`, `history --failed`, and `prove`
 are checklist and listing tools; they do not sign the audit log.
@@ -534,7 +548,7 @@ are checklist and listing tools; they do not sign the audit log.
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.16 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.17 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:
