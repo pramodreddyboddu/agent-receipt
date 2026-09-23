@@ -14,7 +14,7 @@
 #       fail-on: high
 #       base: origin/main
 #       install: true
-#       from: github:pramodreddyboddu/agent-receipt#v1.0.19
+#       from: github:pramodreddyboddu/agent-receipt#v1.0.20
 #       prove: true
 #       sign: true
 #       require-sig: true
@@ -58,6 +58,10 @@
 # prove, and verify. Empty leaves the allowlist inactive (any valid sidecar
 # passes). Not a CA. When the allowlist has a fingerprint, `verify
 # --require-sig` requires `signature.trusted` true.
+# Local one-liner after keygen (not a new action input, not a CA):
+# `agent-receipt trust add --self` writes this machine's fingerprint into
+# `.agent-receipt/trusted-keys.txt`. pr-gate.yml uses that when require-sig
+# is true and trusted-keys is empty.
 #
 # Outputs (empty string when the field is missing): ok, exit-code, sha256,
 # path, gate-json (absolute path of the gate JSON file).
@@ -87,7 +91,7 @@ inputs:
     required: false
     default: "false"
   from:
-    description: npm spec used when install is true. Pin with #v1.0.19 once the tag exists.
+    description: npm spec used when install is true. Pin with #v1.0.20 once the tag exists.
     required: false
     default: github:pramodreddyboddu/agent-receipt
   prove:

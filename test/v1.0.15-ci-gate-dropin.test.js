@@ -281,9 +281,9 @@ describe('v1.0.15 gate schema and drop-in examples', () => {
     assert.match(changelog, /trusted prune/i);
     assert.match(changelog, /no minisign|signing or attest/i);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.19');
+    assert.equal(pkg.version, '1.0.20');
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.19/);
+    assert.match(versionTs, /1\.0\.20/);
     const helpInit = cli(root, ['help', 'init']);
     assert.match(helpInit, /--retention/);
     assert.match(helpInit, /maxCount: 100/);

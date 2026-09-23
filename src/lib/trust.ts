@@ -236,14 +236,14 @@ export function inspectTrustForDoctor(cwd: string): TrustDoctorView {
       kind: 'empty',
       count: 0,
       detail:
-        'trust store present but empty — allowlist inactive until a 64-hex fingerprint is listed',
+        'trust store present but empty — allowlist inactive until a 64-hex fingerprint is listed (trust add --self after keygen)',
     };
   }
   return {
     kind: 'absent',
     count: 0,
     detail:
-      'no fingerprint trust store — allowlist inactive (any valid sidecar passes verify --require-sig)',
+      'no fingerprint trust store — allowlist inactive (any valid sidecar passes verify --require-sig). After keygen: agent-receipt trust add --self',
   };
 }
 

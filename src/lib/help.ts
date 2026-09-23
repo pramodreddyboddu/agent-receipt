@@ -437,7 +437,7 @@ allowlist is inactive: any cryptographically valid sidecar still passes,
 same as 1.0.17. A non-empty store that does not list the sidecar
 fingerprint exits 2 (\`fingerprint not trusted\`, fingerprint included).
 
-\`trust list\`, \`trust add <fp>\`, and \`trust rm <fp>\` edit the file.
+\`trust list\`, \`trust add <fp>\`, \`trust add --self\`, and \`trust rm <fp>\` edit the file.
 Teams may commit a copy under examples/ or docs/ and copy it into
 \`.agent-receipt/\` (that directory stays gitignored, so local keys and
 the default list stay private).
@@ -478,6 +478,7 @@ Examples:
   agent-receipt keygen
   agent-receipt keygen --json
   agent-receipt keygen --force
+  agent-receipt keygen && agent-receipt trust add --self
 `,
 
   sign: `agent-receipt sign — attest the receipt sha256 with the local key
@@ -526,11 +527,18 @@ Examples:
 Usage:
   agent-receipt trust list [--json]
   agent-receipt trust add <fingerprint> [--json]
+  agent-receipt trust add --self [--json]
   agent-receipt trust rm <fingerprint> [--json]
 
 Edits \`.agent-receipt/trusted-keys.txt\` (one lowercase 64-hex fingerprint
 per line). \`#\` comments and blank lines are kept. An invalid line is not
 rewritten and the command exits 1.
+
+\`trust add --self\` (alias: \`trust add self\`) loads the local Ed25519
+keypair with the same \`loadKeys\` path as \`sign\` and \`keygen\`, then
+appends that fingerprint. Already listed exits 0 (\`added: false\`).
+Missing keys exit 1 and name \`keygen\`. It does not create a keypair and
+does not write the private key.
 
 This is a local allowlist, not a CA. Empty or missing file plus no
 \`trustedFingerprints\` config means \`verify --require-sig\` still accepts
@@ -541,10 +549,13 @@ change the file. Config \`trustedFingerprints\` is a separate union.
   ok, command ("trust"), action, version, exitCode, active, count,
   fingerprints, sources, reason
   add also sets added; rm also sets removed.
+  \`--self\` also sets fingerprint to the local keygen fingerprint.
 
 Examples:
   agent-receipt trust list
   agent-receipt trust add <64-hex-fingerprint>
+  agent-receipt keygen && agent-receipt trust add --self
+  agent-receipt trust add --json --self
   agent-receipt trust rm <64-hex-fingerprint> --json
 `,
 
@@ -779,7 +790,8 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
                 fingerprints. WARN when the store is present but empty,
                 unreadable, or has an invalid line. Invalid lines FAIL
                 under --strict. A missing store does not fail doctor
-                or doctor --strict.
+                or doctor --strict. After keygen, \`trust add --self\`
+                lists this machine's fingerprint.
   retention     maxCount / maxAgeDays (opt-in). Over the cap or a large outDir is a warning.
                 Unset fails under --strict on any outDir, including a small one.
                 Default doctor leaves unset retention as INFO/WARN.
@@ -920,7 +932,7 @@ Commands:
   watch                  Poll git; auto-capture on commits or dirty tree
   keygen                 Create a local Ed25519 keypair under .agent-receipt/keys
   sign [path]            Attest the receipt sha256 into a .sig.json sidecar
-  trust                  Known-keys allowlist: list, add <fp>, rm <fp>
+  trust                  Known-keys allowlist: list, add <fp>, add --self, rm <fp>
   verify [path]          Hash-check integrity (hash-only; --require-sig opts in)
   prove [path]           Prove-this-run: verify + audit link + signature status
   audit                  List the compliance log (--event, --agent, --failed filter the listing)
@@ -974,6 +986,7 @@ Examples:
   agent-receipt last
   agent-receipt last --json
   agent-receipt keygen
+  agent-receipt trust add --self
   agent-receipt sign
   agent-receipt verify
   agent-receipt verify --require-sig

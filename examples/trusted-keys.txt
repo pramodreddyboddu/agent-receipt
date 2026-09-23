@@ -7,5 +7,6 @@
 #
 # You can also set trustedFingerprints in .agent-receipt.yml. The two sources
 # are a union. Empty or missing both leaves the allowlist inactive.
+# Local machine (not a CA): agent-receipt keygen && agent-receipt trust add --self
 #
 # aa11bb22cc33dd44ee55ff6677889900aa11bb22cc33dd44ee55ff6677889900

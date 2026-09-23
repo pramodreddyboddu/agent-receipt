@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.20] — 2026-09-22
+
+### Added
+
+- `trust add --self` (alias: `trust add self`) loads the local Ed25519 keypair with `loadKeys` (the same pair as `sign` and `keygen`) and appends that fingerprint to `.agent-receipt/trusted-keys.txt` via `addTrustedFingerprint`. Already listed exits 0 with `added: false`. Missing keys exit 1 and name `keygen`. The command does not create a keypair, does not write private keys, and does not edit config `trustedFingerprints`. `--json` keeps the trust report (`action: "add"`) and adds `fingerprint` when the local key resolved. `trust add <64-hex>` is unchanged. This is not a CA.
+
+### Changed
+
+- Package version bumped to `1.0.20`.
+- [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) auto-trust, when `require-sig` is true and `trusted-keys` is empty, runs `agent-receipt trust add --self` after temp `keygen` instead of hand-writing the fingerprint file. Fail-closed semantics are unchanged: prove still requires `signature.trusted` true. A non-empty `trusted-keys` value is still installed as given. Pin comments are `v1.0.20`.
+- [`examples/github/action.yml`](examples/github/action.yml) pin comments are `v1.0.20`. A comment names `trust add --self`. No new action input.
+- Recommended local recipe in [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md) and [`docs/business.md`](docs/business.md): `keygen` → `trust add --self` → `wrap --sign --fail-on high --json` → `prove` → `verify --require-sig`. Still not a CA.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) version-range comments include 1.0.20 and smoke `trust add --self` (allowlist activates, prove `signature.trusted` true, `verify --require-sig` exits 0, second call is idempotent). Live [`.github/workflows/*`](.github/workflows) was not edited.
+- [`examples/org-policy.yml`](examples/org-policy.yml) pin comment is `v1.0.20`.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm.
+- Still not a CA. No key escrow. The private key stays under `.agent-receipt/keys/`.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture, config `sign: true` (and `--no-sign`) so org policy can default capture/wrap to sign, SSO / IdP, Cloud Agents, a background deleter, an HTML/share signed package, a prove-for-humans one-pager, multi-agent receipt linking, `trust show`, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.19] — 2026-09-22
 
 ### Added

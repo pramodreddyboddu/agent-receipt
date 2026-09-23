@@ -72,6 +72,7 @@ agent-receipt last              # glance the newest
 agent-receipt last --json       # one object: path, sha256, agent, failedOn
 agent-receipt verify            # integrity (hash-only)
 agent-receipt keygen             # local Ed25519 keypair (optional)
+agent-receipt trust add --self   # allowlist that fingerprint (not a CA)
 agent-receipt sign               # attest the receipt sha256
 agent-receipt prove             # hash + audit link + signature status
 agent-receipt --version
@@ -124,7 +125,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `watch` | Poll git; auto-capture on commits **or dirty tree** (`--once`, `--commits-only`) |
 | `keygen [--force]` | Create a local Ed25519 keypair under `.agent-receipt/keys/` (PKCS8 private, SPKI public). Idempotent; `--force` rotates. No network |
 | `sign [path]` | Hash-check a receipt, then write `foo.sig.json` over the sha256 hex. Missing keys exit 1. Hash failure exits 2 and writes nothing. Capture and wrap sign only with `--sign` |
-| `trust` | Known-keys allowlist: `list`, `add <fp>`, `rm <fp>` on `.agent-receipt/trusted-keys.txt`. Not a CA |
+| `trust` | Known-keys allowlist: `list`, `add <fp>`, `add --self`, `rm <fp>` on `.agent-receipt/trusted-keys.txt`. Not a CA |
 | `verify [path]` | Hash-check tamper-evident integrity. Default stays hash-only (unsigned receipts still pass). `--require-sig` requires a valid `*.sig.json` and, when a trust store is configured, a known fingerprint. `--json` includes `trailingIgnored` (boolean) |
 | `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, an audit-log link, and signature status when a sidecar is present. `--json` adds `signature` (`trusted` is null when the allowlist is inactive). Config `failOn` is not applied |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
@@ -154,6 +155,7 @@ agent-receipt init --retention
 agent-receipt doctor --strict
 agent-receipt doctor --json
 agent-receipt keygen
+agent-receipt trust add --self
 agent-receipt sign
 agent-receipt prove --json
 agent-receipt last --json
@@ -360,11 +362,11 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.19`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.20`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
-green gate, optional temp keygen + `verify --require-sig`, auto-trust of that
-fingerprint when `trusted-keys` is empty, upload `receipt-gate.json`).
+green gate, optional temp keygen + `trust add --self` when `trusted-keys`
+is empty, `verify --require-sig`, upload `receipt-gate.json`).
 Signed CI recipe (not a CA): [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md).
 Gate JSON:
 [`docs/gate.schema.json`](docs/gate.schema.json). `init --retention` sets
@@ -469,8 +471,9 @@ line) unioned with `trustedFingerprints` in `.agent-receipt.yml`, plus
 `--trusted-key` for one invocation. Empty or missing both means the
 allowlist is inactive and any cryptographically valid sidecar still passes.
 A listed store that does not include the fingerprint exits 2. Invalid lines
-fail closed. `trust list` / `trust add` / `trust rm` edit the file. This is
-a known-keys allowlist, not a certificate authority.
+fail closed. `trust list` / `trust add` / `trust add --self` / `trust rm`
+edit the file. `trust add --self` lists the local keygen fingerprint.
+This is a known-keys allowlist, not a certificate authority.
 
 `keygen` writes a local Ed25519 keypair (Node `crypto` only) under
 `.agent-receipt/keys/`. `sign` attests the receipt sha256 hex into
@@ -487,8 +490,8 @@ Peers verify and sign the Markdown.
 Thin local Ed25519 attest landed in 1.0.16. `verify --require-sig` and the
 portable sidecar handoff landed in 1.0.17. A thin known-keys allowlist
 landed in 1.0.18. A signed CI drop-in (`sign`, require-sig, trust examples)
-landed in 1.0.19. Full PKI/CA, minisign, GPG, and default auto-sign on
-capture are still deferred.
+landed in v1.0.19. `trust add --self` landed in v1.0.20. Full PKI/CA,
+minisign, GPG, and default auto-sign on capture are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
 

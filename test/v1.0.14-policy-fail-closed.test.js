@@ -305,9 +305,9 @@ describe('v1.0.14 docs', () => {
     assert.match(action, /trailingIgnored/);
     assert.match(action, /exitCode !== 0 \|\| g\.ok !== true/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.19');
+    assert.equal(pkg.version, '1.0.20');
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.19/);
+    assert.match(versionTs, /1\.0\.20/);
     const helpInit = cli(root, ['help', 'init']);
     assert.match(helpInit, /--org/);
     assert.match(helpInit, /--policy/);

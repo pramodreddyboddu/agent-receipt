@@ -132,7 +132,7 @@ Inside Aider:
 | Full Markdown dump | `agent-receipt show` |
 | Integrity check | `agent-receipt verify` (hash-only unless `--require-sig`) |
 | Require a sidecar | `agent-receipt verify --require-sig` |
-| Known-keys allowlist | `agent-receipt trust add <fingerprint>` (not a CA) |
+| Known-keys allowlist | `agent-receipt trust add --self` or `trust add <fingerprint>` (not a CA) |
 | Prove this run | `agent-receipt prove` (hash + audit link + signature status) |
 | Local Ed25519 attest | `agent-receipt keygen` then `agent-receipt sign` (not a CA) |
 | Newest receipt JSON | `agent-receipt last --json` |

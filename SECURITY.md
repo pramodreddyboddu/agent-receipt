@@ -41,7 +41,9 @@ There is no CA, no PKI, and no key escrow. A thin fingerprint trust store
 (known-keys allowlist) is opt-in: `.agent-receipt/trusted-keys.txt` and/or
 `trustedFingerprints` in `.agent-receipt.yml`. Empty or missing both leaves
 the allowlist inactive, so any cryptographically valid sidecar still passes
-`verify --require-sig`. A non-empty store requires that fingerprint. This
+`verify --require-sig`. A non-empty store requires that fingerprint.
+`trust add --self` appends the local keygen fingerprint to that file. It
+does not create keys and it is not a CA. This
 is not a certificate chain and not a revocation list. There is no default
 auto-sign on capture. `capture --sign` and `wrap --sign` are opt-in and
 leave the receipt unsigned when keys are missing. `prove` reports the
