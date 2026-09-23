@@ -12,6 +12,10 @@ import type { RiskSummary } from './risk.js';
  *
  * `verified: null` means this command did not run verify (capture).
  * Config `failOn` is not applied by verify unless the flag is explicit.
+ *
+ * `trailingIgnored` is a boolean when this command hashed a body (verify,
+ * and wrap/share after they verify). It is null when trailing content was
+ * not evaluated (capture, and usage errors).
  */
 export interface GateRisk {
   high: number;
@@ -39,11 +43,17 @@ export interface GateReport {
   sha256: string | null;
   risk: GateRisk | null;
   ignored: number | null;
+  /**
+   * True when content after `## Integrity` was ignored by the hash.
+   * Null when this command did not evaluate trailing content.
+   */
+  trailingIgnored: boolean | null;
   reason: string | null;
 }
 
-export type GateFields = Omit<GateReport, 'ok' | 'version' | 'exitCode'> & {
+export type GateFields = Omit<GateReport, 'ok' | 'version' | 'exitCode' | 'trailingIgnored'> & {
   exitCode?: 0 | 1 | 2;
+  trailingIgnored?: boolean | null;
 };
 
 export function riskToGate(sum: RiskSummary | null | undefined): GateRisk | null {
@@ -83,6 +93,7 @@ export function finalizeGate(fields: GateFields): GateReport {
     sha256: fields.sha256,
     risk: fields.risk,
     ignored: fields.ignored,
+    trailingIgnored: fields.trailingIgnored ?? null,
     reason: fields.reason,
   };
 }
@@ -108,6 +119,7 @@ export function errorGate(command: string, reason: string): GateReport {
     sha256: null,
     risk: null,
     ignored: null,
+    trailingIgnored: null,
     reason,
   });
 }

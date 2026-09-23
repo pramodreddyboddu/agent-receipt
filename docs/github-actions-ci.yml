@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.12: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.13: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -47,6 +47,7 @@ jobs:
           node bin/agent-receipt.js help audit
           node bin/agent-receipt.js help prune
           node bin/agent-receipt.js help doctor
+          node bin/agent-receipt.js help prove
           node bin/agent-receipt.js version
           node bin/agent-receipt.js --version
       - name: share --json smoke
@@ -62,7 +63,12 @@ jobs:
           # Command comes first. A leading --cwd is parsed as help.
           node bin/agent-receipt.js init --cwd "$tmp"
           node bin/agent-receipt.js wrap --agent ci --message smoke --json --cwd "$tmp" > "$tmp/wrap.json"
-          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="wrap"||g.exitCode!==0){console.error(g); process.exit(1)}' "$tmp/wrap.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="wrap"||g.exitCode!==0||typeof g.trailingIgnored!=="boolean"){console.error(g); process.exit(1)}' "$tmp/wrap.json"
+          # prove-this-run: hash ok, trailing content evaluated, audit linked.
+          node bin/agent-receipt.js prove --json --cwd "$tmp" > "$tmp/prove.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="prove"||g.verified!==true||g.trailingIgnored!==false||g.exitCode!==0||!g.audit||g.audit.present!==true||g.audit.chainOk!==true||g.audit.matched!==true||typeof g.audit.events!=="number"||typeof g.sha256!=="string"){console.error(g); process.exit(1)}' "$tmp/prove.json"
+          node bin/agent-receipt.js last --json --cwd "$tmp" > "$tmp/last.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="last"||typeof g.path!=="string"||typeof g.sha256!=="string"||g.sha256.length!==64){console.error(g); process.exit(1)}' "$tmp/last.json"
           # history --agent is an exact match. The wrap above used --agent ci.
           node bin/agent-receipt.js history --agent ci --json --cwd "$tmp" > "$tmp/history-agent.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!Array.isArray(g)||!g.length||g.some(e=>e.agent!=="ci"||typeof e.failedOn!=="boolean"||typeof e.uncommitted!=="boolean")){console.error(g); process.exit(1)}' "$tmp/history-agent.json"

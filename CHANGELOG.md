@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.13] — 2026-09-22
+
+### Added
+
+- `prove [path]` is a thin prove-this-run report. It resolves the receipt the same way `verify` does, checks the same Markdown hash, and prints path, sha256, verified, trailingIgnored, redacted, risk, TL;DR, agent, uncommitted, and failedOn. The audit link is best-effort and still not a signature: a missing `.agent-receipt/audit.jsonl` is `present: false` with `chainOk: null`; a present log runs `verifyAuditChain` (`chainOk`, event count, reason on break). `matched` is true when any event `path` equals the receipt (repo-relative, the form the log stores). `uncommitted` and `failedOn` prefer the index row, then the companion `.json`. A stored boolean wins. Otherwise `failedOn` is high severity only, the same rule as `history --failed` for older rows. `--json` prints one object (`command: "prove"`). `ok` is true only when `exitCode` is 0. Exit 0 when the hash matches and the log is absent or intact. Exit 2 when verify fails, the chain is broken, or explicit `--fail-on` trips (`failedOn` becomes true even if the hash matches). Exit 1 on a missing receipt or a bad flag. Config `failOn` is not applied.
+- `last --json` prints one object (`command: "last"`): `ok`, `version`, `path`, `sha256`, `agent`, `message`, `timestamp`, `failedOn`, `uncommitted`, `tldr`. The index row wins for agent, failedOn, uncommitted, and sha256 when that receipt is listed; otherwise the Markdown glance. No receipt still exits 1. Human `last` is unchanged. `--json` wins over `--path` when both are set.
+- CI gate JSON gains `trailingIgnored` (`boolean | null`). `verify --json` sets the boolean (true when content after `## Integrity` was ignored). `wrap` and `share` set it when they verified a body. `capture` and usage errors leave it null.
+
+### Changed
+
+- Package version bumped to `1.0.13`
+- `doctor --strict` promotes a broken audit chain from WARN to FAIL (exit 1), including on a small `outDir`. Unset org policy and retention stay pressure-gated. Default `doctor` still warns on a broken chain and does not fail for that row. `doctor --json` reports the audit check as `fail` under `--strict`.
+- Docs CI mirror ([`docs/github-actions-ci.yml`](docs/github-actions-ci.yml)) also runs `prove --json` and `last --json` after wrap.
+
+### Notes
+
+- Live [`.github/workflows/ci.yml`](.github/workflows/ci.yml) was **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Prove-this-run UX landed in this cut. Still deferred: cryptographic signing / signed receipts (PKI), SSO / IdP, Cloud Agents, a background deleter, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing (this cut does not publish).
+
 ## [1.0.12] — 2026-09-22
 
 ### Added

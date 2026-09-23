@@ -131,6 +131,8 @@ Inside Aider:
 | Recent sessions | `agent-receipt history` |
 | Full Markdown dump | `agent-receipt show` |
 | Integrity check | `agent-receipt verify` |
+| Prove this run | `agent-receipt prove` (hash + audit link; not a signature) |
+| Newest receipt JSON | `agent-receipt last --json` |
 | Whole-branch review | `agent-receipt capture --since main --full` |
 | Fail CI on secrets | `agent-receipt capture --fail-on high` |
 | After next commit | `agent-receipt watch --once --agent <name>` |

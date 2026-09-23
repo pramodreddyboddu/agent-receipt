@@ -200,13 +200,25 @@ Examples:
   last: `agent-receipt last — path + glance of the newest receipt
 
 Usage:
-  agent-receipt last [--path]
+  agent-receipt last [--path] [--json]
 
 Options:
   --path                 Print only the absolute path (scripting)
+  --json                 One JSON object on stdout (not the CI gate):
+                           { ok, command: "last", version, path, sha256,
+                             agent, message, timestamp, failedOn,
+                             uncommitted, tldr }
+                         ok is true. No receipt still exits 1 (stderr),
+                         same as the human command.
+                         Agent, failedOn, uncommitted, and sha256 prefer
+                         the index row when that receipt is listed. Otherwise
+                         they come from the Markdown glance. failedOn on an
+                         older row (no stored bit) is high severity only.
+                         With both --json and --path, --json wins.
 
 Examples:
   agent-receipt last
+  agent-receipt last --json
   agent-receipt last --path | xargs agent-receipt verify
 `,
 
@@ -325,13 +337,65 @@ existing hooks stay integrity-only. Pass the flag to also exit 2 when the
 receipt Summary risk meets the threshold.
 
 --json prints one CI gate object on stdout (ok, exitCode, verified, failedOn,
-sha256, risk). Exit codes are unchanged.
+sha256, risk, trailingIgnored). trailingIgnored is a boolean: true when
+content after ## Integrity was ignored by the hash. Exit codes are unchanged.
+Wrap and share set the same field when they verified a body. Capture leaves
+it null (capture does not report a verify result).
 
 Examples:
   agent-receipt verify
   agent-receipt verify receipt.md
   agent-receipt verify --json
   agent-receipt verify --fail-on high --json
+`,
+
+  prove: `agent-receipt prove — prove-this-run (integrity + audit link)
+
+Usage:
+  agent-receipt prove [path] [--json] [--fail-on high|medium|low]
+
+Resolves the path the same way verify does (newest receipt when omitted).
+Recomputes the same SHA-256 as verify, then reports the path, hash,
+verified, trailingIgnored, redacted, risk summary, TL;DR, agent,
+uncommitted, failedOn, and a best-effort audit link.
+
+This is tamper-evident prove-this-run. It is not a cryptographic signature.
+This cut does not add keys, minisign, or GPG.
+
+Audit link (still not a signature):
+  - No .agent-receipt/audit.jsonl: present false, chainOk null, matched false
+  - Log present: verifyAuditChain sets chainOk, the event count, and reason
+    when the chain breaks
+  - matched is true when any event path equals this receipt (repo-relative,
+    the form audit stores today)
+
+uncommitted and failedOn prefer the index row, then the companion receipt
+.json. A stored failedOn boolean wins, including false on a high-risk row.
+When both are missing, failedOn is high severity only — the same rule
+history --failed uses for older rows. Medium or low alone does not count.
+
+--fail-on is explicit only. Config failOn is not applied, so prove stays
+integrity-first unless you pass the flag. When the flag trips, failedOn is
+true and the exit is 2 even if the hash matches.
+
+--json prints one object on stdout (notes stay off stdout):
+  ok, command ("prove"), version, exitCode,
+  verified, trailingIgnored, failedOn, failOn, redacted, uncommitted,
+  path, sha256, tldr, agent,
+  risk { high, medium, low, total, maxSeverity } or null,
+  audit { present, chainOk, events, matched, reason },
+  reason
+  ok is true only when exitCode is 0.
+
+Exit codes:
+  0  verified, and there is no audit log or the chain is intact
+  2  verify failed, the audit chain is broken, or --fail-on tripped
+  1  usage or runtime (missing receipt, unknown flag, bad --fail-on)
+
+Examples:
+  agent-receipt prove
+  agent-receipt prove --json
+  agent-receipt prove receipt.md --fail-on high --json
 `,
 
   audit: `agent-receipt audit — list the local compliance log
@@ -462,7 +526,8 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
   hooks         managed post-commit hook installed?
   redact        redact: true in config, or still optional (share redacts by default)
   policy        redact on AND failOn set (examples/org-policy.yml)? Optional.
-  audit         .agent-receipt/audit.jsonl chain OK? Missing is info, broken is a warning.
+  audit         .agent-receipt/audit.jsonl chain OK? Missing is info.
+                Broken is a warning by default, and FAIL with --strict.
   retention     maxCount / maxAgeDays (opt-in). Over the cap or a large outDir is a warning.
   git-clean     working tree clean? Dirty is a warning, not a failure
   cursor        init --cursor rule present?
@@ -471,11 +536,13 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
 Exit 0 if no FAIL checks; exit 1 otherwise. WARN/INFO are non-fatal.
 Default \`doctor\` does not fail when org policy or retention is unset.
 
-\`--strict\` exits 1 when org policy (redact + failOn) and/or retention is
-unset AND outDir is under pressure (100 receipts or 20 MB). Below that
-threshold those rows stay INFO/WARN and the exit stays 0. A configured
-limit that would still delete files stays a warning — run \`prune\`.
-\`--strict\` does not scan diffs. CI \`--fail-on\` remains the risk gate.
+\`--strict\` always promotes a broken audit chain from WARN to FAIL (exit 1).
+Unset org policy (redact + failOn) and/or retention still fail only when
+outDir is under pressure (100 receipts or 20 MB). Below that threshold
+those rows stay INFO/WARN. A configured limit that would still delete files
+stays a warning — run \`prune\`. \`--strict\` does not scan diffs.
+CI \`--fail-on\` remains the risk gate. Default doctor (no \`--strict\`) still
+warns on a broken chain and does not fail for that row.
 
 \`--json\` prints one object on stdout and does not change the exit code:
 
@@ -585,16 +652,17 @@ Commands:
   export [path]          Write self-contained HTML (or Markdown) receipt
   html [path]            Alias for export as HTML
   show [path]            Pretty-print last / given receipt (full body)
-  last                   Path + glance of the most recent receipt
+  last                   Path + glance of the most recent receipt (--json for scripts)
   history                List recent receipts (--agent, --uncommitted, --failed, --json)
   ls                     Alias for history
   watch                  Poll git; auto-capture on commits or dirty tree
   verify [path]          Hash-check tamper-evident integrity
+  prove [path]           Prove-this-run: verify + audit link (not a signature)
   audit                  List the compliance log (--event, --agent, --failed filter the listing)
   log                    Alias for audit
   prune                  Delete old receipts under outDir (opt-in; --dry-run)
   retain                 Alias for prune
-  doctor                 Environment health check (--json for scripts; --strict under pressure)
+  doctor                 Health check (--json; --strict fails a broken audit chain)
   compare [a] [b]        Diff two receipts (default: last vs previous)
   diff [a] [b]           Alias for compare
   install-hooks          Install opt-in post-commit capture hook
@@ -637,7 +705,10 @@ Examples:
   agent-receipt watch --commits-only --once
   agent-receipt watch --interval 5
   agent-receipt last
+  agent-receipt last --json
   agent-receipt verify
+  agent-receipt prove
+  agent-receipt prove --json
   agent-receipt audit
   agent-receipt audit --event wrap
   agent-receipt audit --agent cursor --failed

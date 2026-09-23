@@ -67,7 +67,9 @@ agent-receipt export --redact --out share.html
 ```bash
 agent-receipt history           # time, agent, risk, summary (+ [uncommitted] badge)
 agent-receipt last              # glance the newest
+agent-receipt last --json       # one object: path, sha256, agent, failedOn
 agent-receipt verify            # integrity
+agent-receipt prove             # prove-this-run: hash + audit link (not a signature)
 agent-receipt --version
 ```
 
@@ -113,13 +115,14 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `share [path]` | One shot: redact → HTML (+ optional Markdown) → verify → paths + TL;DR |
 | `export` / `html` | Self-contained HTML receipt (or export last); `--out`, `--redact` |
 | `show [path]` | Pretty-print last / given receipt (full body) |
-| `last` | Path + glance of the most recent receipt |
+| `last` | Path + glance of the most recent receipt. `--json` prints one object (`path`, `sha256`, agent, `failedOn`, `uncommitted`, TL;DR). `--json` wins over `--path` |
 | `history` / `ls` | List recent receipts (`--agent`, `--uncommitted`, `--failed`, `--json`, `--limit`; `[uncommitted]` and `[failed]` badges; index at `.agent-receipt/index.json` stores `failedOn`) |
 | `watch` | Poll git; auto-capture on commits **or dirty tree** (`--once`, `--commits-only`) |
-| `verify [path]` | Hash-check tamper-evident integrity |
+| `verify [path]` | Hash-check tamper-evident integrity. `--json` includes `trailingIgnored` (boolean) |
+| `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, and an audit-log link. Not a signature. `--json` is one object. Config `failOn` is not applied |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
 | `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default) |
-| `doctor` | Health check plus a prod checklist (policy, audit, retention, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails only under receipt-dir pressure |
+| `doctor` | Health check plus a prod checklist (policy, audit, retention, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails a broken audit chain always, and fails unset policy or retention only under receipt-dir pressure |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
 | `diff [a] [b]` | Alias for `compare` |
 | `install-hooks` | Opt-in post-commit auto-capture (`--pre-push` optional) |
@@ -140,6 +143,8 @@ agent-receipt ls --agent ci --uncommitted --limit 5
 agent-receipt prune --dry-run
 agent-receipt doctor --strict
 agent-receipt doctor --json
+agent-receipt prove --json
+agent-receipt last --json
 agent-receipt audit --event wrap --limit 20
 agent-receipt audit --agent cursor --failed
 agent-receipt log --agent ci --failed --json
@@ -415,8 +420,20 @@ part of the canonical body, so `verify` still passes if only the footer area is
 extended. Prefer editing the body (which will fail verify) or re-capturing when
 you need a new sealed artifact.
 
-This is **tamper-evident**, not cryptographic signing. For signatures, wrap the
-receipt with your own signing flow (e.g. `minisign`, GPG).
+`verify --json` includes `trailingIgnored` (boolean). `wrap --json` and
+`share --json` set that field when they verified a body. `capture --json`
+leaves it null.
+
+`prove` is the prove-this-run report: the same hash check, plus trailing
+content, risk, TL;DR, agent, stored `failedOn` / `uncommitted`, and whether
+`.agent-receipt/audit.jsonl` links this receipt. Exit 0 when the hash matches
+and the log is missing or intact. Exit 2 when the body was edited, the audit
+chain is broken, or you passed `--fail-on` and it tripped. Config `failOn`
+does not apply. `prove --json` prints one object.
+
+This is **tamper-evident**, not cryptographic signing. Signed receipts (PKI,
+minisign, GPG) are still deferred. For signatures today, wrap the receipt
+with your own signing flow.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
 

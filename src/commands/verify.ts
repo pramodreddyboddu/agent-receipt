@@ -122,6 +122,7 @@ export function cmdVerify(
       sha256: reported.sha256,
       risk: riskToGate(risk),
       ignored: null,
+      trailingIgnored: reported.trailingIgnored,
       reason: reason || null,
     });
     printGate(gate);

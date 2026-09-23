@@ -82,7 +82,9 @@ Then:
 
 ```bash
 agent-receipt last
+agent-receipt last --json
 agent-receipt verify
+agent-receipt prove
 agent-receipt history
 ```
 

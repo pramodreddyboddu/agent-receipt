@@ -123,6 +123,7 @@ export function cmdWrap(cwd: string, opts: WrapOptions = {}): WrapResult {
         sha256: verifiedReport.sha256 || capture.sha256,
         risk: riskToGate(capture.riskSum),
         ignored: capture.ignored,
+        trailingIgnored: verifiedReport.trailingIgnored,
         reason,
       }),
     );

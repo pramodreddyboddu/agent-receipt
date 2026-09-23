@@ -90,6 +90,7 @@ export function cmdShare(
     sha256: string | null;
     tldr: string;
     reason: string | null;
+    trailingIgnored: boolean;
   }): ShareResult => {
     const exitCode: 0 | 2 = !partial.verified || failedOn ? 2 : 0;
     if (opts.json) {
@@ -110,6 +111,7 @@ export function cmdShare(
           sha256: partial.sha256,
           risk: riskToGate(risk),
           ignored: null,
+          trailingIgnored: partial.trailingIgnored,
           reason: partial.reason,
         }),
       );
@@ -154,6 +156,7 @@ export function cmdShare(
       sha256: sourceCheck.actual,
       tldr,
       reason: sourceCheck.reason,
+      trailingIgnored: Boolean(sourceCheck.trailingIgnored),
     });
   }
 
@@ -200,9 +203,11 @@ export function cmdShare(
   let verified = bodyCheck.ok;
   let sha256: string | null = bodyCheck.actual;
   let reason: string | null = bodyCheck.ok ? null : bodyCheck.reason;
+  let trailingIgnored = Boolean(bodyCheck.trailingIgnored);
 
   if (markdownPath) {
     const fileCheck = cmdVerify(cwd, markdownPath, { quiet: true });
+    trailingIgnored = fileCheck.trailingIgnored;
     if (!fileCheck.ok) {
       verified = false;
       reason = fileCheck.reason;
@@ -234,5 +239,6 @@ export function cmdShare(
     sha256,
     tldr: publishedTldr,
     reason,
+    trailingIgnored,
   });
 }

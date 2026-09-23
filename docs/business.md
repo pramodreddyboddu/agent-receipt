@@ -1,6 +1,6 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.12 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.13 for teams: install once, capture every session, fail CI
 on high-severity findings, share only redacted HTML, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
@@ -58,6 +58,11 @@ non-fatal. `doctor --strict` is optional and still does not replace CI
 only when `exitCode` is 0. Each check is `{ id, status, detail }` with
 status `pass`, `fail`, `warn`, or `info`. `--json` does not change the exit
 code. It is a checklist for scripts, not the CI risk gate (`wrap --json`).
+
+A broken `.agent-receipt/audit.jsonl` chain is WARN on default `doctor` and
+does not change the exit code. `doctor --strict` promotes that row to FAIL
+(exit 1) even when `outDir` is small. Unset org policy and retention stay
+INFO/WARN until the directory is under pressure.
 
 ## Org policy
 
@@ -118,7 +123,7 @@ is the artifact, not the gate.
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -133,13 +138,17 @@ is the artifact, not the gate.
   "sha256": "…",
   "risk": { "high": 0, "medium": 0, "low": 0, "total": 0, "maxSeverity": null },
   "ignored": 0,
+  "trailingIgnored": false,
   "reason": null
 }
 ```
 
 `ok` is true only when `exitCode` is 0. `verified` is `null` for `capture`
-(it does not run verify). `share` sets `htmlPath` / `markdownPath`. On exit 1
-the same shape is printed with `reason` set and the path fields null.
+(it does not run verify). `trailingIgnored` is a boolean when the command
+hashed a body (`verify`, and `wrap` / `share` after they verify). It is
+`null` for `capture` and for usage errors. `verify --json` always includes
+the boolean. `share` sets `htmlPath` / `markdownPath`. On exit 1 the same
+shape is printed with `reason` set and the path fields null.
 
 ```bash
 jq -e '.ok == true and .exitCode == 0' "$RUNNER_TEMP/receipt-gate.json"
@@ -187,11 +196,13 @@ block a laptop that has not adopted the file. CI should still pass `--fail-on`
 so a missing config cannot silently weaken the job. `--fail-on` scans the
 receipt risk summary. `doctor` does not.
 
-`doctor --strict` is a separate prod gate for **unset config**, not for
-secrets. It exits 1 when org policy (`redact` + `failOn`) and/or retention
-is unset **and** `outDir` is under pressure (100 receipts or 20 MB). A small
-directory stays exit 0 with the same INFO/WARN rows. A limit that is set but
-would still delete files stays a warning until you run `prune`.
+`doctor --strict` is a separate prod gate, not a secret scan. It always
+fails a broken audit chain (the audit row becomes `fail`, exit 1). It also
+exits 1 when org policy (`redact` + `failOn`) and/or retention is unset
+**and** `outDir` is under pressure (100 receipts or 20 MB). A small directory
+with an intact or missing audit log stays exit 0 for those policy rows. A
+limit that is set but would still delete files stays a warning until you
+run `prune`. Default `doctor` still only warns on a broken chain.
 
 ```bash
 agent-receipt doctor --json
@@ -217,8 +228,8 @@ error. The step prints the gate JSON from `$RUNNER_TEMP/receipt-gate.json`
 before exiting. You do not need `jq`.
 
 This repo’s own [docs mirror](github-actions-ci.yml) runs a temp-repo
-`wrap --json` + `share --json` smoke, then `doctor --json`,
-`audit --event wrap`, `audit --agent ci --failed`,
+`wrap --json` + `prove --json` + `last --json` + `share --json` smoke, then
+`doctor --json`, `audit --event wrap`, `audit --agent ci --failed`,
 `history --agent ci` / `history --uncommitted`, and `history --failed`. The live
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) does not include
 that smoke yet: the checkout token cannot push workflow files. See
@@ -292,11 +303,43 @@ it as internal.
 line). Index rows that were already missing are not events.
 
 `doctor` reports **audit**: INFO if the file is not there yet, PASS when
-the chain matches, WARN if it does not. WARN does not fail `doctor`.
+the chain matches, WARN if it does not. WARN does not fail default `doctor`.
+`doctor --strict` turns that broken chain into FAIL and exits 1. Policy and
+retention are unchanged: they fail under `--strict` only when `outDir` is
+under pressure.
 
 Editing a line in place breaks the chain on purpose. To rotate, move the
 file aside and let the next command start a new one (`prev: null`).
 `prune` does not delete or rewrite `audit.jsonl`.
+
+### Prove this run
+
+`prove` is the one-screen check that a receipt still matches its hash and
+that the local audit log still links it. It is tamper-evident. It is not a
+signature and it does not create keys.
+
+```bash
+agent-receipt prove
+agent-receipt prove --json
+agent-receipt prove receipt.md --fail-on high
+agent-receipt last --json
+```
+
+`prove --json` is one object: `ok`, `command` (`prove`), `version`,
+`exitCode`, `verified`, `trailingIgnored`, `failedOn`, `failOn`, `redacted`,
+`uncommitted`, `path`, `sha256`, `tldr`, `agent`, `risk`, `audit`
+(`present`, `chainOk`, `events`, `matched`, `reason`), and `reason`.
+`ok` is true only when `exitCode` is 0.
+
+Exit 0 when the hash matches and the audit log is absent or intact. Exit 2
+when the body fails verify, the chain is broken, or explicit `--fail-on`
+trips. Exit 1 when the receipt is missing or a flag is bad. Config `failOn`
+does not apply — pass `--fail-on` if this invocation should also enforce risk.
+
+`last --json` is a different object (`command: "last"`): path, sha256, agent,
+message, timestamp, failedOn, uncommitted, and TL;DR. It prefers the index
+row for agent, failedOn, uncommitted, and sha256. No receipt exits 1. With
+`--path` and `--json` together, `--json` wins.
 
 ### Retention for `.agent-receipt/`
 
@@ -396,21 +439,24 @@ listing (`[]` with `--json`). An empty receipt store still errors, same as
 
 ### Deferred
 
-Not in 1.0.12: cryptographic signing / prove-this-run signatures, SSO / IdP,
-Cloud Agents, a background job that deletes receipts by itself, live GitHub
-Actions workflow sync (the checkout token has no `workflow` scope), and npm
-Trusted Publishing (this cut does not publish). `prune` stays manual.
-`doctor --strict` only fails unset policy or retention when the receipt
-directory is already large. CI `--fail-on` is still the enforcement point
-for risk. `doctor --json`, `audit --event`, `audit --agent`, `audit --failed`,
-`history --agent`, `history --uncommitted`, and `history --failed` are
-checklist and listing tools; they do not sign the log.
+Prove-this-run UX landed in 1.0.13 (`prove`, audit link, `last --json`,
+`trailingIgnored` on the gate). Cryptographic signing / signed receipts
+(PKI) are still deferred. Also deferred: SSO / IdP, Cloud Agents, a
+background job that deletes receipts by itself, live GitHub Actions workflow
+sync (the checkout token has no `workflow` scope), and npm Trusted
+Publishing (this cut does not publish). `prune` stays manual.
+`doctor --strict` fails a broken audit chain always, and fails unset policy
+or retention only when the receipt directory is already large. CI
+`--fail-on` is still the enforcement point for risk. `doctor --json`,
+`audit --event`, `audit --agent`, `audit --failed`, `history --agent`,
+`history --uncommitted`, and `history --failed` are checklist and listing
+tools; they do not sign the log.
 
 ### Workflow scope
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.12 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.13 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:
