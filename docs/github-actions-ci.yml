@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.18: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.19: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -114,6 +114,20 @@ jobs:
           set -e
           test "$puntrusted" = 2
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==false||g.exitCode!==2||!g.signature||g.signature.ok!==false||g.signature.trusted!==false||typeof g.reason!=="string"||g.reason.indexOf("trust store")===-1){console.error(g); process.exit(1)}' "$tmp/prove-untrusted.json"
+          rm -f "$tmp/.agent-receipt/trusted-keys.txt"
+          # v1.0.19: wrap --sign after keygen writes a sidecar. prove
+          # signature.ok. With that fingerprint in the trust store, prove
+          # signature.trusted and verify --require-sig exit 0.
+          node bin/agent-receipt.js wrap --sign --agent ci --message signed-gate --json --cwd "$tmp" > "$tmp/wrap-sign.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="wrap"||g.exitCode!==0||typeof g.path!=="string"){console.error(g); process.exit(1)} const sig=g.path.replace(/\.md$/i,".sig.json"); if(!fs.existsSync(sig)){console.error("missing sidecar "+sig); process.exit(1)}' "$tmp/wrap-sign.json"
+          node bin/agent-receipt.js prove --json --cwd "$tmp" > "$tmp/prove-wrap-sign.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.verified!==true||g.exitCode!==0||!g.signature||g.signature.present!==true||g.signature.ok!==true||g.signature.alg!=="ed25519"){console.error(g); process.exit(1)}' "$tmp/prove-wrap-sign.json"
+          fp=$(node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(g.signature.fingerprint);' "$tmp/prove-wrap-sign.json")
+          printf '%s\n' "$fp" > "$tmp/.agent-receipt/trusted-keys.txt"
+          node bin/agent-receipt.js prove --json --cwd "$tmp" > "$tmp/prove-wrap-trust.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.exitCode!==0||!g.signature||g.signature.ok!==true||g.signature.trusted!==true){console.error(g); process.exit(1)}' "$tmp/prove-wrap-trust.json"
+          node bin/agent-receipt.js verify --require-sig --json --cwd "$tmp" > "$tmp/verify-wrap-trust.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.exitCode!==0||!g.signature||g.signature.ok!==true||g.signature.trusted!==true){console.error(g); process.exit(1)}' "$tmp/verify-wrap-trust.json"
           rm -f "$tmp/.agent-receipt/trusted-keys.txt"
           node bin/agent-receipt.js last --json --cwd "$tmp" > "$tmp/last.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="last"||typeof g.path!=="string"||typeof g.sha256!=="string"||g.sha256.length!==64){console.error(g); process.exit(1)}' "$tmp/last.json"

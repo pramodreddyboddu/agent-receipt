@@ -14,10 +14,20 @@
 #       fail-on: high
 #       base: origin/main
 #       install: true
-#       from: github:pramodreddyboddu/agent-receipt#v1.0.18
+#       from: github:pramodreddyboddu/agent-receipt#v1.0.19
 #       prove: true
-#       require-sig: false
-#       trusted-keys: ""
+#       sign: true
+#       require-sig: true
+#       trusted-keys: "<path-or-comma-fps>"
+#
+# Recommended signed gate (not a CA, no org secret):
+#   sign: true
+#   require-sig: true
+#   trusted-keys: "<path-or-comma-fps>"
+# Run `agent-receipt keygen` (or restore `.agent-receipt/keys`) before this
+# step. `sign: true` fails closed when those keys are missing and names
+# `keygen`. CLI `wrap --sign` only prints a tip and can leave the receipt
+# unsigned; this input does not.
 #
 # `install` defaults to false. When true, the step runs
 # `npm install -g <from>` (default from:
@@ -26,18 +36,28 @@
 #
 # `prove` defaults to false. After a green wrap/share gate (ok true,
 # exit 0) it runs `prove --json` and fails the step unless prove is ok
-# (verified true, exitCode 0). The prove JSON is printed.
+# (verified true, exitCode 0). The prove JSON is printed. When `sign` is
+# also true, prove must report `signature.ok`. When `require-sig` and
+# `sign` are true and the allowlist has a fingerprint, prove must report
+# `signature.trusted` true.
+#
+# `sign` defaults to false (v1.0.19). When true, `wrap` is run with
+# `--sign`. `share` has no `--sign` flag; it re-signs published Markdown
+# when keys exist, and this step then runs `sign` on the gate receipt
+# path if that path has no sidecar. The action does not create keys.
 #
 # `require-sig` defaults to false (since v1.0.17). After a green gate it runs
 # `verify --require-sig --json` on the gate receipt path and fails unless
-# signature.ok is true. CI must `keygen` + `sign` (or restore keys) before
-# this input. The action does not create keys. Unsigned receipts exit 2.
+# signature.ok is true. Unsigned receipts exit 2. With `sign: true` the
+# receipt was signed in this step. Without it, CI must `keygen` + `sign`
+# (or restore keys) before this input.
 #
-# `trusted-keys` (v1.0.18) is optional. A file path is copied to
+# `trusted-keys` (since v1.0.18) is optional. A file path is copied to
 # `.agent-receipt/trusted-keys.txt`. Anything else is written as
-# comma-separated fingerprints, one per line. Empty leaves the allowlist
-# inactive (any valid sidecar passes). Not a CA. The signing fingerprint
-# must be in that list when require-sig or prove sees a sidecar.
+# comma-separated fingerprints, one per line. Installed before wrap, sign,
+# prove, and verify. Empty leaves the allowlist inactive (any valid sidecar
+# passes). Not a CA. When the allowlist has a fingerprint, `verify
+# --require-sig` requires `signature.trusted` true.
 #
 # Outputs (empty string when the field is missing): ok, exit-code, sha256,
 # path, gate-json (absolute path of the gate JSON file).
@@ -47,7 +67,7 @@
 # The job still fails when exitCode !== 0 or ok !== true.
 # Schema: docs/gate.schema.json
 name: agent-receipt gate
-description: Run wrap or share with --fail-on and --json. Optional GitHub install and prove. Exit 2 fails the job.
+description: Run wrap or share with --fail-on and --json. Optional GitHub install, sign, and prove. Exit 2 fails the job.
 
 inputs:
   fail-on:
@@ -67,19 +87,23 @@ inputs:
     required: false
     default: "false"
   from:
-    description: npm spec used when install is true. Pin with #v1.0.18 once the tag exists.
+    description: npm spec used when install is true. Pin with #v1.0.19 once the tag exists.
     required: false
     default: github:pramodreddyboddu/agent-receipt
   prove:
     description: After a green gate, run prove --json and fail unless ok, verified, and exitCode 0.
     required: false
     default: "false"
+  sign:
+    description: When true, pass --sign to wrap (share is signed on the gate path when the sidecar is missing). Fails closed if Ed25519 keys are missing and names keygen. Default false. Not a CA.
+    required: false
+    default: "false"
   require-sig:
-    description: After a green gate, run verify --require-sig on the receipt path. CI must keygen + sign (or restore keys) first. Default false. Unsigned receipts exit 2.
+    description: After a green gate, run verify --require-sig on the receipt path. With sign true the step already signed it. Otherwise CI must keygen + sign (or restore keys) first. Default false. Unsigned receipts exit 2.
     required: false
     default: "false"
   trusted-keys:
-    description: Optional known-keys allowlist. A file path is copied to .agent-receipt/trusted-keys.txt; otherwise comma-separated 64-hex fingerprints. Empty leaves the allowlist inactive. Not a CA.
+    description: Optional known-keys allowlist, installed before wrap/sign/prove/verify. A file path is copied to .agent-receipt/trusted-keys.txt; otherwise comma-separated 64-hex fingerprints. Empty leaves the allowlist inactive. Not a CA.
     required: false
     default: ""
 
@@ -113,6 +137,7 @@ runs:
         INSTALL: ${{ inputs.install }}
         FROM_SPEC: ${{ inputs.from }}
         PROVE: ${{ inputs.prove }}
+        SIGN: ${{ inputs.sign }}
         REQUIRE_SIG: ${{ inputs.require-sig }}
         TRUSTED_KEYS: ${{ inputs.trusted-keys }}
       run: |
@@ -129,10 +154,39 @@ runs:
           echo "agent-receipt is not on PATH. Set install: true or npm i -D @pramodreddyboddu/agent-receipt" >&2
           exit 1
         fi
+        # Allowlist before wrap, sign, prove, and verify so a signed gate
+        # and prove see the same store. Empty leaves it inactive.
+        TRUST_ACTIVE=0
+        if [ -n "${TRUSTED_KEYS:-}" ] && [ -n "${TRUSTED_KEYS//[[:space:]]/}" ]; then
+          mkdir -p .agent-receipt
+          if [ -f "$TRUSTED_KEYS" ]; then
+            cp "$TRUSTED_KEYS" .agent-receipt/trusted-keys.txt
+          else
+            printf '%s\n' "$TRUSTED_KEYS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' > .agent-receipt/trusted-keys.txt
+          fi
+          echo "installed .agent-receipt/trusted-keys.txt"
+          if grep -Eq '^[[:space:]]*[0-9a-fA-F]{64}[[:space:]]*$' .agent-receipt/trusted-keys.txt; then
+            TRUST_ACTIVE=1
+          fi
+        fi
+        export TRUST_ACTIVE
+        if [ "${SIGN:-false}" = "true" ]; then
+          if [ ! -f .agent-receipt/keys/ed25519.private ] || [ ! -f .agent-receipt/keys/ed25519.public ]; then
+            echo "sign: true requires a local Ed25519 keypair. Run \`agent-receipt keygen\` (or restore .agent-receipt/keys) before this step." >&2
+            echo "This CI input fails closed. CLI wrap --sign only prints a tip and can leave the receipt unsigned." >&2
+            exit 1
+          fi
+        fi
         out="${RUNNER_TEMP:-/tmp}/receipt-gate.json"
         set +e
         if [ "$GATE_CMD" = "share" ]; then
           "$CLI" share --fail-on "$FAIL_ON" --json > "$out"
+        elif [ "${SIGN:-false}" = "true" ]; then
+          if [ -n "$BASE_IN" ]; then
+            "$CLI" wrap --sign --base "$BASE_IN" --fail-on "$FAIL_ON" --json > "$out"
+          else
+            "$CLI" wrap --sign --fail-on "$FAIL_ON" --json > "$out"
+          fi
         elif [ -n "$BASE_IN" ]; then
           "$CLI" wrap --base "$BASE_IN" --fail-on "$FAIL_ON" --json > "$out"
         else
@@ -184,14 +238,18 @@ runs:
         if [ "$gate_ok" -ne 0 ]; then
           exit "$gate_ok"
         fi
-        if [ -n "$TRUSTED_KEYS" ]; then
-          mkdir -p .agent-receipt
-          if [ -f "$TRUSTED_KEYS" ]; then
-            cp "$TRUSTED_KEYS" .agent-receipt/trusted-keys.txt
-          else
-            printf '%s\n' "$TRUSTED_KEYS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' > .agent-receipt/trusted-keys.txt
+        if [ "${SIGN:-false}" = "true" ]; then
+          receipt_path=$(node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (typeof g.path!=="string" || !g.path) { console.error("gate path missing"); process.exit(1); } process.stdout.write(g.path);' "$out")
+          sig_path=$(node -e 'const p=process.argv[1]; process.stdout.write(/\.md$/i.test(p) ? p.replace(/\.md$/i, ".sig.json") : p + ".sig.json");' "$receipt_path")
+          if [ ! -f "$sig_path" ]; then
+            # wrap --sign writes this when keys load. share re-signs
+            # published Markdown, not the gate path, so sign that path.
+            "$CLI" sign "$receipt_path"
           fi
-          echo "installed .agent-receipt/trusted-keys.txt"
+          if [ ! -f "$sig_path" ]; then
+            echo "sign: true did not write a sidecar for $receipt_path. Run \`agent-receipt keygen\`." >&2
+            exit 1
+          fi
         fi
         if [ "$PROVE" = "true" ]; then
           prove_out="${RUNNER_TEMP:-/tmp}/receipt-prove.json"
@@ -208,13 +266,24 @@ runs:
           console.error('prove is not ok');
           process.exit(g.exitCode || 1);
         }
+        if (process.env.SIGN === 'true') {
+          if (!g.signature || g.signature.ok !== true) {
+            console.error('prove signature is not ok');
+            process.exit(1);
+          }
+          if (process.env.REQUIRE_SIG === 'true' && process.env.TRUST_ACTIVE === '1' && g.signature.trusted !== true) {
+            console.error('prove signature.trusted is not true');
+            process.exit(1);
+          }
+        }
         NODE
         fi
         if [ "$REQUIRE_SIG" = "true" ]; then
-          # Since v1.0.17. The job must already have signed this receipt
+          # Since v1.0.17. With sign: true this step already signed the
+          # gate path. Otherwise the job must have signed it first
           # (agent-receipt keygen && agent-receipt sign, or restored keys).
-          # This step does not create keys. v1.0.18 trusted-keys, when set,
-          # was installed above and verify --require-sig honors it.
+          # This step does not create keys. trusted-keys, when set, was
+          # installed above and verify --require-sig honors it.
           sig_out="${RUNNER_TEMP:-/tmp}/receipt-require-sig.json"
           receipt_path=$(node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (typeof g.path!=="string" || !g.path) { console.error("gate path missing"); process.exit(1); } process.stdout.write(g.path);' "$out")
           set +e
@@ -229,6 +298,10 @@ runs:
         if (g.ok !== true || g.exitCode !== 0 || !g.signature || g.signature.ok !== true) {
           console.error("verify --require-sig failed");
           process.exit(g.exitCode || 1);
+        }
+        if (process.env.TRUST_ACTIVE === "1" && g.signature.trusted !== true) {
+          console.error("verify signature.trusted is not true");
+          process.exit(1);
         }
         NODE
         fi

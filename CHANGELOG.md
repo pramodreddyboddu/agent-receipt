@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.19] — 2026-09-22
+
+### Added
+
+- CI signed gate drop-in (live [`.github/workflows/*`](.github/workflows) was not edited). [`examples/github/action.yml`](examples/github/action.yml) accepts optional `sign` (default false). When true, `wrap` is invoked with `--sign`. `share` still re-signs published Markdown when keys exist; if the gate path has no sidecar, the step runs `sign` on that path. Missing Ed25519 keys fail the step and name `keygen` (CLI `wrap --sign` still only tips and leaves the receipt unsigned). `trusted-keys` is installed before wrap, sign, prove, and verify. After `sign: true` and `require-sig: true`, the step runs `verify --require-sig` on the gate path. When prove is also on and the allowlist lists a fingerprint, prove must report `signature.trusted` true. Recommended combo: `sign: true`, `require-sig: true`, `trusted-keys: "<path-or-comma-fps>"`. Not a CA. No org secret.
+- [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) accepts optional `sign` (default false) with the same fail-closed rule. When `require-sig` is true and `trusted-keys` is empty, the job writes the temp `keygen` fingerprint to `.agent-receipt/trusted-keys.txt` and the signed prove requires `signature.trusted` true. A non-empty `trusted-keys` value is installed as given and is not appended.
+- [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md) is the signed CI recipe: `keygen` (or restore keys) → trusted-keys allowlist → `wrap --sign --fail-on high --json` → `prove` → `verify --require-sig`. Linked from the README and [`docs/business.md`](docs/business.md).
+
+### Changed
+
+- Package version bumped to `1.0.19`.
+- Pin comments in the GitHub examples, [`docs/business.md`](docs/business.md), and [`examples/org-policy.yml`](examples/org-policy.yml) are `v1.0.19`.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) keeps the 1.0.18 trust-store smoke and adds a `wrap --sign` smoke: a sidecar is written, prove `signature.ok` is true, and with that fingerprint allowlisted prove `signature.trusted` is true and `verify --require-sig` exits 0. Version-range comments include 1.0.19. Live [`.github/workflows/*`](.github/workflows) was not edited.
+- `capture --sign` / `wrap --sign` help names the CI fail-closed difference in one line. The CLI flags themselves are unchanged.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm.
+- Still not a CA. No key escrow. The private key stays under `.agent-receipt/keys/`.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture, config `sign: true` (and `--no-sign`) so org policy can default capture/wrap to sign, `trust add --self`, SSO / IdP, Cloud Agents, a background deleter, an HTML/share signed package, a prove-for-humans one-pager, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.18] — 2026-09-22
 
 ### Added

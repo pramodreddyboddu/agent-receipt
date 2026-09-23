@@ -85,7 +85,8 @@ Options:
                          keys exist, write *.sig.json beside the receipt
                          (same sidecar as \`sign\`). Missing keys print a tip
                          and leave the file unsigned. That does not exit 2.
-                         Off by default. Not a CA.
+                         Off by default. Not a CA. CI sign: true fails closed
+                         without keys (docs/ci-signed-gate.md).
   --cwd <path>           Run as if started in this directory
 
 Config \`.agent-receipt.yml\` may set \`redact: true\` and \`failOn: high\`
@@ -131,7 +132,8 @@ Options:
   --sign                 Opt-in. After capture, write *.sig.json when local
                          keys exist (same as \`sign\`). Missing keys print a
                          tip and leave the receipt unsigned. Not exit 2.
-                         Off by default. Not a CA.
+                         Off by default. Not a CA. CI sign: true fails closed
+                         without keys (docs/ci-signed-gate.md).
   --cwd <path>           Run as if started in this directory
 
 Exit codes: 0 OK, 2 fail-on threshold or verify failure, 1 usage/runtime error.

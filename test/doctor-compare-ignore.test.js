@@ -199,7 +199,7 @@ describe('compare + capture ignore', () => {
     assert.match(md, /app\.js/);
     const json = JSON.parse(readFileSync(join(dir, 'r1.json'), 'utf8'));
     assert.ok(json.files.every((f) => !f.path.startsWith('dist/')));
-    assert.match(md, /1\.0\.18/);
+    assert.match(md, /1\.0\.19/);
   });
 
   it('compare shows file deltas between two receipts', () => {

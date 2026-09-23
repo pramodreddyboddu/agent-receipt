@@ -61,7 +61,7 @@
 # Gate JSON schema: docs/gate.schema.json (next to docs/receipt.schema.json)
 # Signature sidecar: docs/signature.schema.json
 # Drop-in CI: examples/github/action.yml and examples/github/pr-gate.yml
-#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.18
+#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.19
 #   prove after a green gate; upload receipt-gate.json
 
 outDir: .agent-receipt/receipts

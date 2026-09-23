@@ -360,10 +360,13 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.18`, optional `prove`, optional
-`require-sig`) and
+`github:pramodreddyboddu/agent-receipt#v1.0.19`, optional `prove`, optional
+`sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
-green gate, optional temp keygen + `verify --require-sig`, upload `receipt-gate.json`). Gate JSON:
+green gate, optional temp keygen + `verify --require-sig`, auto-trust of that
+fingerprint when `trusted-keys` is empty, upload `receipt-gate.json`).
+Signed CI recipe (not a CA): [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md).
+Gate JSON:
 [`docs/gate.schema.json`](docs/gate.schema.json). `init --retention` sets
 `maxCount: 100` and `maxAgeDays: 30`. Trusted prune refuses a broken audit
 chain unless you pass `prune --force`.
@@ -483,7 +486,8 @@ Peers verify and sign the Markdown.
 
 Thin local Ed25519 attest landed in 1.0.16. `verify --require-sig` and the
 portable sidecar handoff landed in 1.0.17. A thin known-keys allowlist
-landed in 1.0.18. Full PKI/CA, minisign, GPG, and default auto-sign on
+landed in 1.0.18. A signed CI drop-in (`sign`, require-sig, trust examples)
+landed in 1.0.19. Full PKI/CA, minisign, GPG, and default auto-sign on
 capture are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
