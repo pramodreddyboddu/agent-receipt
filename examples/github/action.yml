@@ -14,7 +14,7 @@
 #       fail-on: high
 #       base: origin/main
 #       install: true
-#       from: github:pramodreddyboddu/agent-receipt#v1.0.22
+#       from: github:pramodreddyboddu/agent-receipt#v1.0.23
 #       prove: true
 #       sign: true
 #       require-sig: true
@@ -65,8 +65,9 @@
 # --require-sig` requires `signature.trusted` true.
 # Local one-liner after keygen (not a new action input, not a CA):
 # `agent-receipt trust add --self` (since v1.0.20) writes this machine's fingerprint into
-# `.agent-receipt/trusted-keys.txt`. pr-gate.yml uses that when require-sig
-# is true and trusted-keys is empty.
+# `.agent-receipt/trusted-keys.txt`. `trust show` (v1.0.23) reports that allowlist
+# and whether the local key is listed. It does not edit the file. pr-gate.yml uses
+# trust add --self when require-sig is true and trusted-keys is empty.
 #
 # Outputs (empty string when the field is missing): ok, exit-code, sha256,
 # path, gate-json (absolute path of the gate JSON file).
@@ -96,7 +97,7 @@ inputs:
     required: false
     default: "false"
   from:
-    description: npm spec used when install is true. Pin with #v1.0.22 once the tag exists.
+    description: npm spec used when install is true. Pin with #v1.0.23 once the tag exists.
     required: false
     default: github:pramodreddyboddu/agent-receipt
   prove:

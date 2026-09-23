@@ -464,6 +464,7 @@ same as 1.0.17. A non-empty store that does not list the sidecar
 fingerprint exits 2 (\`fingerprint not trusted\`, fingerprint included).
 
 \`trust list\`, \`trust add <fp>\`, \`trust add --self\`, and \`trust rm <fp>\` edit the file.
+\`trust show\` (alias \`trust status\`) only reads it.
 Teams may commit a copy under examples/ or docs/ and copy it into
 \`.agent-receipt/\` (that directory stays gitignored, so local keys and
 the default list stay private).
@@ -554,13 +555,26 @@ Examples:
 
 Usage:
   agent-receipt trust list [--json]
+  agent-receipt trust show [--json]
+  agent-receipt trust status [--json]
   agent-receipt trust add <fingerprint> [--json]
   agent-receipt trust add --self [--json]
   agent-receipt trust rm <fingerprint> [--json]
 
-Edits \`.agent-receipt/trusted-keys.txt\` (one lowercase 64-hex fingerprint
+\`trust list\`, \`trust add\`, and \`trust rm\` use
+\`.agent-receipt/trusted-keys.txt\` (one lowercase 64-hex fingerprint
 per line). \`#\` comments and blank lines are kept. An invalid line is not
 rewritten and the command exits 1.
+
+\`trust show\` (alias: \`trust status\`) is read-only. It prints whether
+the allowlist is active, the count, the file, sources, and the fingerprints
+when the store is active. It also prints the local keygen fingerprint when
+keys load (\`local\`), or \`local: (none — run keygen)\` when they do not.
+\`localListed\` is true, false, or n/a when there is no local key. Missing
+keys do not fail the command. It does not create a keypair, does not edit
+the allowlist, and does not edit config. When a local key loads and is not
+listed, run \`trust add --self\`. \`trust show\` takes no fingerprint.
+An unreadable or invalid store exits 1 with the same reason as \`trust list\`.
 
 \`trust add --self\` (alias: \`trust add self\`) loads the local Ed25519
 keypair with the same \`loadKeys\` path as \`sign\` and \`keygen\`, then
@@ -572,15 +586,20 @@ This is a local allowlist, not a CA. Empty or missing file plus no
 \`trustedFingerprints\` config means \`verify --require-sig\` still accepts
 any cryptographically valid sidecar. \`trust add\` / \`trust rm\` only
 change the file. Config \`trustedFingerprints\` is a separate union.
+\`trust show\` reads that same union and does not write it.
 
 --json prints one object:
   ok, command ("trust"), action, version, exitCode, active, count,
   fingerprints, sources, reason
   add also sets added; rm also sets removed.
   \`--self\` also sets fingerprint to the local keygen fingerprint.
+  show (and status) set action to "show" and add path, localFingerprint
+  (string or null), and localListed (true, false, or null when no local key).
 
 Examples:
   agent-receipt trust list
+  agent-receipt trust show
+  agent-receipt trust show --json
   agent-receipt trust add <64-hex-fingerprint>
   agent-receipt keygen && agent-receipt trust add --self
   agent-receipt trust add --json --self
@@ -999,7 +1018,7 @@ Commands:
   watch                  Poll git; auto-capture on commits or dirty tree
   keygen                 Create a local Ed25519 keypair under .agent-receipt/keys
   sign [path]            Attest the receipt sha256 into a .sig.json sidecar
-  trust                  Known-keys allowlist: list, add <fp>, add --self, rm <fp>
+  trust                  Known-keys allowlist: list, show, add <fp>, add --self, rm <fp>
   verify [path]          Hash-check integrity (hash-only; --require-sig opts in)
   prove [path]           Prove-this-run: verify + audit link + signature status (--page writes foo.prove.md)
   audit                  List the compliance log (--event, --agent, --failed filter the listing)
@@ -1058,6 +1077,7 @@ Examples:
   agent-receipt verify
   agent-receipt verify --require-sig
   agent-receipt trust list
+  agent-receipt trust show
   agent-receipt prove
   agent-receipt prove --page
   agent-receipt prove --json

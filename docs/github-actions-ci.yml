@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.22: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.23: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -140,6 +140,10 @@ jobs:
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.exitCode!==0||!g.signature||g.signature.ok!==true||g.signature.trusted!==true){console.error(g); process.exit(1)}' "$tmp/verify-self-trust.json"
           node bin/agent-receipt.js trust add --self --json --cwd "$tmp" > "$tmp/trust-self-again.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.action!=="add"||g.added!==false||g.exitCode!==0){console.error(g); process.exit(1)}' "$tmp/trust-self-again.json"
+          # v1.0.23: trust show is read-only. After keygen + trust add --self,
+          # active is true, localListed is true, and localFingerprint matches.
+          node bin/agent-receipt.js trust show --json --cwd "$tmp" > "$tmp/trust-show.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const k=JSON.parse(fs.readFileSync(process.argv[2],"utf8")); if(g.ok!==true||g.command!=="trust"||g.action!=="show"||g.exitCode!==0||g.active!==true||g.localListed!==true||g.localFingerprint!==k.fingerprint||!g.fingerprints||g.fingerprints.indexOf(k.fingerprint)===-1){console.error(g); process.exit(1)}' "$tmp/trust-show.json" "$tmp/keygen.json"
           rm -f "$tmp/.agent-receipt/trusted-keys.txt"
           # v1.0.21: prove --page writes a sibling Markdown one-pager.
           # --json --page adds pagePath. The page contains PROVED and sha256.

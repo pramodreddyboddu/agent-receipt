@@ -107,19 +107,19 @@ describe('v1.0.22 config sign / --no-sign', () => {
     assert.match(changelog, /trust show/);
     assert.match(changelog, /HTML\/share signed package/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.22');
+    assert.equal(pkg.version, '1.0.23');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.22');
-    assert.equal(lock.packages[''].version, '1.0.22');
+    assert.equal(lock.version, '1.0.23');
+    assert.equal(lock.packages[''].version, '1.0.23');
     assert.equal(lock.packages[''].dependencies, undefined);
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.22/);
+    assert.match(versionTs, /1\.0\.23/);
 
     const business = readFileSync(join(root, 'docs', 'business.md'), 'utf8');
     assert.match(business, /sign: true/);
     assert.match(business, /--no-sign/);
-    assert.match(business, /1\.0\.22/);
+    assert.match(business, /1\.0\.23/);
     const help = cli(root, ['help', 'wrap']);
     assert.match(help, /--no-sign/);
     assert.match(help, /sign: true/);
@@ -130,16 +130,16 @@ describe('v1.0.22 config sign / --no-sign', () => {
     assert.match(helpCapture, /sign: true/);
     const policy = readFileSync(join(root, 'examples', 'org-policy.yml'), 'utf8');
     assert.match(policy, /# sign: true\s+# after keygen; CLI --no-sign overrides/);
-    assert.match(policy, /v1\.0\.22/);
+    assert.match(policy, /v1\.0\.23/);
     const mirror = readFileSync(join(root, 'docs', 'github-actions-ci.yml'), 'utf8');
-    assert.match(mirror, /1\.0\.22/);
+    assert.match(mirror, /1\.0\.23/);
     assert.match(mirror, /sign: true/);
     assert.match(mirror, /--no-sign/);
 
     const workflows = readdirSync(join(root, '.github', 'workflows'));
     for (const name of workflows) {
       const live = readFileSync(join(root, '.github', 'workflows', name), 'utf8');
-      assert.doesNotMatch(live, /v1\.0\.22/);
+      assert.doesNotMatch(live, /v1\.0\.23/);
       assert.doesNotMatch(live, /config sign: true/);
     }
   });

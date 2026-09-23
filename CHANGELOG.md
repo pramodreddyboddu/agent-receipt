@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.23] — 2026-09-22
+
+### Added
+
+- `trust show` (alias: `trust status`) is a read-only status report for the known-keys allowlist and the local keygen key. It prints `active`, `count`, `file` (`.agent-receipt/trusted-keys.txt`), `sources` (the same union as `trust list`), the fingerprints when the store is active, `local` (the 64-hex keygen fingerprint, or `(none — run keygen)` when keys do not load), and `localListed` (`true`, `false`, or `n/a` when there is no local key). Missing keys do not exit 1. An invalid or unreadable store exits 1 with the same reason as `trust list`. `trust show <fingerprint>` exits 1 (show takes no fingerprint). `--json` prints one trust object with `action: "show"` and adds `path`, `localFingerprint` (string or null), and `localListed` (boolean or null). The command does not create keys, does not edit the allowlist, and does not edit config. When a local key loads and is not listed, the report names `trust add --self`. `trust list` stays the fingerprint dump. Not a CA.
+
+### Changed
+
+- Package version bumped to `1.0.23`.
+- [`docs/business.md`](docs/business.md) documents `trust show` under the trust / signing recipe. `trust show` is landed. The lead sentence tracks 1.0.23.
+- [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md) and [`README.md`](README.md) note that `trust show` reports the allowlist and whether the local key is listed. Pin comments that track the current cut are `v1.0.23`.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) version-range comments include 1.0.23. After `keygen` and `trust add --self`, `trust show --json` reports `active: true`, `localListed: true`, and a `localFingerprint` that matches keygen. Live [`.github/workflows/*`](.github/workflows) was not edited.
+- [`examples/github/action.yml`](examples/github/action.yml), [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml), and [`examples/org-policy.yml`](examples/org-policy.yml) pin comments are `v1.0.23`. No new action input.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm.
+- Still not a CA. No key escrow. The private key stays under `.agent-receipt/keys/`. `trust show` only reads the allowlist and the local public key fingerprint.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config (signing stays opt-in via config `sign: true` or `--sign`), an HTML/share signed package (and a signed one-pager), unsigned HTML prove export (`--html`), a background deleter, multi-agent receipt linking, SSO / IdP, Cloud Agents, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.22] — 2026-09-22
 
 ### Added

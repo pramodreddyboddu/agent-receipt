@@ -786,8 +786,8 @@ describe('v1.0.12 docs', () => {
     assert.match(policy, /history --failed/);
     assert.match(policy, /history --agent ci --failed/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.22');
+    assert.equal(pkg.version, '1.0.23');
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.22/);
+    assert.match(versionTs, /1\.0\.23/);
   });
 });
