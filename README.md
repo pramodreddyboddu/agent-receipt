@@ -109,7 +109,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 
 | Command | Purpose |
 |---------|---------|
-| `init [--cursor] [--grok]` | Write `.agent-receipt.yml` + notes; `--cursor` / `--grok` drop agent rules |
+| `init [--cursor] [--grok] [--org]` | Write `.agent-receipt.yml` + notes. `--org` (alias `--policy`) sets `redact: true` and `failOn: high` without replacing local `ignore`. `--cursor` / `--grok` drop agent rules |
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON) |
 | `wrap` | End of session: capture (+ `--uncommitted` if dirty) → TL;DR + path → verify |
 | `share [path]` | One shot: redact → HTML (+ optional Markdown) → verify → paths + TL;DR |
@@ -122,7 +122,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, and an audit-log link. Not a signature. `--json` is one object. Config `failOn` is not applied |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
 | `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default) |
-| `doctor` | Health check plus a prod checklist (policy, audit, retention, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails a broken audit chain always, and fails unset policy or retention only under receipt-dir pressure |
+| `doctor` | Health check plus a prod checklist (policy, audit, retention, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`) and a broken audit chain on any receipt dir. Unset retention fails only under receipt-dir pressure |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
 | `diff [a] [b]` | Alias for `compare` |
 | `install-hooks` | Opt-in post-commit auto-capture (`--pre-push` optional) |
@@ -141,6 +141,7 @@ agent-receipt history --failed
 agent-receipt history --agent ci --failed --json
 agent-receipt ls --agent ci --uncommitted --limit 5
 agent-receipt prune --dry-run
+agent-receipt init --org
 agent-receipt doctor --strict
 agent-receipt doctor --json
 agent-receipt prove --json

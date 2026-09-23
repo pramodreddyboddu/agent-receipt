@@ -4,11 +4,17 @@
 # Also reusable:
 #   jobs:
 #     receipt:
-#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.10
+#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.14
 #       with:
 #         base: main
 #         fail-on: high
 #         command: wrap
+#
+# Install pin: npm install -g github:pramodreddyboddu/agent-receipt
+# Or, once the tag exists: github:pramodreddyboddu/agent-receipt#v1.0.14
+# Always pass --fail-on (this job does; default high) so a missing
+# .agent-receipt.yml cannot silently weaken the gate.
+# After a successful wrap or share, trailingIgnored is a boolean when set.
 #
 # Not installed as a live workflow in this repo: pushing .github/workflows
 # needs the OAuth `workflow` scope. See docs/business.md.
@@ -53,7 +59,8 @@ jobs:
         run: |
           set -eu
           if ! command -v agent-receipt >/dev/null 2>&1; then
-            # Pin a tag once v1.0.10 is tagged. Default branch until then.
+            # Pin the GitHub install. Use a tag once it exists, for example:
+            #   npm install -g github:pramodreddyboddu/agent-receipt#v1.0.14
             npm install -g github:pramodreddyboddu/agent-receipt
           fi
 
@@ -86,6 +93,9 @@ jobs:
           echo "agent-receipt exit $code"
           cat "$out"
           # Exit code is the gate. Also require a JSON object so a usage
-          # error that printed nothing cannot pass.
-          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (g.exitCode !== 0 || g.ok !== true) process.exit(g.exitCode || 1);' "$out"
+          # error that printed nothing cannot pass. --fail-on is always
+          # passed above so a missing config cannot drop the risk gate.
+          # trailingIgnored is a boolean when wrap/share verified a body
+          # (null on capture). A non-boolean value fails the job.
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (g.exitCode !== 0 || g.ok !== true) process.exit(g.exitCode || 1); if (g.trailingIgnored != null && typeof g.trailingIgnored !== "boolean") { console.error("trailingIgnored must be boolean when set"); process.exit(1); } if (typeof g.trailingIgnored === "boolean") console.log("trailingIgnored=" + g.trailingIgnored);' "$out"
           exit "$code"

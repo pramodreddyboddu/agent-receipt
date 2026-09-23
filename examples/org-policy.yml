@@ -6,9 +6,13 @@
 #   exit 0 pass · exit 2 policy or verify failure · exit 1 usage error
 #
 # Checklist for laptops and scripts (does not scan diffs):
+#   agent-receipt init --org        # set redact: true and failOn: high
+#                                  # without replacing local ignore
 #   agent-receipt doctor
-#   agent-receipt doctor --strict   # unset redact+failOn and/or retention fail
-#                                  # only when outDir is under pressure
+#   agent-receipt doctor --strict   # unset redact+failOn always FAIL,
+#                                  # even on a small or empty outDir.
+#                                  # Unset retention still fails only when
+#                                  # outDir is under pressure.
 #   agent-receipt doctor --json     # one JSON object on stdout; exits unchanged
 #
 # share redacts even when `redact` is false. This file turns redact on for
@@ -28,8 +32,10 @@
 #   agent-receipt prove --json
 # Newest receipt as one JSON object (wins over --path):
 #   agent-receipt last --json
-# doctor --strict fails a broken audit chain. Unset policy/retention still
-# fail only when outDir is under pressure.
+# doctor --strict always fails unset org policy (redact + failOn), including
+# a small outDir, and fails a broken audit chain. Unset retention still
+# fails only when outDir is under pressure (100 receipts or 20 MB).
+# Tip: agent-receipt init --org
 # prune appends one line per receipt it deletes and does not delete audit.jsonl.
 # --dry-run does not append.
 #

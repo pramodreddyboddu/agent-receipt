@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.14] — 2026-09-22
+
+### Added
+
+- `init --org` (alias `init --policy`) sets org policy on `.agent-receipt.yml`: `redact: true` and `failOn: high`. A missing config is written in the same shape as `init`, with those two keys enabled. An existing file is merged in place: active `redact` / `failOn` lines are rewritten, a commented key is uncommented when no active key exists, and missing keys are appended. `ignore`, `riskAllowlist`, `outDir`, retention keys, and other comments stay. Re-running when the keys are already set exits 0 and does not rewrite them. The command prints the config path and whether each key was set or unchanged, and suggests `doctor --strict`. No network. Full example remains [`examples/org-policy.yml`](examples/org-policy.yml); `init --org` does not copy that file over a local ignore list.
+
+### Changed
+
+- Package version bumped to `1.0.14`
+- `doctor --strict` fails unset org policy (`redact: true` and a valid `failOn`) on every `outDir`, including a small or empty one (exit 1). `doctor --json` reports that policy check as `fail`. Default `doctor` is unchanged: unset policy stays INFO and does not change the exit code. A broken audit chain still fails `--strict` always and stays WARN by default. Unset retention stays pressure-gated (100 receipts or 20 MB). A configured limit that would still delete files stays a warning.
+- CI examples: [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) pins the install comment to `github:pramodreddyboddu/agent-receipt` (with a `v1.0.14` tag note) and records that the job passes `--fail-on` so a missing config cannot weaken the gate. After a successful wrap or share it checks `trailingIgnored` is a boolean when that field is set. [`examples/github/action.yml`](examples/github/action.yml) documents `trailingIgnored` (`boolean | null`) and keeps the same `exitCode` / `ok` failure rule. [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) proves fail-closed policy: `--strict` fails before `init --org` and passes the policy row after. Live [`.github/workflows/*`](.github/workflows) was not edited.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Still deferred: cryptographic signing / signed receipts (PKI), SSO / IdP, Cloud Agents, a background deleter, live workflow sync (no `workflow` OAuth scope), npm Trusted Publishing (this cut does not publish), and always-fail unset retention under `doctor --strict` (retention stays pressure-gated). No signing slice in this cut.
+
 ## [1.0.13] — 2026-09-22
 
 ### Added

@@ -4,21 +4,41 @@ const TOPICS: Record<string, string> = {
   init: `agent-receipt init — write config + setup notes
 
 Usage:
-  agent-receipt init [--cursor] [--grok] [--cwd <path>]
+  agent-receipt init [--cursor] [--grok] [--org] [--cwd <path>]
 
 Options:
   --cursor               Drop .cursor/rules/agent-receipt.mdc (agent runs capture)
   --grok                 Drop .grok rule + SessionEnd hook (dirty-tree wrap, --redact)
+  --org                  Set redact: true and failOn: high (alias: --policy)
+  --policy               Alias of --org
+
+\`--org\` and \`--policy\` are the same path. No network.
+
+Missing \`.agent-receipt.yml\`: write the usual init file with \`redact: true\`
+and \`failOn: high\` enabled (not commented), plus setup notes.
+
+Existing file: merge in place. Every active \`redact\` / \`failOn\` line is set
+to those values. A commented \`# redact:\` or \`# failOn:\` line is uncommented
+only when that key has no active line. A missing key is appended.
+\`ignore\`, \`riskAllowlist\`, \`outDir\`, retention keys (\`maxCount\`,
+\`maxAgeDays\`), and other comments stay. Re-running when both keys are
+already set exits 0 and does not rewrite them.
+
+Prints the config path and whether each key was set or unchanged, then
+suggests \`doctor --strict\`. See examples/org-policy.yml for the full
+example — do not copy it over a local ignore list.
 
 Creates:
   .agent-receipt.yml          config (outDir, agent, ignore globs, …)
-  .agent-receipt/SETUP.md     short next-steps
+  .agent-receipt/SETUP.md     short next-steps (when the config is created)
   .cursor/rules/…             only with --cursor
   .grok/rules/…               only with --grok (loaded every Grok session)
   .grok/hooks/…               only with --grok (SessionEnd; needs grok --trust)
 
 Examples:
   agent-receipt init
+  agent-receipt init --org
+  agent-receipt init --policy
   agent-receipt init --cursor
   agent-receipt init --grok
   agent-receipt init --cwd ~/code/my-app
@@ -526,23 +546,29 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
   hooks         managed post-commit hook installed?
   redact        redact: true in config, or still optional (share redacts by default)
   policy        redact on AND failOn set (examples/org-policy.yml)? Optional.
+                INFO by default. FAIL under --strict when unset, on any outDir.
+                \`init --org\` sets both keys.
   audit         .agent-receipt/audit.jsonl chain OK? Missing is info.
                 Broken is a warning by default, and FAIL with --strict.
   retention     maxCount / maxAgeDays (opt-in). Over the cap or a large outDir is a warning.
+                Unset fails under --strict only when outDir is under pressure.
   git-clean     working tree clean? Dirty is a warning, not a failure
   cursor        init --cursor rule present?
   grok          init --grok rule + SessionEnd hook present?
 
 Exit 0 if no FAIL checks; exit 1 otherwise. WARN/INFO are non-fatal.
 Default \`doctor\` does not fail when org policy or retention is unset.
+A broken audit chain is a warning by default.
 
 \`--strict\` always promotes a broken audit chain from WARN to FAIL (exit 1).
-Unset org policy (redact + failOn) and/or retention still fail only when
-outDir is under pressure (100 receipts or 20 MB). Below that threshold
-those rows stay INFO/WARN. A configured limit that would still delete files
-stays a warning — run \`prune\`. \`--strict\` does not scan diffs.
-CI \`--fail-on\` remains the risk gate. Default doctor (no \`--strict\`) still
-warns on a broken chain and does not fail for that row.
+Unset org policy (redact: true and failOn) also fails under \`--strict\`,
+even when outDir is small or empty. Set it with \`agent-receipt init --org\`.
+\`doctor --json\` reports that policy check as \`fail\`.
+Unset retention still fails only when outDir is under pressure
+(100 receipts or 20 MB). Below that threshold the retention row stays
+INFO/WARN. A configured limit that would still delete files stays a
+warning — run \`prune\`. \`--strict\` does not scan diffs.
+CI \`--fail-on\` remains the risk gate.
 
 \`--json\` prints one object on stdout and does not change the exit code:
 
@@ -645,7 +671,7 @@ Usage:
   agent-receipt <command> [options]
 
 Commands:
-  init                   Write config + notes (--cursor, --grok drop agent rules)
+  init                   Write config + notes (--org sets redact + failOn; --cursor, --grok)
   capture                Capture a git snapshot receipt (Markdown)
   wrap                   End-of-session: capture + TL;DR + verify
   share [path]           Redact + HTML (+ optional md) + verify + TL;DR
@@ -662,7 +688,7 @@ Commands:
   log                    Alias for audit
   prune                  Delete old receipts under outDir (opt-in; --dry-run)
   retain                 Alias for prune
-  doctor                 Health check (--json; --strict fails a broken audit chain)
+  doctor                 Health check (--json; --strict fails unset org policy and a broken audit chain)
   compare [a] [b]        Diff two receipts (default: last vs previous)
   diff [a] [b]           Alias for compare
   install-hooks          Install opt-in post-commit capture hook
@@ -682,6 +708,7 @@ Quickstart (≈ 60 seconds):
   agent-receipt history && agent-receipt last && agent-receipt verify
 
 Examples:
+  agent-receipt init --org
   agent-receipt init --cursor
   agent-receipt init --grok
   agent-receipt wrap --agent cursor --message "session done"

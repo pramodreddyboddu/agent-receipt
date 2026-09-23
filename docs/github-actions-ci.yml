@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.13: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.14: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -91,13 +91,21 @@ jobs:
           after=$(wc -l < "$tmp/.agent-receipt/audit.jsonl")
           test "$before" = "$after"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="prune"||g.enabled!==false||g.dryRun!==true||g.exitCode!==0||g.audited!==0||g.deleted.length!==0||g.indexUpdated!==false||typeof g.version!=="string"){console.error(g); process.exit(1)}' "$tmp/prune.json"
-          # Small outDir: --strict stays exit 0 (pressure gate, not a risk scan).
-          node bin/agent-receipt.js doctor --strict --cwd "$tmp"
-          # doctor --json is one object. Exits match the human command.
+          # Fail-closed org policy (1.0.14): unset redact + failOn fails
+          # doctor --strict even on this small outDir. Default doctor stays
+          # exit 0 (policy INFO). Retention stays pressure-gated, so that
+          # row stays INFO here. init --org then makes --strict pass policy.
           node bin/agent-receipt.js doctor --json --cwd "$tmp" > "$tmp/doctor.json"
-          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const ids=new Set((g.checks||[]).map(c=>c.id)); const need=["node","git","repo","outDir","cli","policy","retention"]; if(g.ok!==true||g.command!=="doctor"||g.exitCode!==0||g.strict!==false||typeof g.version!=="string"||!need.every(id=>ids.has(id))||g.checks.some(c=>!["pass","fail","warn","info"].includes(c.status)||typeof c.detail!=="string")){console.error(g); process.exit(1)}' "$tmp/doctor.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const ids=new Set((g.checks||[]).map(c=>c.id)); const need=["node","git","repo","outDir","cli","policy","retention"]; const policy=(g.checks||[]).find(c=>c.id==="policy"); const retention=(g.checks||[]).find(c=>c.id==="retention"); if(g.ok!==true||g.command!=="doctor"||g.exitCode!==0||g.strict!==false||typeof g.version!=="string"||!need.every(id=>ids.has(id))||g.checks.some(c=>!["pass","fail","warn","info"].includes(c.status)||typeof c.detail!=="string")||!policy||policy.status!=="info"||!retention||retention.status!=="info"){console.error(g); process.exit(1)}' "$tmp/doctor.json"
+          set +e
+          node bin/agent-receipt.js doctor --strict --json --cwd "$tmp" > "$tmp/doctor-strict-unset.json"
+          strict_unset=$?
+          set -e
+          test "$strict_unset" = 1
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const policy=(g.checks||[]).find(c=>c.id==="policy"); const retention=(g.checks||[]).find(c=>c.id==="retention"); if(g.ok!==false||g.strict!==true||g.exitCode!==1||g.command!=="doctor"||!policy||policy.status!=="fail"||!retention||retention.status!=="info"){console.error(g); process.exit(1)}' "$tmp/doctor-strict-unset.json"
+          node bin/agent-receipt.js init --org --cwd "$tmp"
           node bin/agent-receipt.js doctor --strict --json --cwd "$tmp" > "$tmp/doctor-strict.json"
-          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="doctor"||g.exitCode!==0||g.strict!==true){console.error(g); process.exit(1)}' "$tmp/doctor-strict.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const policy=(g.checks||[]).find(c=>c.id==="policy"); const retention=(g.checks||[]).find(c=>c.id==="retention"); if(g.ok!==true||g.command!=="doctor"||g.exitCode!==0||g.strict!==true||!policy||policy.status!=="pass"||!retention||retention.status!=="info"){console.error(g); process.exit(1)}' "$tmp/doctor-strict.json"
           # --event is listing-only. The wrap above must appear; share must not.
           node bin/agent-receipt.js audit --event wrap --json --cwd "$tmp" > "$tmp/audit-wrap.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!Array.isArray(g)||g.length<1||g.some(e=>e.event!=="wrap")){console.error(g); process.exit(1)}' "$tmp/audit-wrap.json"

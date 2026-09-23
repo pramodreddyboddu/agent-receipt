@@ -1,6 +1,6 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.13 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.14 for teams: install once, capture every session, fail CI
 on high-severity findings, share only redacted HTML, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
@@ -61,13 +61,17 @@ code. It is a checklist for scripts, not the CI risk gate (`wrap --json`).
 
 A broken `.agent-receipt/audit.jsonl` chain is WARN on default `doctor` and
 does not change the exit code. `doctor --strict` promotes that row to FAIL
-(exit 1) even when `outDir` is small. Unset org policy and retention stay
-INFO/WARN until the directory is under pressure.
+(exit 1) even when `outDir` is small. Unset org policy (`redact` + `failOn`)
+is also FAIL under `--strict` on a small or empty `outDir`. Unset retention
+stays INFO/WARN until the directory is under pressure.
 
 ## Org policy
 
-Copy [`examples/org-policy.yml`](../examples/org-policy.yml) onto
-`.agent-receipt.yml` (keep your own `ignore` / `riskAllowlist` entries):
+`agent-receipt init --org` (alias `--policy`) writes these two keys. On an
+existing `.agent-receipt.yml` it merges: `ignore`, `riskAllowlist`, `outDir`,
+and retention keys stay. Copying
+[`examples/org-policy.yml`](../examples/org-policy.yml) is still fine when
+you want the commented example as a starting file:
 
 ```yaml
 redact: true    # capture / wrap / watch / share, unless --no-redact
@@ -123,7 +127,7 @@ is the artifact, not the gate.
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -185,10 +189,12 @@ admin console, and no Cloud Agents product.
 
 ### Org policy
 
-Copy [`examples/org-policy.yml`](../examples/org-policy.yml) onto
+Run `agent-receipt init --org` (alias `--policy`), or copy
+[`examples/org-policy.yml`](../examples/org-policy.yml) onto
 `.agent-receipt.yml` and keep your local `ignore` / `riskAllowlist` lines.
 That turns `redact` on for capture / wrap / watch and sets `failOn: high`.
-`share` already redacts unless `--no-redact`, even without this file.
+`init --org` does the same two keys on an existing file without replacing
+`ignore`. `share` already redacts unless `--no-redact`, even without this file.
 
 `doctor` lists this as **policy**. INFO means it is not applied yet. Only
 real **FAIL** rows change the exit code — the default checklist does not
@@ -198,13 +204,15 @@ receipt risk summary. `doctor` does not.
 
 `doctor --strict` is a separate prod gate, not a secret scan. It always
 fails a broken audit chain (the audit row becomes `fail`, exit 1). It also
-exits 1 when org policy (`redact` + `failOn`) and/or retention is unset
-**and** `outDir` is under pressure (100 receipts or 20 MB). A small directory
-with an intact or missing audit log stays exit 0 for those policy rows. A
-limit that is set but would still delete files stays a warning until you
-run `prune`. Default `doctor` still only warns on a broken chain.
+fails unset org policy (`redact: true` and `failOn`) on any `outDir`,
+including a small or empty one. `doctor --json` reports that policy check
+as `fail`. Unset retention still fails only when `outDir` is under pressure
+(100 receipts or 20 MB). A limit that is set but would still delete files
+stays a warning until you run `prune`. Default `doctor` still only warns
+on a broken chain and leaves unset policy as INFO.
 
 ```bash
+agent-receipt init --org
 agent-receipt doctor --json
 agent-receipt doctor --strict --json
 ```
@@ -225,11 +233,15 @@ Copy one of:
 
 Exit codes are unchanged: 0 pass, 2 policy and/or verify failure, 1 usage
 error. The step prints the gate JSON from `$RUNNER_TEMP/receipt-gate.json`
-before exiting. You do not need `jq`.
+before exiting. You do not need `jq`. The examples pass `--fail-on` so a
+missing config cannot silently weaken the job. After a successful wrap or
+share, `trailingIgnored` is a boolean when that field is set (`null` on
+capture). The job still fails when `exitCode !== 0` or `ok !== true`.
 
 This repo’s own [docs mirror](github-actions-ci.yml) runs a temp-repo
 `wrap --json` + `prove --json` + `last --json` + `share --json` smoke, then
-`doctor --json`, `audit --event wrap`, `audit --agent ci --failed`,
+proves `doctor --strict` fails unset org policy and passes after `init --org`,
+plus `doctor --json`, `audit --event wrap`, `audit --agent ci --failed`,
 `history --agent ci` / `history --uncommitted`, and `history --failed`. The live
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) does not include
 that smoke yet: the checkout token cannot push workflow files. See
@@ -304,9 +316,9 @@ line). Index rows that were already missing are not events.
 
 `doctor` reports **audit**: INFO if the file is not there yet, PASS when
 the chain matches, WARN if it does not. WARN does not fail default `doctor`.
-`doctor --strict` turns that broken chain into FAIL and exits 1. Policy and
-retention are unchanged: they fail under `--strict` only when `outDir` is
-under pressure.
+`doctor --strict` turns that broken chain into FAIL and exits 1. Unset org
+policy also fails under `--strict` with no pressure gate. Unset retention
+still fails under `--strict` only when `outDir` is under pressure.
 
 Editing a line in place breaks the chain on purpose. To rotate, move the
 file aside and let the next command start a new one (`prev: null`).
@@ -439,24 +451,26 @@ listing (`[]` with `--json`). An empty receipt store still errors, same as
 
 ### Deferred
 
-Prove-this-run UX landed in 1.0.13 (`prove`, audit link, `last --json`,
-`trailingIgnored` on the gate). Cryptographic signing / signed receipts
-(PKI) are still deferred. Also deferred: SSO / IdP, Cloud Agents, a
-background job that deletes receipts by itself, live GitHub Actions workflow
-sync (the checkout token has no `workflow` scope), and npm Trusted
-Publishing (this cut does not publish). `prune` stays manual.
-`doctor --strict` fails a broken audit chain always, and fails unset policy
-or retention only when the receipt directory is already large. CI
-`--fail-on` is still the enforcement point for risk. `doctor --json`,
-`audit --event`, `audit --agent`, `audit --failed`, `history --agent`,
-`history --uncommitted`, and `history --failed` are checklist and listing
-tools; they do not sign the log.
+Fail-closed org policy landed in 1.0.14 (`doctor --strict` always fails unset
+`redact` + `failOn`, including a small `outDir`; `init --org` / `init --policy`
+sets those keys). Prove-this-run UX landed in 1.0.13 (`prove`, audit link,
+`last --json`, `trailingIgnored` on the gate). Cryptographic signing / signed
+receipts (PKI) are still deferred — this cut does not add a signing slice.
+Also deferred: SSO / IdP, Cloud Agents, a background job that deletes receipts
+by itself, live GitHub Actions workflow sync (the checkout token has no
+`workflow` scope), and npm Trusted Publishing (this cut does not publish).
+`prune` stays manual. Unset retention under `doctor --strict` stays
+pressure-gated (100 receipts or 20 MB); always-fail for retention is deferred.
+CI `--fail-on` is still the enforcement point for risk. A broken audit chain
+still fails `--strict`. `doctor --json`, `audit --event`, `audit --agent`,
+`audit --failed`, `history --agent`, `history --uncommitted`, `history --failed`,
+and `prove` are checklist and listing tools; they do not sign the log.
 
 ### Workflow scope
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.13 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.14 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:
