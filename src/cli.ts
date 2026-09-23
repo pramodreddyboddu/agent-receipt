@@ -333,6 +333,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         const result = cmdVerify(cwd, positional[0], {
           json: flagBool(flags, 'json'),
           failOn,
+          requireSig: flagBool(flags, 'require-sig', 'require-signature'),
         });
         return result.exitCode;
       }

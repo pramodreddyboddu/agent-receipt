@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.16: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.17: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -80,6 +80,18 @@ jobs:
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="sign"||g.exitCode!==0||g.verified!==true||typeof g.sha256!=="string"||g.sha256.length!==64||typeof g.fingerprint!=="string"||typeof g.sigPath!=="string"){console.error(g); process.exit(1)}' "$tmp/sign.json"
           node bin/agent-receipt.js prove --json --cwd "$tmp" > "$tmp/prove-signed.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const k=JSON.parse(fs.readFileSync(process.argv[2],"utf8")); if(!g.ok||g.verified!==true||g.exitCode!==0||!g.signature||g.signature.present!==true||g.signature.ok!==true||g.signature.alg!=="ed25519"||g.signature.fingerprint!==k.fingerprint){console.error(g); process.exit(1)}' "$tmp/prove-signed.json" "$tmp/keygen.json"
+          # v1.0.17: verify --require-sig on the signed receipt (exit 0) and
+          # on an unsigned copy (exit 2). Default verify stays hash-only.
+          node bin/agent-receipt.js verify --require-sig --json --cwd "$tmp" > "$tmp/verify-sig.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="verify"||g.exitCode!==0||g.verified!==true||!g.signature||g.signature.present!==true||g.signature.ok!==true||g.signature.alg!=="ed25519"){console.error(g); process.exit(1)}' "$tmp/verify-sig.json"
+          node -e 'const fs=require("fs"); const path=require("path"); const sign=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const dest=path.join(process.argv[2],"unsigned.md"); fs.copyFileSync(sign.path, dest); fs.writeFileSync(path.join(process.argv[2],"unsigned.path"), dest);' "$tmp/sign.json" "$tmp"
+          unsigned=$(cat "$tmp/unsigned.path")
+          set +e
+          node bin/agent-receipt.js verify --require-sig --json --cwd "$tmp" "$unsigned" > "$tmp/verify-nosig.json"
+          nosig=$?
+          set -e
+          test "$nosig" = 2
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==false||g.exitCode!==2||!g.signature||g.signature.present!==false||g.signature.ok!==false||typeof g.reason!=="string"||g.reason.indexOf("signature absent")===-1){console.error(g); process.exit(1)}' "$tmp/verify-nosig.json"
           node bin/agent-receipt.js last --json --cwd "$tmp" > "$tmp/last.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="last"||typeof g.path!=="string"||typeof g.sha256!=="string"||g.sha256.length!==64){console.error(g); process.exit(1)}' "$tmp/last.json"
           # history --agent is an exact match. The wrap above used --agent ci.
@@ -104,10 +116,11 @@ jobs:
           after=$(wc -l < "$tmp/.agent-receipt/audit.jsonl")
           test "$before" = "$after"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="prune"||g.enabled!==false||g.dryRun!==true||g.exitCode!==0||g.audited!==0||g.deleted.length!==0||g.indexUpdated!==false||typeof g.version!=="string"){console.error(g); process.exit(1)}' "$tmp/prune.json"
-          # Fail-closed org policy (1.0.14): unset redact + failOn fails
-          # doctor --strict even on this small outDir. Default doctor stays
-          # exit 0 (policy INFO). Retention stays pressure-gated, so that
-          # row stays INFO here. init --org then makes --strict pass policy.
+          # Fail-closed org policy (1.0.14) and retention (1.0.17): unset
+          # redact+failOn and unset maxCount/maxAgeDays fail doctor --strict
+          # even on this small outDir. Default doctor stays exit 0 (both
+          # rows INFO). init --org fixes policy only. init --retention
+          # fixes retention. Both are required before --strict exits 0.
           node bin/agent-receipt.js doctor --json --cwd "$tmp" > "$tmp/doctor.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const ids=new Set((g.checks||[]).map(c=>c.id)); const need=["node","git","repo","outDir","cli","policy","retention"]; const policy=(g.checks||[]).find(c=>c.id==="policy"); const retention=(g.checks||[]).find(c=>c.id==="retention"); if(g.ok!==true||g.command!=="doctor"||g.exitCode!==0||g.strict!==false||typeof g.version!=="string"||!need.every(id=>ids.has(id))||g.checks.some(c=>!["pass","fail","warn","info"].includes(c.status)||typeof c.detail!=="string")||!policy||policy.status!=="info"||!retention||retention.status!=="info"){console.error(g); process.exit(1)}' "$tmp/doctor.json"
           set +e
@@ -115,10 +128,17 @@ jobs:
           strict_unset=$?
           set -e
           test "$strict_unset" = 1
-          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const policy=(g.checks||[]).find(c=>c.id==="policy"); const retention=(g.checks||[]).find(c=>c.id==="retention"); if(g.ok!==false||g.strict!==true||g.exitCode!==1||g.command!=="doctor"||!policy||policy.status!=="fail"||!retention||retention.status!=="info"){console.error(g); process.exit(1)}' "$tmp/doctor-strict-unset.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const policy=(g.checks||[]).find(c=>c.id==="policy"); const retention=(g.checks||[]).find(c=>c.id==="retention"); if(g.ok!==false||g.strict!==true||g.exitCode!==1||g.command!=="doctor"||!policy||policy.status!=="fail"||!retention||retention.status!=="fail"){console.error(g); process.exit(1)}' "$tmp/doctor-strict-unset.json"
           node bin/agent-receipt.js init --org --cwd "$tmp"
+          set +e
+          node bin/agent-receipt.js doctor --strict --json --cwd "$tmp" > "$tmp/doctor-strict-org.json"
+          strict_org=$?
+          set -e
+          test "$strict_org" = 1
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const policy=(g.checks||[]).find(c=>c.id==="policy"); const retention=(g.checks||[]).find(c=>c.id==="retention"); if(g.ok!==false||g.exitCode!==1||g.strict!==true||!policy||policy.status!=="pass"||!retention||retention.status!=="fail"){console.error(g); process.exit(1)}' "$tmp/doctor-strict-org.json"
+          node bin/agent-receipt.js init --retention --cwd "$tmp"
           node bin/agent-receipt.js doctor --strict --json --cwd "$tmp" > "$tmp/doctor-strict.json"
-          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const policy=(g.checks||[]).find(c=>c.id==="policy"); const retention=(g.checks||[]).find(c=>c.id==="retention"); if(g.ok!==true||g.command!=="doctor"||g.exitCode!==0||g.strict!==true||!policy||policy.status!=="pass"||!retention||retention.status!=="info"){console.error(g); process.exit(1)}' "$tmp/doctor-strict.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const policy=(g.checks||[]).find(c=>c.id==="policy"); const retention=(g.checks||[]).find(c=>c.id==="retention"); if(g.ok!==true||g.command!=="doctor"||g.exitCode!==0||g.strict!==true||!policy||policy.status!=="pass"||!retention||retention.status!=="pass"){console.error(g); process.exit(1)}' "$tmp/doctor-strict.json"
           # --event is listing-only. The wrap above must appear; share must not.
           node bin/agent-receipt.js audit --event wrap --json --cwd "$tmp" > "$tmp/audit-wrap.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!Array.isArray(g)||g.length<1||g.some(e=>e.event!=="wrap")){console.error(g); process.exit(1)}' "$tmp/audit-wrap.json"

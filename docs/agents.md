@@ -130,7 +130,8 @@ Inside Aider:
 | Newest receipt path | `agent-receipt last --path` |
 | Recent sessions | `agent-receipt history` |
 | Full Markdown dump | `agent-receipt show` |
-| Integrity check | `agent-receipt verify` |
+| Integrity check | `agent-receipt verify` (hash-only unless `--require-sig`) |
+| Require a sidecar | `agent-receipt verify --require-sig` |
 | Prove this run | `agent-receipt prove` (hash + audit link + signature status) |
 | Local Ed25519 attest | `agent-receipt keygen` then `agent-receipt sign` (not a CA) |
 | Newest receipt JSON | `agent-receipt last --json` |

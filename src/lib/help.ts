@@ -155,7 +155,16 @@ Defaults:
   - Refuses to overwrite the source receipt
   - Does not write anything if the source receipt fails verify (no re-hash of a tampered body)
 
-Prints TL;DR, html path, optional md path, source path, then verify.
+Prints TL;DR, html path, optional md path, optional sig path, source path, then verify.
+
+Markdown sidecar handoff (HTML is never signed):
+  - Published Markdown sha256 matches the source, and a valid source
+    \`*.sig.json\` exists → that sidecar is copied beside the published \`.md\`.
+  - Redact (or any rewrite) changes the sha256 → the old sidecar is not copied.
+    When local keys exist, the published Markdown is re-signed. When they do
+    not, the file is left unsigned and a short \`keygen\` / \`sign\` tip is printed.
+    That does not exit 2 by itself.
+  - HTML-only share writes no signature. Peers verify and sign the Markdown.
 
 Options:
   --out <path>           HTML output (default: sibling .html)
@@ -167,10 +176,13 @@ Options:
                          Exit 2 if the source summary meets the threshold
                          (counts are not cleared by redaction). Bare = high.
                          Config failOn applies when the flag is omitted.
-  --json                 One CI gate object on stdout (progress on stderr)
+  --json                 One CI gate object on stdout (progress on stderr).
+                         Adds sigPath (string or null) when Markdown was written.
   --cwd <path>           Run as if started in this directory
 
 Exit codes: 0 OK, 2 verify failure or --fail-on, 1 usage/runtime error.
+Share does not enable \`verify --require-sig\`. A missing sidecar on a
+rewritten Markdown file is a tip, not exit 2.
 Appends \`.agent-receipt/audit.jsonl\` (experimental hash chain; see \`help audit\`).
 
 Examples:
@@ -194,6 +206,11 @@ Options:
   --format <html|markdown|md>
                          Output format (default: html)
   --cwd <path>           Run as if started in this directory
+
+Markdown output uses the same sidecar rule as \`share\`: copy a valid source
+sidecar when the sha256 is unchanged, or re-sign the published file when
+local keys exist and the body was rewritten. HTML stays unsigned. Peers
+verify and sign the Markdown.
 
 Appends \`.agent-receipt/audit.jsonl\` (event \`export\`). \`share\` records
 \`share\` instead, so an export made by share is not a second line.
@@ -373,14 +390,30 @@ content after ## Integrity was ignored by the hash. Exit codes are unchanged.
 Wrap and share set the same field when they verified a body. Capture leaves
 it null (capture does not report a verify result).
 
-verify stays hash-only. It does not require or check a signature sidecar.
-Unsigned receipts still pass. \`prove\` reports signature status when a
-\`.sig.json\` file is present. \`sign\` writes that sidecar.
+Default verify stays hash-only. It does not require or check a signature
+sidecar. Unsigned receipts still pass, including when a sidecar is missing
+or invalid. \`prove\` reports signature status when a \`.sig.json\` file is
+present. \`sign\` writes that sidecar.
+
+--require-sig (alias --require-signature) is opt-in. The hash check runs
+first. A hash failure still exits 2 and does not soften. After a matching
+hash, a valid \`*.sig.json\` beside the receipt is required
+(\`inspectReceiptSignature\` / \`verifySignature\`). Missing sidecar exits 2
+with reason "signature required: signature absent". A present sidecar that
+is invalid, mismatched, or malformed exits 2 with the signature reason.
+A valid sidecar for the current sha256 exits 0 unless --fail-on also trips.
+There is no config key for this flag. capture, wrap, and share do not
+turn it on.
+
+--json with --require-sig adds signature { present, ok, alg, fingerprint, reason }
+after the hash passes. Without --require-sig the gate omits signature.
 
 Examples:
   agent-receipt verify
   agent-receipt verify receipt.md
   agent-receipt verify --json
+  agent-receipt verify --require-sig
+  agent-receipt verify --require-sig receipt.md --json
   agent-receipt verify --fail-on high --json
 `,
 
@@ -431,8 +464,10 @@ signature (base64 raw 64-byte signature), publicKey (SPKI PEM). The
 public key is embedded so a peer can verify without the local keys
 directory. The private key is never written.
 
-capture, wrap, and share do not sign. verify stays hash-only. prove
-reports the sidecar when it is present.
+capture and wrap do not sign. share and export do not sign the source
+receipt. When they write published Markdown they may copy a valid sidecar
+or re-sign that file (see \`help share\`). Default verify stays hash-only.
+\`verify --require-sig\` opts in. prove reports the sidecar when it is present.
 
 --json prints one object (command "sign"):
   ok, version, exitCode, verified, path, sigPath, sha256, fingerprint, reason
@@ -460,7 +495,8 @@ uncommitted, failedOn, and a best-effort audit link.
 
 This is tamper-evident prove-this-run. The hash and the audit link are
 not a cryptographic signature. A local Ed25519 sidecar is reported when
-present. verify stays hash-only. There is no CA and no PKI.
+present. Default verify stays hash-only. \`verify --require-sig\` requires
+a valid sidecar. There is no CA and no PKI.
 
 Signature status (foo.md → foo.sig.json, written by \`sign\`):
   - No sidecar: present false, ok null. Exit rules are unchanged for that alone.
@@ -662,7 +698,8 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
                 are unreadable. Missing keys do not fail doctor or
                 doctor --strict.
   retention     maxCount / maxAgeDays (opt-in). Over the cap or a large outDir is a warning.
-                Unset fails under --strict only when outDir is under pressure.
+                Unset fails under --strict on any outDir, including a small one.
+                Default doctor leaves unset retention as INFO/WARN.
   git-clean     working tree clean? Dirty is a warning, not a failure
   cursor        init --cursor rule present?
   grok          init --grok rule + SessionEnd hook present?
@@ -675,13 +712,15 @@ A broken audit chain is a warning by default.
 Unset org policy (redact: true and failOn) also fails under \`--strict\`,
 even when outDir is small or empty. Set it with \`agent-receipt init --org\`.
 \`doctor --json\` reports that policy check as \`fail\`.
-Unset retention still fails only when outDir is under pressure
-(100 receipts or 20 MB). Below that threshold the retention row stays
-INFO/WARN. A configured limit that would still delete files stays a
-warning — run \`prune\`. \`--strict\` does not scan diffs.
-\`init --retention\` sets maxCount: 100 and maxAgeDays: 30. That does not
-change this pressure rule. Trusted prune refuses to delete when the audit
-chain is broken unless you pass \`prune --force\`.
+Unset retention fails under --strict on any outDir, including a small or
+empty directory. Set it with \`agent-receipt init --retention\`.
+Default \`doctor\` still leaves unset retention as INFO when the directory
+is small, and WARN when it is under pressure (100 receipts or 20 MB).
+A configured limit that would still delete files stays a warning — run
+\`prune\`. \`--strict\` does not scan diffs.
+\`init --retention\` sets maxCount: 100 and maxAgeDays: 30. Trusted prune
+refuses to delete when the audit chain is broken unless you pass
+\`prune --force\`.
 CI \`--fail-on\` remains the risk gate.
 
 \`--json\` prints one object on stdout and does not change the exit code:
@@ -798,13 +837,13 @@ Commands:
   watch                  Poll git; auto-capture on commits or dirty tree
   keygen                 Create a local Ed25519 keypair under .agent-receipt/keys
   sign [path]            Attest the receipt sha256 into a .sig.json sidecar
-  verify [path]          Hash-check tamper-evident integrity (hash-only)
+  verify [path]          Hash-check integrity (hash-only; --require-sig opts in)
   prove [path]           Prove-this-run: verify + audit link + signature status
   audit                  List the compliance log (--event, --agent, --failed filter the listing)
   log                    Alias for audit
   prune                  Delete old receipts under outDir (opt-in; trusted prune; --dry-run, --force)
   retain                 Alias for prune
-  doctor                 Health check (--json; --strict fails unset org policy and a broken audit chain)
+  doctor                 Health check (--json; --strict fails unset policy, unset retention, and a broken audit chain)
   compare [a] [b]        Diff two receipts (default: last vs previous)
   diff [a] [b]           Alias for compare
   install-hooks          Install opt-in post-commit capture hook
@@ -853,6 +892,7 @@ Examples:
   agent-receipt keygen
   agent-receipt sign
   agent-receipt verify
+  agent-receipt verify --require-sig
   agent-receipt prove
   agent-receipt prove --json
   agent-receipt audit

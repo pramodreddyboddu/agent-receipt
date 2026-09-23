@@ -9,12 +9,14 @@ import {
 } from 'node:crypto';
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 /** Local key directory. Already under gitignored `.agent-receipt/`. */
 export const KEY_DIR_REL = '.agent-receipt/keys';
@@ -339,4 +341,65 @@ export function inspectReceiptSignature(
     fingerprint: rec && typeof rec.fingerprint === 'string' ? rec.fingerprint : null,
     reason: result.reason,
   };
+}
+
+export interface SignatureHandoff {
+  /** Sidecar beside the published Markdown, or null when none was attached. */
+  sigPath: string | null;
+  action: 'copied' | 'resigned' | 'unsigned';
+  /** Set when the body was rewritten and no local keys exist. */
+  tip: string | null;
+}
+
+const RESIGN_TIP =
+  'published Markdown was re-hashed and left unsigned (no stale sidecar). Run `agent-receipt keygen` then `agent-receipt sign <file>`.';
+
+function removeSidecar(sigPath: string): void {
+  if (existsSync(sigPath)) unlinkSync(sigPath);
+}
+
+/**
+ * Portable handoff for a published Markdown receipt (`foo.md` → `foo.sig.json`).
+ * HTML is not signed; callers skip this for HTML.
+ *
+ * Same sha256 and a valid source sidecar → copy that sidecar. Never copy a
+ * sidecar whose sha256 would not match the published body.
+ * A rewritten body (redact re-hash) is re-signed with `loadKeys` when a
+ * local keypair exists. Missing keys leave the file unsigned and remove any
+ * destination sidecar. That case returns a tip and does not fail the caller.
+ */
+export function handoffMarkdownSignature(opts: {
+  cwd: string;
+  sourcePath: string;
+  sourceSha256: string;
+  publishedPath: string;
+  publishedSha256: string;
+}): SignatureHandoff {
+  const destSig = signaturePathFor(opts.publishedPath);
+  const sameHash =
+    opts.sourceSha256.length > 0 && opts.sourceSha256 === opts.publishedSha256;
+
+  if (sameHash) {
+    const sourceStatus = inspectReceiptSignature(opts.sourcePath, opts.sourceSha256);
+    if (sourceStatus.present && sourceStatus.ok === true) {
+      const srcSig = signaturePathFor(opts.sourcePath);
+      if (resolve(srcSig) !== resolve(destSig)) {
+        copyFileSync(srcSig, destSig);
+      }
+      return { sigPath: destSig, action: 'copied', tip: null };
+    }
+    removeSidecar(destSig);
+    return { sigPath: null, action: 'unsigned', tip: null };
+  }
+
+  let keys: LoadedKeys;
+  try {
+    keys = loadKeys(opts.cwd);
+  } catch {
+    removeSidecar(destSig);
+    return { sigPath: null, action: 'unsigned', tip: RESIGN_TIP };
+  }
+  const doc = createSignatureDocument(opts.publishedSha256, keys);
+  const sigPath = writeSignatureSidecar(opts.publishedPath, doc);
+  return { sigPath, action: 'resigned', tip: null };
 }

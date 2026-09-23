@@ -47,6 +47,7 @@ export {
   inspectReceiptSignature,
   isLocalKeyMaterialPath,
   createSignatureDocument,
+  handoffMarkdownSignature,
 } from './lib/sign.js';
 export {
   analyzeRisks,

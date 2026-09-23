@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.17] — 2026-09-22
+
+### Added
+
+- `verify --require-sig` (alias `--require-signature`) is opt-in. Default `verify` stays hash-only: unsigned receipts still pass, and a missing or invalid sidecar does not fail. With the flag, the existing Markdown hash check runs first (hash failure still exits 2). After a matching hash, a valid `*.sig.json` beside the receipt is required (`inspectReceiptSignature` / `verifySignature`). A missing sidecar exits 2 with reason `signature required: signature absent`. A present sidecar that is invalid, mismatched, or malformed exits 2 with the signature reason. A valid sidecar for the current sha256 exits 0 unless `--fail-on` also trips. `verify --json --require-sig` adds optional `signature` `{ present, ok, alg, fingerprint, reason }` on the gate. The field is omitted when `--require-sig` was not passed. No config key. `capture`, `wrap`, and `share` do not turn the flag on.
+- Share and export Markdown sidecar handoff. `foo.md` → `foo.sig.json`. HTML stays unsigned. When the published Markdown sha256 equals the source and a valid source sidecar exists, that sidecar is copied. When redact (or any rewrite) changes the sha256, the old sidecar is not copied. Local keys (`loadKeys`, the same pair as `sign`) re-sign the published Markdown. Missing keys leave it unsigned, remove any destination sidecar, and print a short `keygen` / `sign` tip. That tip does not exit 2. `share --json` adds optional `sigPath` (string or null). Private keys are never written into a receipt or sidecar.
+- CI examples (live [`.github/workflows/*`](.github/workflows) was not edited). [`examples/github/action.yml`](examples/github/action.yml) gains optional `require-sig` (default false). When true, after a green gate it runs `verify --require-sig` on the receipt path. The job must `keygen` and `sign` (or restore keys) first. [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) gains optional `require-sig` (default false) that temp-`keygen`s, `sign`s, and checks `prove` `signature.ok` plus `verify --require-sig`. No org secret. Pin comments are `v1.0.17`.
+- `doctor --strict` always fails unset retention (`maxCount` / `maxAgeDays`) on any `outDir`, including a small or empty one. Default `doctor` stays pressure-gated (INFO until 100 receipts or 20 MB, then WARN). A configured limit that would still delete stays a warning. `init --retention` still sets the two limits.
+
+### Changed
+
+- Package version bumped to `1.0.17`.
+- [`docs/gate.schema.json`](docs/gate.schema.json) documents optional `signature` and `sigPath`. Required gate keys are unchanged.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) runs `verify --require-sig` on the signed receipt (exit 0) and on an unsigned copy (exit 2) after `keygen` → `sign` → `prove`. `doctor --strict` on the small smoke repo fails unset retention until `init --retention`. Version-range comments include 1.0.17. Live [`.github/workflows/*`](.github/workflows) was not edited.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm.
+- Still not a CA. The private key stays under `.agent-receipt/keys/`.
+- Still deferred: full PKI/CA, a fingerprint trust store, minisign, GPG/OpenPGP, auto-sign on capture, SSO / IdP, Cloud Agents, a background deleter, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.16] — 2026-09-22
 
 ### Added

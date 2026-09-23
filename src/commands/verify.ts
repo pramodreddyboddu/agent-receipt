@@ -14,6 +14,7 @@ import {
   riskToGate,
   type GateReport,
 } from '../lib/gate.js';
+import { inspectReceiptSignature, type SignatureStatus } from '../lib/sign.js';
 
 export interface VerifyCommandOptions {
   /** Suppress human stdout (JSON gate commands, or a caller that prints its own summary). */
@@ -25,6 +26,11 @@ export interface VerifyCommandOptions {
    * plain `verify` in existing hooks stays an integrity check.
    */
   failOn?: FailOnThreshold;
+  /**
+   * Opt-in. After a passing hash, require a valid `*.sig.json` beside the
+   * receipt. Default verify stays hash-only.
+   */
+  requireSig?: boolean;
 }
 
 export interface VerifyCommandResult {
@@ -38,6 +44,8 @@ export interface VerifyCommandResult {
   exitCode: 0 | 2;
   redacted: boolean;
   risk: ReturnType<typeof parseRiskSummaryMarkdown>;
+  /** Set when `--require-sig` ran after a passing hash. Null otherwise. */
+  signature: SignatureStatus | null;
 }
 
 export function reportVerify(
@@ -91,6 +99,44 @@ export function cmdVerify(
   const risk = parseRiskSummaryMarkdown(text);
   const failedOn = Boolean(opts.failOn && meetsFailOn(risk.maxSeverity, opts.failOn));
   const redacted = text.includes('**Redacted**');
+  const requireSig = Boolean(opts.requireSig);
+
+  // Hash failure exits 2 as today. The signature check runs only after a match.
+  let signature: SignatureStatus | null = null;
+  if (requireSig && reported.ok) {
+    const inspected = inspectReceiptSignature(path, reported.sha256);
+    if (!inspected.present) {
+      signature = {
+        present: false,
+        ok: false,
+        alg: null,
+        fingerprint: null,
+        reason: 'signature required: signature absent',
+      };
+    } else if (inspected.ok !== true) {
+      signature = {
+        present: true,
+        ok: false,
+        alg: inspected.alg,
+        fingerprint: inspected.fingerprint,
+        reason: inspected.reason || 'signature invalid',
+      };
+    } else {
+      signature = inspected;
+    }
+  }
+  const sigFailed = Boolean(signature && signature.ok !== true);
+
+  if (!quiet && signature) {
+    if (signature.ok === true) {
+      console.log(
+        color.green('✓') +
+          ` signature ${signature.alg ?? 'ed25519'} ${signature.fingerprint ?? ''}`.trimEnd(),
+      );
+    } else if (signature.reason) {
+      console.error(color.red('✗') + ` ${signature.reason}`);
+    }
+  }
 
   if (!quiet && failedOn && opts.failOn) {
     console.error(
@@ -99,10 +145,14 @@ export function cmdVerify(
     );
   }
 
-  const exitCode: 0 | 2 = !reported.ok || failedOn ? 2 : 0;
+  const exitCode: 0 | 2 = !reported.ok || failedOn || sigFailed ? 2 : 0;
   let reason = reported.ok ? '' : reported.reason;
+  if (reported.ok && sigFailed && signature?.reason) {
+    reason = signature.reason;
+  }
   if (reported.ok && failedOn && opts.failOn) {
-    reason = failOnReason(opts.failOn, risk.maxSeverity);
+    const fail = failOnReason(opts.failOn, risk.maxSeverity);
+    reason = reason ? `${reason}; ${fail}` : fail;
   }
 
   if (opts.json) {
@@ -124,6 +174,7 @@ export function cmdVerify(
       ignored: null,
       trailingIgnored: reported.trailingIgnored,
       reason: reason || null,
+      ...(signature ? { signature } : {}),
     });
     printGate(gate);
   }
@@ -136,5 +187,6 @@ export function cmdVerify(
     redacted,
     risk,
     reason,
+    signature,
   };
 }
