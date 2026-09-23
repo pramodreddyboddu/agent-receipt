@@ -12,6 +12,26 @@ export function isProveOnePagerName(filename: string): boolean {
   return /\.prove\.md$/i.test(base);
 }
 
+/**
+ * Portable share packages are directories named `<stem>.share`.
+ * `last`, `history`, and `prune` skip those directories and anything inside them.
+ * `manifest.json` and `receipt.md` in the package are not receipts.
+ */
+export function isSharePackageDirName(filename: string): boolean {
+  const base = filename.split(/[/\\]/).pop() ?? filename;
+  return /\.share$/i.test(base);
+}
+
+/**
+ * True when any parent segment is a `*.share` package directory.
+ * The file's own basename is not treated as a directory.
+ */
+export function isInsideSharePackage(filePath: string): boolean {
+  const parts = filePath.replace(/\\/g, '/').split('/').filter((part) => part.length > 0);
+  if (parts.length < 2) return false;
+  return parts.slice(0, -1).some((part) => isSharePackageDirName(part));
+}
+
 export interface ReceiptData {
   version: string;
   timestamp: string;

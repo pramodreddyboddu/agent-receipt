@@ -332,6 +332,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           redact: resolveShareRedact(flags),
           failOn,
           json: flagBool(flags, 'json'),
+          package: flagBool(flags, 'package', 'pack'),
         });
         return result.exitCode;
       }

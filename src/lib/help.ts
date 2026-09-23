@@ -171,7 +171,7 @@ Examples:
   share: `agent-receipt share — redact, write HTML (+ optional Markdown), verify
 
 Usage:
-  agent-receipt share [path] [--out <html>] [--md [file]] [--no-redact] [--fail-on …] [--json]
+  agent-receipt share [path] [--out <html>] [--md [file]] [--package] [--no-redact] [--fail-on …] [--json]
 
 One shot for handing a receipt to someone else. Reuses export / html / verify /
 redact (share-safety from 1.0.3: credential URLs, nested receipt bodies).
@@ -181,10 +181,12 @@ Defaults:
   - --redact is ON unless you pass --no-redact (config redact: false does not turn this off)
   - HTML next to the receipt (sibling .html)
   - Optional Markdown only when --md / --markdown is set
+  - --package (alias --pack) writes both HTML and Markdown into a directory
   - Refuses to overwrite the source receipt
   - Does not write anything if the source receipt fails verify (no re-hash of a tampered body)
 
 Prints TL;DR, html path, optional md path, optional sig path, source path, then verify.
+\`--package\` also prints \`package: <dir>\` and a tip to verify the Markdown inside it.
 
 Markdown sidecar handoff (HTML is never signed):
   - Published Markdown sha256 matches the source, and a valid source
@@ -195,10 +197,35 @@ Markdown sidecar handoff (HTML is never signed):
     That does not exit 2 by itself.
   - HTML-only share writes no signature. Peers verify and sign the Markdown.
 
+\`--package\` / \`--pack\` (portable handoff directory):
+  - Default directory is the sibling \`<stem>.share/\` (\`foo.md\` → \`foo.share/\`).
+  - \`--out\` overrides that directory when it names an existing directory or
+    ends with \`/\`. Any other \`--out\` leaves the sibling \`<stem>.share/\`.
+  - Always writes \`receipt.html\` and \`receipt.md\` (implies \`--md\`). A separate
+    \`--md\` path is not a second file.
+  - Applies the same Markdown sidecar handoff to \`receipt.sig.json\`.
+  - Writes \`manifest.json\` (kind \`agent-receipt-share\`, receipt sha256, per-file
+    byte hashes, fingerprint, signed). See \`docs/share-package.schema.json\`.
+  - When local keys load, also writes \`manifest.sig.json\` — the same Ed25519
+    sidecar shape as \`sign\`, over the UTF-8 hex sha256 of the manifest bytes.
+    Missing keys omit \`manifest.sig.json\`. That does not exit 2.
+  - The HTML body stays unsigned. The package is signed via \`receipt.sig.json\`
+    and the optional manifest sidecar.
+  - \`last\`, \`history\`, and \`prune\` ignore \`*.share/\` directories. \`manifest.json\`
+    and the files inside the package are not receipts.
+  - \`--json\` adds \`packagePath\` and points \`htmlPath\` / \`markdownPath\` / \`sigPath\`
+    at the files inside the package. Without \`--package\`, those fields stay
+    as they are today and \`packagePath\` is omitted.
+
 Options:
-  --out <path>           HTML output (default: sibling .html)
+  --out <path>           HTML output (default: sibling .html). With --package,
+                         the package directory when <path> is an existing
+                         directory or ends with /.
   --md [path]            Also write Markdown (default name: sibling .redacted.md)
   --markdown [path]      Alias for --md
+  --package              Write <stem>.share/ with receipt.html, receipt.md,
+                         manifest.json, and optional sidecars. Implies Markdown.
+  --pack                 Alias for --package
   --redact               Accepted; this is already the default
   --no-redact            Write HTML/Markdown without masking
   --fail-on [high|medium|low]
@@ -207,16 +234,20 @@ Options:
                          Config failOn applies when the flag is omitted.
   --json                 One CI gate object on stdout (progress on stderr).
                          Adds sigPath (string or null) when Markdown was written.
+                         Adds packagePath when --package wrote a directory.
   --cwd <path>           Run as if started in this directory
 
 Exit codes: 0 OK, 2 verify failure or --fail-on, 1 usage/runtime error.
 Share does not enable \`verify --require-sig\`. A missing sidecar on a
 rewritten Markdown file is a tip, not exit 2.
 Appends \`.agent-receipt/audit.jsonl\` (experimental hash chain; see \`help audit\`).
+One \`share\` event. The inner export is not a second line.
 
 Examples:
   agent-receipt share
   agent-receipt share --out share.html --md share.md
+  agent-receipt share --package
+  agent-receipt share --pack receipt.md
   agent-receipt share receipt.md --fail-on high --json
 `,
 
@@ -1008,7 +1039,7 @@ Commands:
   init                   Write config + notes (--org sets redact + failOn; --retention; --cursor, --grok)
   capture                Capture a git snapshot receipt (Markdown)
   wrap                   End-of-session: capture + TL;DR + verify
-  share [path]           Redact + HTML (+ optional md) + verify + TL;DR
+  share [path]           Redact + HTML (+ optional md, or --package handoff dir) + verify + TL;DR
   export [path]          Write self-contained HTML (or Markdown) receipt
   html [path]            Alias for export as HTML
   show [path]            Pretty-print last / given receipt (full body)
@@ -1052,6 +1083,7 @@ Examples:
   agent-receipt wrap --agent cursor --message "session done"
   agent-receipt wrap --json --fail-on high
   agent-receipt share --out share.html --md share.md
+  agent-receipt share --package
   agent-receipt wrap --agent grok --redact --message "grok session"
   agent-receipt capture --agent cursor --message "ship v0.6"
   agent-receipt capture --base main --message "PR vs main"

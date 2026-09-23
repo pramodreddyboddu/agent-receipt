@@ -229,14 +229,18 @@ export function createSignatureDocument(
   };
 }
 
-export function writeSignatureSidecar(receiptPath: string, doc: SignatureDocument): string {
-  const sigPath = signaturePathFor(receiptPath);
+/** Write a SignatureDocument to an explicit path. Refuses a private key in the body. */
+export function writeSignatureDocument(sigPath: string, doc: SignatureDocument): string {
   const body = JSON.stringify(doc, null, 2) + '\n';
   if (body.includes('PRIVATE KEY')) {
     throw new Error('refusing to write a signature sidecar that contains a private key');
   }
   writeFileSync(sigPath, body, { mode: 0o644 });
   return sigPath;
+}
+
+export function writeSignatureSidecar(receiptPath: string, doc: SignatureDocument): string {
+  return writeSignatureDocument(signaturePathFor(receiptPath), doc);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

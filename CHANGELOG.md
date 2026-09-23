@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.24] — 2026-09-22
+
+### Added
+
+- `share --package` (alias `--pack`) writes a portable handoff directory. `foo.md` becomes `foo.share/` beside the receipt. `--out` overrides that directory when it names an existing directory or ends with `/`. Any other `--out` leaves the sibling `<stem>.share/`. The package always contains `receipt.html` and `receipt.md` (it implies `--md`; a separate `--md` path is not a second file) plus `manifest.json`. `receipt.sig.json` is copied or re-signed with the same Markdown sidecar handoff as `share --md` / export. A rewrite with no local keys leaves the Markdown unsigned and does not copy a stale sidecar (the existing `keygen` / `sign` tip; that does not exit 2). When local keys load, `manifest.sig.json` is the same Ed25519 `SignatureDocument` as `sign`, over the UTF-8 hex SHA-256 of the `manifest.json` bytes. Missing keys omit `manifest.sig.json` and do not exit 2. The HTML body stays unsigned. The package is signed via the Markdown sidecar and the optional manifest sidecar. Human stdout prints `package: <dir>` plus the html / md / sig lines, and tips peers to open the HTML and run `verify`, `prove`, or `verify --require-sig` on `receipt.md`. `--json` adds optional `packagePath` (omitted when not packaging). `htmlPath`, `markdownPath`, and `sigPath` point at the files inside the package. Required gate keys are unchanged. A source that fails verify is not rewritten. Redact stays the default. `--no-redact` still works. One `share` audit event (the inner export is not a second line). `last`, `history`, and `prune` ignore `*.share/` directories. `manifest.json` and the files inside the package are not receipts. `*.prove.md` stays ignored. Without `--package`, share is unchanged (HTML by default; Markdown only with `--md`; HTML unsigned). Not a CA. Schema: [`docs/share-package.schema.json`](docs/share-package.schema.json).
+
+### Changed
+
+- Package version bumped to `1.0.24`.
+- [`docs/business.md`](docs/business.md) documents the share package under share / handoff. HTML/share signed package is landed. A signed one-pager and `prove --html` stay deferred. The lead sentence tracks 1.0.24.
+- [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md) and [`README.md`](README.md) note that `share --package` ships HTML and signed Markdown together. Pin comments that track the current cut are `v1.0.24`.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) version-range comments include 1.0.24. After keygen, smoke runs `share --package --json` and checks `packagePath`, `receipt.md`, `receipt.html`, and `receipt.sig.json`, then `verify --require-sig` on the package Markdown exits 0. Live [`.github/workflows/*`](.github/workflows) was not edited.
+- [`examples/github/action.yml`](examples/github/action.yml), [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml), and [`examples/org-policy.yml`](examples/org-policy.yml) pin comments are `v1.0.24`. No new action input. A comment names `share --package`.
+- [`docs/gate.schema.json`](docs/gate.schema.json) documents optional `packagePath`.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm.
+- Still not a CA. No key escrow. The private key stays under `.agent-receipt/keys/`. The HTML body is unsigned. Peers verify `receipt.md`.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config (signing stays opt-in via config `sign: true` or `--sign`), a signed one-pager, unsigned HTML prove export (`prove --html`), a background deleter, multi-agent receipt linking, SSO / IdP, Cloud Agents, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.23] — 2026-09-22
 
 ### Added

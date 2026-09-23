@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/share-package.schema.json",
+  "title": "SharePackageManifest",
+  "description": "manifest.json written by `agent-receipt share --package` (alias `--pack`) inside a portable handoff directory. The directory also contains receipt.html (unsigned), receipt.md, and receipt.sig.json when a Markdown sidecar was copied or re-signed. files hashes are SHA-256 of the raw file bytes. sha256 is the verify hash of receipt.md (canonical body, the same hex verify uses). signed is true when receipt.sig.json is present. fingerprint is that sidecar's key fingerprint, or null when the Markdown is unsigned. Optional manifest.sig.json (not listed in files) is the same Ed25519 SignatureDocument as docs/signature.schema.json, over the UTF-8 hex SHA-256 of these manifest.json bytes. It is omitted when local keys do not load. That omission does not fail share. This is not a CA. The HTML body stays unsigned.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "cliVersion",
+    "sha256",
+    "redacted",
+    "files",
+    "fingerprint",
+    "signed"
+  ],
+  "properties": {
+    "kind": {
+      "const": "agent-receipt-share",
+      "description": "Discriminator. Peers should reject other kinds."
+    },
+    "version": {
+      "const": 1,
+      "description": "Manifest schema version. Not the CLI version."
+    },
+    "cliVersion": {
+      "type": "string",
+      "description": "agent-receipt version that wrote the package."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Verify hash of receipt.md (canonical body). The same hex `agent-receipt verify` prints."
+    },
+    "redacted": {
+      "type": "boolean",
+      "description": "True when share masked the published body (the default)."
+    },
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receipt.md", "receipt.html"],
+      "description": "SHA-256 of each file's raw bytes. receipt.sig.json is omitted when no Markdown sidecar was attached.",
+      "properties": {
+        "receipt.md": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "receipt.html": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "receipt.sig.json": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "fingerprint": {
+      "description": "64-hex fingerprint of the receipt sidecar, or null when unsigned.",
+      "anyOf": [
+        { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        { "type": "null" }
+      ]
+    },
+    "signed": {
+      "type": "boolean",
+      "description": "True when receipt.sig.json is in the package. False when the Markdown was left unsigned. Independent of manifest.sig.json."
+    }
+  }
+}

@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.23: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.24: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -178,6 +178,15 @@ jobs:
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!Array.isArray(g)||g.some(e=>e.agent!=="ci"||e.failedOn!==true)){console.error(g); process.exit(1)}' "$tmp/history-agent-failed.json"
           node bin/agent-receipt.js share --json --cwd "$tmp" > "$tmp/share.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="share"||g.redacted!==true||g.exitCode!==0||typeof g.sha256!=="string"){console.error(g); process.exit(1)}' "$tmp/share.json"
+          # v1.0.24: share --package after keygen. Keys are present, so the
+          # package includes receipt.sig.json. verify --require-sig on
+          # receipt.md exits 0. HTML stays unsigned. packagePath is set.
+          node bin/agent-receipt.js wrap --sign --agent ci --message share-package --json --cwd "$tmp" > "$tmp/wrap-share-package.json"
+          node bin/agent-receipt.js share --package --json --cwd "$tmp" > "$tmp/share-package.json"
+          node -e 'const fs=require("fs"); const path=require("path"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="share"||g.exitCode!==0||typeof g.packagePath!=="string"||typeof g.htmlPath!=="string"||typeof g.markdownPath!=="string"||typeof g.sigPath!=="string"){console.error(g); process.exit(1)} const dir=g.packagePath; for (const name of ["receipt.md","receipt.html","receipt.sig.json","manifest.json"]) { if(!fs.existsSync(path.join(dir,name))){console.error("missing "+name); process.exit(1)} } if(g.htmlPath!==path.join(dir,"receipt.html")||g.markdownPath!==path.join(dir,"receipt.md")||g.sigPath!==path.join(dir,"receipt.sig.json")){console.error(g); process.exit(1)} const manifest=JSON.parse(fs.readFileSync(path.join(dir,"manifest.json"),"utf8")); if(manifest.kind!=="agent-receipt-share"||manifest.signed!==true||typeof manifest.fingerprint!=="string"||manifest.fingerprint.length!==64||manifest.redacted!==true){console.error(manifest); process.exit(1)} fs.writeFileSync(process.argv[2], g.markdownPath);' "$tmp/share-package.json" "$tmp/share-package-md.path"
+          pkgmd=$(cat "$tmp/share-package-md.path")
+          node bin/agent-receipt.js verify --require-sig --json --cwd "$tmp" "$pkgmd" > "$tmp/verify-share-package.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="verify"||g.exitCode!==0||g.verified!==true||!g.signature||g.signature.present!==true||g.signature.ok!==true){console.error(g); process.exit(1)}' "$tmp/verify-share-package.json"
           node bin/agent-receipt.js audit --verify --cwd "$tmp"
           # Retention is opt-in: dry-run with no limits must delete nothing
           # and must not append audit.jsonl.

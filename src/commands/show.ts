@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../lib/config.js';
 import { extractEmbeddedHash } from '../lib/hash.js';
-import { isProveOnePagerName } from '../lib/receipt.js';
+import { isInsideSharePackage, isProveOnePagerName } from '../lib/receipt.js';
 
 export function findLatestReceipt(cwd: string): string | null {
   const cfg = loadConfig(cwd);
@@ -11,6 +11,7 @@ export function findLatestReceipt(cwd: string): string | null {
   const files = readdirSync(dir)
     .filter((f) => f.endsWith('.md') && !isProveOnePagerName(f))
     .map((f) => join(dir, f))
+    .filter((p) => !isInsideSharePackage(p))
     .filter((p) => {
       try {
         return statSync(p).isFile();

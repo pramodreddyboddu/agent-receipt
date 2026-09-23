@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../lib/config.js';
-import { isProveOnePagerName } from '../lib/receipt.js';
+import { isInsideSharePackage, isProveOnePagerName, isSharePackageDirName } from '../lib/receipt.js';
 import { resolveReceiptPath, findLatestReceipt } from './show.js';
 import { color } from '../lib/color.js';
 
@@ -29,8 +29,10 @@ export function listReceipts(cwd: string): string[] {
   const dir = join(cwd, cfg.outDir);
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
+    .filter((f) => !isSharePackageDirName(f))
     .filter((f) => f.endsWith('.md') && !isProveOnePagerName(f))
     .map((f) => join(dir, f))
+    .filter((p) => !isInsideSharePackage(p))
     .filter((p) => {
       try {
         return statSync(p).isFile();

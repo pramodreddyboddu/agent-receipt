@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/gate.schema.json",
   "title": "GateReport",
-  "description": "One JSON object printed on stdout by `agent-receipt capture|wrap|share|verify --json`. Human progress stays on stderr. This is the CI gate, not the companion receipt file (docs/receipt.schema.json). `ok` is true only when `exitCode` is 0. Exit 0 passes. Exit 2 is a --fail-on match and/or a verify failure (the artifact is still written when capture/wrap/share got that far). Exit 1 is a usage or runtime error (`reason` is set); it is not a policy failure. `verified` is null when the command did not run verify (capture, and usage errors). `trailingIgnored` is a boolean when a body was hashed (verify, and wrap/share after they verify) and null when trailing content was not evaluated (capture, and usage errors). Config `failOn` is not applied by verify unless `--fail-on` is explicit. Optional `signature` is present on verify --json only when --require-sig ran after a passing hash. Optional `sigPath` is present on share --json (string or null). Both are omitted otherwise. Required keys are unchanged.",
+  "description": "One JSON object printed on stdout by `agent-receipt capture|wrap|share|verify --json`. Human progress stays on stderr. This is the CI gate, not the companion receipt file (docs/receipt.schema.json). `ok` is true only when `exitCode` is 0. Exit 0 passes. Exit 2 is a --fail-on match and/or a verify failure (the artifact is still written when capture/wrap/share got that far). Exit 1 is a usage or runtime error (`reason` is set); it is not a policy failure. `verified` is null when the command did not run verify (capture, and usage errors). `trailingIgnored` is a boolean when a body was hashed (verify, and wrap/share after they verify) and null when trailing content was not evaluated (capture, and usage errors). Config `failOn` is not applied by verify unless `--fail-on` is explicit. Optional `signature` is present on verify --json only when --require-sig ran after a passing hash. Optional `sigPath` is present on share --json (string or null). Optional `packagePath` is present on share --json only when --package wrote a directory; htmlPath, markdownPath, and sigPath then point inside it. Those optional keys are omitted otherwise. Required keys are unchanged.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -76,11 +76,11 @@
     },
     "htmlPath": {
       "type": ["string", "null"],
-      "description": "HTML path written by share. Null for capture, wrap, and verify."
+      "description": "HTML path written by share. With share --package this is receipt.html inside the package. Null for capture, wrap, and verify."
     },
     "markdownPath": {
       "type": ["string", "null"],
-      "description": "Extra Markdown path written by share --md. Null otherwise."
+      "description": "Extra Markdown path written by share --md or share --package (receipt.md). Null otherwise."
     },
     "tldr": {
       "type": ["string", "null"],
@@ -138,7 +138,11 @@
     },
     "sigPath": {
       "type": ["string", "null"],
-      "description": "Optional. share --json sets the sidecar path copied or re-signed beside published Markdown, or null when none was attached. Omitted on capture, wrap, and verify."
+      "description": "Optional. share --json sets the sidecar path copied or re-signed beside published Markdown, or null when none was attached. With share --package this is receipt.sig.json inside the package when a sidecar was attached. Omitted on capture, wrap, and verify."
+    },
+    "packagePath": {
+      "type": ["string", "null"],
+      "description": "Optional. share --json --package sets the handoff directory when one was written. Omitted when share did not write a package. htmlPath, markdownPath, and sigPath point at files inside this directory."
     }
   }
 }
