@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/gate.schema.json",
+  "title": "GateReport",
+  "description": "One JSON object printed on stdout by `agent-receipt capture|wrap|share|verify --json`. Human progress stays on stderr. This is the CI gate, not the companion receipt file (docs/receipt.schema.json). `ok` is true only when `exitCode` is 0. Exit 0 passes. Exit 2 is a --fail-on match and/or a verify failure (the artifact is still written when capture/wrap/share got that far). Exit 1 is a usage or runtime error (`reason` is set); it is not a policy failure. `verified` is null when the command did not run verify (capture, and usage errors). `trailingIgnored` is a boolean when a body was hashed (verify, and wrap/share after they verify) and null when trailing content was not evaluated (capture, and usage errors). Config `failOn` is not applied by verify unless `--fail-on` is explicit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "command",
+    "ok",
+    "version",
+    "exitCode",
+    "verified",
+    "failedOn",
+    "failOn",
+    "redacted",
+    "uncommitted",
+    "path",
+    "jsonPath",
+    "htmlPath",
+    "markdownPath",
+    "tldr",
+    "sha256",
+    "risk",
+    "ignored",
+    "trailingIgnored",
+    "reason"
+  ],
+  "properties": {
+    "command": {
+      "type": "string",
+      "enum": ["capture", "wrap", "share", "verify"],
+      "description": "Command that printed this gate object."
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "True only when exitCode is 0."
+    },
+    "version": {
+      "type": "string",
+      "description": "agent-receipt CLI version that printed the gate."
+    },
+    "exitCode": {
+      "type": "integer",
+      "enum": [0, 1, 2],
+      "description": "0 pass, 2 policy and/or verify failure, 1 usage or runtime error."
+    },
+    "verified": {
+      "type": ["boolean", "null"],
+      "description": "Whether verify passed. Null when this command did not run verify (capture) or the run stopped before verify."
+    },
+    "failedOn": {
+      "type": "boolean",
+      "description": "True when --fail-on matched the receipt risk summary."
+    },
+    "failOn": {
+      "type": ["string", "null"],
+      "enum": ["high", "medium", "low", null],
+      "description": "Threshold that was applied, or null when no threshold was set."
+    },
+    "redacted": {
+      "type": "boolean",
+      "description": "True when the written body was redacted."
+    },
+    "uncommitted": {
+      "type": ["boolean", "null"],
+      "description": "True when the receipt snapshots a dirty working tree. Null when unknown or not applicable."
+    },
+    "path": {
+      "type": ["string", "null"],
+      "description": "Absolute Markdown receipt path, or null on a usage error."
+    },
+    "jsonPath": {
+      "type": ["string", "null"],
+      "description": "Companion receipt JSON path when one was written. Not this gate object."
+    },
+    "htmlPath": {
+      "type": ["string", "null"],
+      "description": "HTML path written by share. Null for capture, wrap, and verify."
+    },
+    "markdownPath": {
+      "type": ["string", "null"],
+      "description": "Extra Markdown path written by share --md. Null otherwise."
+    },
+    "tldr": {
+      "type": ["string", "null"],
+      "description": "One-line TL;DR when the command produced one."
+    },
+    "sha256": {
+      "type": ["string", "null"],
+      "description": "SHA-256 of the canonical receipt body, or null when no body was hashed."
+    },
+    "risk": {
+      "type": ["object", "null"],
+      "description": "Risk counts from the receipt summary. Null when no summary was produced.",
+      "additionalProperties": false,
+      "required": ["high", "medium", "low", "total", "maxSeverity"],
+      "properties": {
+        "high": { "type": "integer", "minimum": 0 },
+        "medium": { "type": "integer", "minimum": 0 },
+        "low": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 },
+        "maxSeverity": {
+          "type": ["string", "null"],
+          "enum": ["high", "medium", "low", null]
+        }
+      }
+    },
+    "ignored": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Count of paths skipped by ignore globs, when the command computed one."
+    },
+    "trailingIgnored": {
+      "type": ["boolean", "null"],
+      "description": "True when content after ## Integrity was ignored by the hash. Boolean when a body was hashed. Null on capture and on usage errors."
+    },
+    "reason": {
+      "type": ["string", "null"],
+      "description": "Human reason for exit 1, or for an exit 2 policy/verify failure. Null when the gate passed."
+    }
+  }
+}

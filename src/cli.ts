@@ -206,6 +206,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           cursor: flagBool(flags, 'cursor'),
           grok: flagBool(flags, 'grok'),
           org: flagBool(flags, 'org', 'policy'),
+          retention: flagBool(flags, 'retention'),
         });
         return 0;
       case 'capture': {
@@ -340,14 +341,16 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           failed: flagAuditFailed(flags),
         });
       case 'prune':
-      case 'retain':
-        cmdPrune(cwd, {
+      case 'retain': {
+        const report = cmdPrune(cwd, {
           dryRun: flagBool(flags, 'dry-run'),
           maxCount: flagPositiveInt(flags, 'max-count'),
           maxAgeDays: flagPositiveInt(flags, 'max-age-days'),
           json: flagBool(flags, 'json'),
+          force: flagBool(flags, 'force'),
         });
-        return 0;
+        return report.exitCode;
+      }
       case 'compare':
       case 'diff':
         return cmdCompare(cwd, positional[0], positional[1]);

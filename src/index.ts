@@ -6,6 +6,8 @@ export {
   writeGrokIntegration,
   applyOrgPolicy,
   applyOrgPolicyYaml,
+  applyRetention,
+  applyRetentionYaml,
 } from './commands/init.js';
 export { cmdCapture } from './commands/capture.js';
 export { cmdWrap } from './commands/wrap.js';

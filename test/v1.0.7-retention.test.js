@@ -302,7 +302,11 @@ describe('prune command', () => {
     const outDir = join(dir, '.agent-receipt', 'receipts');
     mkdirSync(outDir, { recursive: true });
     writeFileSync(join(dir, '.agent-receipt.yml'), 'outDir: .agent-receipt/receipts\n');
-    writeFileSync(join(dir, '.agent-receipt', 'audit.jsonl'), '{"event":"wrap"}\n');
+    // Intact chain (prev null). A broken log would make trusted prune refuse.
+    writeFileSync(
+      join(dir, '.agent-receipt', 'audit.jsonl'),
+      '{"event":"wrap","prev":null}\n',
+    );
     writeFileSync(join(dir, '.agent-receipt', 'SETUP.md'), 'keep me\n');
     const writeReceipt = (name, iso) => {
       const md = join(outDir, name);

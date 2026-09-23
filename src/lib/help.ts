@@ -4,13 +4,14 @@ const TOPICS: Record<string, string> = {
   init: `agent-receipt init — write config + setup notes
 
 Usage:
-  agent-receipt init [--cursor] [--grok] [--org] [--cwd <path>]
+  agent-receipt init [--cursor] [--grok] [--org] [--retention] [--cwd <path>]
 
 Options:
   --cursor               Drop .cursor/rules/agent-receipt.mdc (agent runs capture)
   --grok                 Drop .grok rule + SessionEnd hook (dirty-tree wrap, --redact)
   --org                  Set redact: true and failOn: high (alias: --policy)
   --policy               Alias of --org
+  --retention            Set maxCount: 100 and maxAgeDays: 30
 
 \`--org\` and \`--policy\` are the same path. No network.
 
@@ -28,6 +29,15 @@ Prints the config path and whether each key was set or unchanged, then
 suggests \`doctor --strict\`. See examples/org-policy.yml for the full
 example — do not copy it over a local ignore list.
 
+\`--retention\` is the same merge style for the two retention keys
+(\`maxCount: 100\`, \`maxAgeDays: 30\` — the disk-pressure / org-policy
+tips). A missing file is a normal init config with those keys enabled.
+An existing file rewrites only those keys. \`ignore\`, \`redact\`,
+\`failOn\`, \`outDir\`, and comments stay. Re-running when both are
+already set exits 0 and does not rewrite them. Prints whether each key
+was set or unchanged, then suggests \`prune --dry-run\`. No network.
+Trusted prune still refuses to delete when the audit chain is broken.
+
 Creates:
   .agent-receipt.yml          config (outDir, agent, ignore globs, …)
   .agent-receipt/SETUP.md     short next-steps (when the config is created)
@@ -39,6 +49,7 @@ Examples:
   agent-receipt init
   agent-receipt init --org
   agent-receipt init --policy
+  agent-receipt init --retention
   agent-receipt init --cursor
   agent-receipt init --grok
   agent-receipt init --cwd ~/code/my-app
@@ -481,13 +492,22 @@ Examples:
   prune: `agent-receipt prune — delete old receipts under outDir (opt-in)
 
 Usage:
-  agent-receipt prune [--dry-run] [--max-count <N>] [--max-age-days <N>] [--json]
+  agent-receipt prune [--dry-run] [--max-count <N>] [--max-age-days <N>] [--json] [--force]
   agent-receipt retain                 # alias
 
 Nothing is deleted unless a limit is set. Limits come from
 \`.agent-receipt.yml\` (\`maxCount\`, \`maxAgeDays\`) or from the flags below.
 Flags override config for this run. Omit both and prune exits 0 without
 deleting. Capture, wrap, and watch never prune on their own.
+\`init --retention\` sets \`maxCount: 100\` and \`maxAgeDays: 30\`.
+
+Trusted prune: when \`.agent-receipt/audit.jsonl\` exists, the hash chain
+is checked before any delete. A broken chain exits 1, deletes nothing,
+and appends no audit line. Dry-run does the same (exit 1) and may still
+list candidates, but it does not claim those deletes will proceed.
+A missing audit log is fine — absence is not a failure. \`--force\` is
+break-glass: it deletes even when the audit chain is broken. Retention
+must not paper over a broken audit chain.
 
 A receipt is kept only when it satisfies every limit that is set
 (it is deleted when it misses any one of them):
@@ -510,19 +530,26 @@ that deletes nothing does not append.
 \`--json\` adds \`command\`, \`version\`, \`exitCode\`, and \`audited\` (lines
 appended; 0 on dry-run). Each \`deleted\` row has the same identity fields
 as an audit line (\`sha256\`, \`agent\`, \`redacted\`, \`verified\`,
-\`failedOn\`, \`exitCode\`) plus \`reasons\` and \`bytes\`.
+\`failedOn\`, \`exitCode\`) plus \`reasons\` and \`bytes\`. The report also
+includes \`auditPresent\`, \`chainOk\` (null when the log is absent),
+\`reason\` (set when trusted prune refuses), and \`forced\`. On a refused
+run, \`deleted\` is the plan that was not applied and \`audited\` is 0.
+\`ok\` is true only when \`exitCode\` is 0.
 
 outDir must be a subdirectory of the repo (not the repo root, not outside).
 A broken \`index.json\` makes prune refuse before it deletes anything.
 
-Exit 0 when the plan is applied, previewed, or retention is off.
-Exit 1 on invalid limits, an unsafe outDir, or an unreadable index.
+Exit 0 when the plan is applied, previewed, or retention is off, and the
+audit log is absent or intact (or \`--force\` skipped a broken chain).
+Exit 1 on a broken audit chain (including dry-run), invalid limits, an
+unsafe outDir, or an unreadable index.
 
 Examples:
   agent-receipt prune --dry-run
   agent-receipt prune --dry-run --max-count 50
   agent-receipt prune --max-age-days 30
   agent-receipt prune --json
+  agent-receipt prune --force --max-count 50
 `,
 
   retain: `See: agent-receipt help prune`,
@@ -568,6 +595,9 @@ Unset retention still fails only when outDir is under pressure
 (100 receipts or 20 MB). Below that threshold the retention row stays
 INFO/WARN. A configured limit that would still delete files stays a
 warning — run \`prune\`. \`--strict\` does not scan diffs.
+\`init --retention\` sets maxCount: 100 and maxAgeDays: 30. That does not
+change this pressure rule. Trusted prune refuses to delete when the audit
+chain is broken unless you pass \`prune --force\`.
 CI \`--fail-on\` remains the risk gate.
 
 \`--json\` prints one object on stdout and does not change the exit code:
@@ -671,7 +701,7 @@ Usage:
   agent-receipt <command> [options]
 
 Commands:
-  init                   Write config + notes (--org sets redact + failOn; --cursor, --grok)
+  init                   Write config + notes (--org sets redact + failOn; --retention; --cursor, --grok)
   capture                Capture a git snapshot receipt (Markdown)
   wrap                   End-of-session: capture + TL;DR + verify
   share [path]           Redact + HTML (+ optional md) + verify + TL;DR
@@ -686,7 +716,7 @@ Commands:
   prove [path]           Prove-this-run: verify + audit link (not a signature)
   audit                  List the compliance log (--event, --agent, --failed filter the listing)
   log                    Alias for audit
-  prune                  Delete old receipts under outDir (opt-in; --dry-run)
+  prune                  Delete old receipts under outDir (opt-in; trusted prune; --dry-run, --force)
   retain                 Alias for prune
   doctor                 Health check (--json; --strict fails unset org policy and a broken audit chain)
   compare [a] [b]        Diff two receipts (default: last vs previous)
@@ -709,6 +739,7 @@ Quickstart (≈ 60 seconds):
 
 Examples:
   agent-receipt init --org
+  agent-receipt init --retention
   agent-receipt init --cursor
   agent-receipt init --grok
   agent-receipt wrap --agent cursor --message "session done"
@@ -742,6 +773,7 @@ Examples:
   agent-receipt log --failed
   agent-receipt audit --verify
   agent-receipt prune --dry-run
+  agent-receipt prune --force
   agent-receipt doctor
   agent-receipt doctor --json
   agent-receipt compare
@@ -751,7 +783,7 @@ Examples:
 Docs: https://github.com/pramodreddyboddu/agent-receipt
 Agent tips: docs/agents.md · docs/grok-cli.md · examples/ (Cursor, Grok, Claude Code, Aider)
 Prod / CI: docs/business.md · examples/org-policy.yml · examples/github/
-Schema: docs/receipt.schema.json · Release: docs/RELEASE.md
+Schema: docs/receipt.schema.json · docs/gate.schema.json · Release: docs/RELEASE.md
 `;
 }
 

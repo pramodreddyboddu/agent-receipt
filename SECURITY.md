@@ -53,7 +53,9 @@ Hugging Face `hf_`, Groq `gsk_`, xAI `xai-`, and `Authorization: Bearer`, and
 omits nested prior-receipt bodies). Redaction is not a DLP guarantee. `prune`
 deletes receipt files only when you set `maxCount` / `maxAgeDays` and run it
 (default is keep everything) and then appends one audit line per receipt
-deleted (`--dry-run` does not).
+deleted (`--dry-run` does not). Trusted prune refuses that delete when
+`.agent-receipt/audit.jsonl` exists and the hash chain is broken
+(`prune --force` is break-glass). `init --retention` sets the two limits.
 See [`docs/business.md`](docs/business.md) for what not to put in receipts.
 
 ## Supply chain

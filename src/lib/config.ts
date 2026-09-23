@@ -294,7 +294,9 @@ riskAllowlist: []
 
 # Retention is opt-in. Nothing is deleted until you set one of these
 # and run \`agent-receipt prune\` (preview with \`--dry-run\`).
-# Capture / wrap / watch do not prune.
+# \`agent-receipt init --retention\` sets both keys (100 receipts / 30 days).
+# Trusted prune refuses to delete when audit.jsonl exists and the chain
+# is broken. \`prune --force\` deletes anyway. Capture / wrap / watch do not prune.
 # maxCount: 100
 # maxAgeDays: 30
 `;
@@ -370,9 +372,11 @@ riskAllowlist: []
     \`agent-receipt audit --verify\` checks it. The log has no diff bodies
     and no session \`--message\`.
 
-13. Retention is opt-in. Set \`maxCount\` and/or \`maxAgeDays\` above, preview
-    with \`agent-receipt prune --dry-run\`, then \`agent-receipt prune\`.
-    See \`docs/business.md\`. Nothing is deleted until you do that.
+13. Retention is opt-in. \`agent-receipt init --retention\` sets
+    \`maxCount: 100\` and \`maxAgeDays: 30\`. Preview with
+    \`agent-receipt prune --dry-run\`, then \`agent-receipt prune\`.
+    Trusted prune refuses to delete when the audit chain is broken
+    (\`prune --force\` is break-glass). See \`docs/business.md\`.
 
 14. Agent-specific tips: see \`docs/agents.md\` in the package / repo.
 

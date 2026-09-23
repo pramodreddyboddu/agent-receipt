@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.14: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.15: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -64,6 +64,9 @@ jobs:
           node bin/agent-receipt.js init --cwd "$tmp"
           node bin/agent-receipt.js wrap --agent ci --message smoke --json --cwd "$tmp" > "$tmp/wrap.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="wrap"||g.exitCode!==0||typeof g.trailingIgnored!=="boolean"){console.error(g); process.exit(1)}' "$tmp/wrap.json"
+          # v1.0.15: docs/gate.schema.json required keys are on the wrap gate
+          # object. Drop-in examples live under examples/github/ (not this job).
+          node -e 'const fs=require("fs"); const schema=JSON.parse(fs.readFileSync("docs/gate.schema.json","utf8")); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const req=schema.required||[]; if(!req.length){console.error("schema required empty"); process.exit(1)} for (const k of req) { if(!Object.prototype.hasOwnProperty.call(g,k)) { console.error("missing "+k); process.exit(1);} }' "$tmp/wrap.json"
           # prove-this-run: hash ok, trailing content evaluated, audit linked.
           node bin/agent-receipt.js prove --json --cwd "$tmp" > "$tmp/prove.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="prove"||g.verified!==true||g.trailingIgnored!==false||g.exitCode!==0||!g.audit||g.audit.present!==true||g.audit.chainOk!==true||g.audit.matched!==true||typeof g.audit.events!=="number"||typeof g.sha256!=="string"){console.error(g); process.exit(1)}' "$tmp/prove.json"

@@ -1,6 +1,6 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.14 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.15 for teams: install once, capture every session, fail CI
 on high-severity findings, share only redacted HTML, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
@@ -121,13 +121,14 @@ Stable rules:
 **one JSON object** on stdout (no pretty-print, no log lines mixed in).
 Progress stays on stderr. `capture` / `wrap` also still write the companion
 receipt `.json` next to the Markdown (`docs/receipt.schema.json`) — that file
-is the artifact, not the gate.
+is the artifact, not the gate. The gate object itself is
+[`docs/gate.schema.json`](gate.schema.json).
 
 ```json
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -228,8 +229,39 @@ Copy one of:
 
 | Example | What to do with it |
 |---------|--------------------|
-| [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. |
-| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/` and call it after `agent-receipt` is on `PATH` (devDependency or global install). |
+| [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. After a green gate it runs `prove --json` (`prove` defaults to true) and uploads `receipt-gate.json` plus the receipt Markdown (`actions/upload-artifact@v4`, name `agent-receipt-gate`). |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.15`) and `prove`. Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
+
+### Drop-in
+
+Copy the composite action and call it after checkout. `install: true` installs
+from GitHub when you do not already have the CLI. `prove: true` runs
+`prove --json` after a green wrap or share and fails the step unless `ok` is
+true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0
+- uses: actions/setup-node@v4
+  with:
+    node-version: 20
+- uses: ./.github/actions/agent-receipt
+  with:
+    install: true
+    from: github:pramodreddyboddu/agent-receipt#v1.0.15
+    prove: true
+    fail-on: high
+    base: origin/main
+```
+
+Or copy [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) to
+`.github/workflows/agent-receipt-gate.yml`. That job always passes `--fail-on`
+(a missing config cannot weaken the gate), proves after a green gate, and
+uploads the gate JSON and the receipt. A missing receipt file after a green
+gate does not fail the job. The gate object is documented in
+[`docs/gate.schema.json`](gate.schema.json), next to
+[`docs/receipt.schema.json`](receipt.schema.json).
 
 Exit codes are unchanged: 0 pass, 2 policy and/or verify failure, 1 usage
 error. The step prints the gate JSON from `$RUNNER_TEMP/receipt-gate.json`
@@ -264,7 +296,8 @@ and still misses novel shapes.
 `capture`, `watch`, `wrap`, `share`, and `export` / `html` each append
 one line to `.agent-receipt/audit.jsonl`. `prune` / `retain` append one
 `prune` line per receipt they delete. `--dry-run` does not append, and
-neither does a run that deletes nothing.
+neither does a run that deletes nothing. Trusted prune does not append
+when the chain is broken: it exits 1 and deletes nothing unless `--force`.
 
 ```bash
 agent-receipt audit            # newest last, human
@@ -396,6 +429,7 @@ Rules:
   are already gone.
 - `--dry-run` does not delete, does not rewrite the index, and does not append `audit.jsonl`.
 - An applied delete appends one `prune` audit line per receipt (no diff, no `--message`). `prune --json` repeats those identity fields on each `deleted` row and sets `audited` to the number of lines written (`0` on dry-run).
+- **Trusted prune.** When `.agent-receipt/audit.jsonl` exists, `prune` runs `verifyAuditChain` before it deletes anything. A broken chain exits 1, deletes nothing, and appends no audit line. Dry-run exits 1 as well: the JSON may still list candidates in `deleted`, with `ok: false`, `chainOk: false`, `auditPresent: true`, and a `reason`. It does not claim those deletes will proceed. A missing audit log is fine. `prune --force` is break-glass and deletes even when the chain is broken. `agent-receipt init --retention` sets `maxCount: 100` and `maxAgeDays: 30` without replacing `ignore` or `redact`. Retention must not paper over a broken audit chain. `doctor --strict` still fails unset retention only under pressure.
 - `maxCount` and `maxAgeDays` must be integers `>= 1`. `0` is rejected so
   a typo cannot wipe the directory.
 - `doctor` **retention**: INFO when opt-in is off and the directory is
@@ -451,26 +485,32 @@ listing (`[]` with `--json`). An empty receipt store still errors, same as
 
 ### Deferred
 
-Fail-closed org policy landed in 1.0.14 (`doctor --strict` always fails unset
-`redact` + `failOn`, including a small `outDir`; `init --org` / `init --policy`
-sets those keys). Prove-this-run UX landed in 1.0.13 (`prove`, audit link,
+Drop-in CI/PR gate polish landed in 1.0.15 (composite action with `install` /
+`prove` / step outputs, `pr-gate.yml` prove + artifact upload, and
+`docs/gate.schema.json`). Trusted retention landed as `init --retention`
+(`maxCount: 100`, `maxAgeDays: 30`) and trusted prune (a broken audit chain
+refuses the delete, including dry-run, unless `prune --force`). Fail-closed
+org policy landed in 1.0.14 (`doctor --strict` always fails unset `redact` +
+`failOn`, including a small `outDir`; `init --org` / `init --policy` sets
+those keys). Prove-this-run UX landed in 1.0.13 (`prove`, audit link,
 `last --json`, `trailingIgnored` on the gate). Cryptographic signing / signed
-receipts (PKI) are still deferred — this cut does not add a signing slice.
-Also deferred: SSO / IdP, Cloud Agents, a background job that deletes receipts
-by itself, live GitHub Actions workflow sync (the checkout token has no
-`workflow` scope), and npm Trusted Publishing (this cut does not publish).
-`prune` stays manual. Unset retention under `doctor --strict` stays
-pressure-gated (100 receipts or 20 MB); always-fail for retention is deferred.
-CI `--fail-on` is still the enforcement point for risk. A broken audit chain
-still fails `--strict`. `doctor --json`, `audit --event`, `audit --agent`,
-`audit --failed`, `history --agent`, `history --uncommitted`, `history --failed`,
-and `prove` are checklist and listing tools; they do not sign the log.
+receipts (PKI) are still deferred — this cut does not add a signing or attest
+key slice. No minisign, GPG, or key management. Also deferred: SSO / IdP,
+Cloud Agents, a background job that deletes receipts by itself, live GitHub
+Actions workflow sync (the checkout token has no `workflow` scope), and npm
+Trusted Publishing (this cut does not publish). `prune` stays manual. Unset
+retention under `doctor --strict` stays pressure-gated (100 receipts or
+20 MB); always-fail for unset retention is deferred. CI `--fail-on` is still
+the enforcement point for risk. A broken audit chain still fails `--strict`.
+`doctor --json`, `audit --event`, `audit --agent`, `audit --failed`,
+`history --agent`, `history --uncommitted`, `history --failed`, and `prove`
+are checklist and listing tools; they do not sign the log.
 
 ### Workflow scope
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.14 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.15 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

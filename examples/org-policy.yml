@@ -36,16 +36,24 @@
 # a small outDir, and fails a broken audit chain. Unset retention still
 # fails only when outDir is under pressure (100 receipts or 20 MB).
 # Tip: agent-receipt init --org
+# Tip: agent-receipt init --retention
+#   sets maxCount: 100 and maxAgeDays: 30 without replacing ignore / redact.
+# Trusted prune: when .agent-receipt/audit.jsonl exists and the chain is
+# broken, prune exits 1 and deletes nothing (dry-run too).
+# Break-glass: agent-receipt prune --force
 # prune appends one line per receipt it deletes and does not delete audit.jsonl.
 # --dry-run does not append.
 #
 # Retention is opt-in. Leave maxCount and maxAgeDays unset until you want
-# prune to delete. Uncomment to cap receipts:
+# prune to delete. Uncomment to cap receipts, or run init --retention:
 #   maxCount: 100
 #   maxAgeDays: 30
 # Then: agent-receipt prune --dry-run
 # Docs: docs/business.md
-# CI example: examples/github/pr-gate.yml
+# Gate JSON schema: docs/gate.schema.json (next to docs/receipt.schema.json)
+# Drop-in CI: examples/github/action.yml and examples/github/pr-gate.yml
+#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.15
+#   prove after a green gate; upload receipt-gate.json
 
 outDir: .agent-receipt/receipts
 defaultAgent: agent

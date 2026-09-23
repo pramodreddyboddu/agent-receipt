@@ -109,7 +109,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 
 | Command | Purpose |
 |---------|---------|
-| `init [--cursor] [--grok] [--org]` | Write `.agent-receipt.yml` + notes. `--org` (alias `--policy`) sets `redact: true` and `failOn: high` without replacing local `ignore`. `--cursor` / `--grok` drop agent rules |
+| `init [--cursor] [--grok] [--org] [--retention]` | Write `.agent-receipt.yml` + notes. `--org` (alias `--policy`) sets `redact: true` and `failOn: high` without replacing local `ignore`. `--retention` sets `maxCount: 100` and `maxAgeDays: 30` the same way. `--cursor` / `--grok` drop agent rules |
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON) |
 | `wrap` | End of session: capture (+ `--uncommitted` if dirty) → TL;DR + path → verify |
 | `share [path]` | One shot: redact → HTML (+ optional Markdown) → verify → paths + TL;DR |
@@ -121,7 +121,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `verify [path]` | Hash-check tamper-evident integrity. `--json` includes `trailingIgnored` (boolean) |
 | `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, and an audit-log link. Not a signature. `--json` is one object. Config `failOn` is not applied |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
-| `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default) |
+| `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default). Trusted prune refuses the delete when the audit chain is broken (`--force` is break-glass) |
 | `doctor` | Health check plus a prod checklist (policy, audit, retention, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`) and a broken audit chain on any receipt dir. Unset retention fails only under receipt-dir pressure |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
 | `diff [a] [b]` | Alias for `compare` |
@@ -141,7 +141,9 @@ agent-receipt history --failed
 agent-receipt history --agent ci --failed --json
 agent-receipt ls --agent ci --uncommitted --limit 5
 agent-receipt prune --dry-run
+agent-receipt prune --force
 agent-receipt init --org
+agent-receipt init --retention
 agent-receipt doctor --strict
 agent-receipt doctor --json
 agent-receipt prove --json
@@ -295,6 +297,7 @@ excluded from risk / summary / file tables via config `ignore` globs.
 
 See [`examples/sample-receipt.md`](examples/sample-receipt.md),
 [`docs/agents.md`](docs/agents.md), [`docs/receipt.schema.json`](docs/receipt.schema.json),
+[`docs/gate.schema.json`](docs/gate.schema.json),
 short recipes under [`examples/`](examples/), and
 [`docs/business.md`](docs/business.md) for team rollout.
 
@@ -345,8 +348,15 @@ the session.
 
 Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`docs/business.md`](docs/business.md). Org defaults:
-[`examples/org-policy.yml`](examples/org-policy.yml). PR gate example:
-[`examples/github/pr-gate.yml`](examples/github/pr-gate.yml).
+[`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
+[`examples/github/action.yml`](examples/github/action.yml) (copy to
+`.github/actions/agent-receipt/`; `install` pin
+`github:pramodreddyboddu/agent-receipt#v1.0.15`, optional `prove`) and
+[`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
+green gate, upload `receipt-gate.json`). Gate JSON:
+[`docs/gate.schema.json`](docs/gate.schema.json). `init --retention` sets
+`maxCount: 100` and `maxAgeDays: 30`. Trusted prune refuses a broken audit
+chain unless you pass `prune --force`.
 
 ## Git hooks (local / global install)
 

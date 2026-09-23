@@ -1,19 +1,40 @@
-# Composite action: fail-on + JSON gate.
-# Copy this directory to .github/actions/agent-receipt/ and call:
+# Composite action: fail-on + JSON gate, optional install, optional prove.
+# Copy this directory to .github/actions/agent-receipt/ and call it.
 #
+# Drop-in (checkout → optional install → local composite):
+#
+#   - uses: actions/checkout@v4
+#     with:
+#       fetch-depth: 0
+#   - uses: actions/setup-node@v4
+#     with:
+#       node-version: 20
 #   - uses: ./.github/actions/agent-receipt
 #     with:
 #       fail-on: high
 #       base: origin/main
+#       install: true
+#       from: github:pramodreddyboddu/agent-receipt#v1.0.15
+#       prove: true
 #
-# Expects `agent-receipt` on PATH (npm i -D, or a prior install step).
-# Does not publish or install the package itself.
+# `install` defaults to false. When true, the step runs
+# `npm install -g <from>` (default from:
+# github:pramodreddyboddu/agent-receipt). A missing CLI still fails when
+# install is false.
+#
+# `prove` defaults to false. After a green wrap/share gate (ok true,
+# exit 0) it runs `prove --json` and fails the step unless prove is ok
+# (verified true, exitCode 0). The prove JSON is printed.
+#
+# Outputs (empty string when the field is missing): ok, exit-code, sha256,
+# path, gate-json (absolute path of the gate JSON file).
 #
 # The gate JSON may include trailingIgnored (boolean | null): boolean when
 # wrap or share verified a body, null on capture and on usage errors.
 # The job still fails when exitCode !== 0 or ok !== true.
+# Schema: docs/gate.schema.json
 name: agent-receipt gate
-description: Run wrap or share with --fail-on and --json. Exit 2 fails the job. Gate JSON may include trailingIgnored (boolean or null).
+description: Run wrap or share with --fail-on and --json. Optional GitHub install and prove. Exit 2 fails the job.
 
 inputs:
   fail-on:
@@ -28,24 +49,61 @@ inputs:
     description: wrap (default) or share
     required: false
     default: wrap
+  install:
+    description: When true, npm install -g the CLI from `from` before the gate (also when the CLI is missing).
+    required: false
+    default: "false"
+  from:
+    description: npm spec used when install is true. Pin with #v1.0.15 once the tag exists.
+    required: false
+    default: github:pramodreddyboddu/agent-receipt
+  prove:
+    description: After a green gate, run prove --json and fail unless ok, verified, and exitCode 0.
+    required: false
+    default: "false"
+
+outputs:
+  ok:
+    description: Gate report ok (true or false). Empty when the report could not be parsed.
+    value: ${{ steps.gate.outputs.ok }}
+  exit-code:
+    description: Gate report exitCode (0, 1, or 2). Empty when missing.
+    value: ${{ steps.gate.outputs.exit-code }}
+  sha256:
+    description: Gate report sha256. Empty when missing.
+    value: ${{ steps.gate.outputs.sha256 }}
+  path:
+    description: Gate report receipt path. Empty when missing.
+    value: ${{ steps.gate.outputs.path }}
+  gate-json:
+    description: Absolute path to the gate JSON file.
+    value: ${{ steps.gate.outputs.gate-json }}
 
 runs:
   using: composite
   steps:
     - name: agent-receipt JSON gate
+      id: gate
       shell: bash
       env:
         FAIL_ON: ${{ inputs.fail-on }}
         BASE_IN: ${{ inputs.base }}
         GATE_CMD: ${{ inputs.command }}
+        INSTALL: ${{ inputs.install }}
+        FROM_SPEC: ${{ inputs.from }}
+        PROVE: ${{ inputs.prove }}
       run: |
         set -eu
+        if [ "$INSTALL" = "true" ]; then
+          echo "npm install -g $FROM_SPEC"
+          npm install -g "$FROM_SPEC"
+        fi
         if [ -x node_modules/.bin/agent-receipt ]; then
           CLI="node_modules/.bin/agent-receipt"
         elif command -v agent-receipt >/dev/null 2>&1; then
           CLI="agent-receipt"
         else
-          echo "agent-receipt is not on PATH. npm i -D @pramodreddyboddu/agent-receipt or npm i -g github:pramodreddyboddu/agent-receipt" >&2
+          echo "agent-receipt is not on PATH. Set install: true or npm i -D @pramodreddyboddu/agent-receipt" >&2
           exit 1
         fi
         out="${RUNNER_TEMP:-/tmp}/receipt-gate.json"
@@ -63,5 +121,60 @@ runs:
         cat "$out"
         # Fail when exitCode !== 0 or ok !== true. trailingIgnored, when
         # set, must be a boolean (null is allowed; capture leaves it null).
-        node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (g.exitCode !== 0 || g.ok !== true) process.exit(g.exitCode || 1); if (g.trailingIgnored != null && typeof g.trailingIgnored !== "boolean") { console.error("trailingIgnored must be boolean when set"); process.exit(1); } if (typeof g.trailingIgnored === "boolean") console.log("trailingIgnored=" + g.trailingIgnored);' "$out"
-        exit "$code"
+        # Outputs are written even when the gate fails.
+        set +e
+        node - "$out" <<'NODE'
+        const fs = require('fs');
+        const file = process.argv[2];
+        function emit(key, value) {
+          const gh = process.env.GITHUB_OUTPUT;
+          if (!gh) return;
+          const val = value == null ? '' : String(value).replace(/[\r\n]/g, '');
+          fs.appendFileSync(gh, key + '=' + val + '\n');
+        }
+        let g;
+        try {
+          g = JSON.parse(fs.readFileSync(file, 'utf8'));
+        } catch (err) {
+          emit('ok', '');
+          emit('exit-code', '');
+          emit('sha256', '');
+          emit('path', '');
+          emit('gate-json', file);
+          console.error(err && err.message ? err.message : err);
+          process.exit(1);
+        }
+        emit('ok', g.ok === true ? 'true' : g.ok === false ? 'false' : '');
+        emit('exit-code', g.exitCode == null ? '' : String(g.exitCode));
+        emit('sha256', typeof g.sha256 === 'string' ? g.sha256 : '');
+        emit('path', typeof g.path === 'string' ? g.path : '');
+        emit('gate-json', file);
+        if (g.exitCode !== 0 || g.ok !== true) process.exit(g.exitCode || 1);
+        if (g.trailingIgnored != null && typeof g.trailingIgnored !== 'boolean') {
+          console.error('trailingIgnored must be boolean when set');
+          process.exit(1);
+        }
+        if (typeof g.trailingIgnored === 'boolean') console.log('trailingIgnored=' + g.trailingIgnored);
+        NODE
+        gate_ok=$?
+        set -e
+        if [ "$gate_ok" -ne 0 ]; then
+          exit "$gate_ok"
+        fi
+        if [ "$PROVE" = "true" ]; then
+          prove_out="${RUNNER_TEMP:-/tmp}/receipt-prove.json"
+          set +e
+          "$CLI" prove --json > "$prove_out"
+          pcode=$?
+          set -e
+          echo "agent-receipt prove exit $pcode"
+          cat "$prove_out"
+          node - "$prove_out" <<'NODE'
+        const fs = require('fs');
+        const g = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+        if (g.ok !== true || g.verified !== true || g.exitCode !== 0) {
+          console.error('prove is not ok');
+          process.exit(g.exitCode || 1);
+        }
+        NODE
+        fi
