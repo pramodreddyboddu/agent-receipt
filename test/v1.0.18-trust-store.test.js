@@ -395,13 +395,13 @@ describe('v1.0.18 docs', () => {
     assert.match(changelog, /full PKI\/CA/);
     assert.match(changelog, /was not edited|not\*\* updated/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.22');
+    assert.equal(pkg.version, '1.0.23');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.22');
+    assert.equal(lock.version, '1.0.23');
     assert.equal(lock.packages[''].dependencies, undefined);
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.22/);
+    assert.match(versionTs, /1\.0\.23/);
 
     const helpVerify = cli(root, ['help', 'verify']);
     assert.match(helpVerify, /trust store|known-keys|trusted-keys/);

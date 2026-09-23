@@ -18,7 +18,7 @@ export interface TrustCommandOptions {
 export interface TrustReport {
   ok: boolean;
   command: 'trust';
-  action: 'list' | 'add' | 'rm';
+  action: 'list' | 'add' | 'rm' | 'show';
   version: string;
   exitCode: 0 | 1;
   active: boolean;
@@ -32,6 +32,21 @@ export interface TrustReport {
    * Omitted for `trust add <64-hex>`.
    */
   fingerprint?: string;
+  /**
+   * Trusted-keys path for `trust show` (`TRUSTED_KEYS_REL`).
+   * Omitted for list, add, and rm.
+   */
+  path?: string;
+  /**
+   * Local keygen fingerprint for `trust show`.
+   * Null when keys do not load. Omitted for list, add, and rm.
+   */
+  localFingerprint?: string | null;
+  /**
+   * Whether the local key is on the allowlist.
+   * Null when no local key loaded. Omitted for list, add, and rm.
+   */
+  localListed?: boolean | null;
   reason: string | null;
 }
 
@@ -56,6 +71,29 @@ function emit(report: TrustReport, json: boolean): TrustReport {
     console.log(`trusted-keys (${report.count})`);
     for (const fp of report.fingerprints) console.log(`  ${fp}`);
     console.log(color.dim(`sources: ${report.sources.join(', ')}`));
+    return report;
+  }
+  if (report.action === 'show') {
+    console.log('trust show');
+    console.log('trusted-keys');
+    console.log(`active: ${report.active}`);
+    console.log(`count: ${report.count}`);
+    console.log(`file: ${TRUSTED_KEYS_REL}`);
+    const sources = report.sources.length ? report.sources.join(', ') : '(none)';
+    console.log(`sources: ${sources}`);
+    if (report.active) {
+      for (const fp of report.fingerprints) console.log(`  ${fp}`);
+    }
+    if (report.localFingerprint) {
+      console.log(`local: ${report.localFingerprint}`);
+    } else {
+      console.log('local: (none — run keygen)');
+    }
+    const listed = report.localListed === null ? 'n/a' : String(report.localListed);
+    console.log(`localListed: ${listed}`);
+    if (report.localListed === false) {
+      console.log('tip: local key is not listed. Run `agent-receipt trust add --self`.');
+    }
     return report;
   }
   const verb = report.action === 'add' ? (report.added ? 'added' : 'already listed') : report.removed ? 'removed' : 'not listed';
@@ -112,6 +150,52 @@ function listReport(cwd: string): TrustReport {
   };
 }
 
+function localKeyFingerprint(cwd: string): string | null {
+  try {
+    return loadKeys(cwd).fingerprint;
+  } catch {
+    return null;
+  }
+}
+
+/** Read-only status. Missing keys stay exit 0. A bad store fails like `trust list`. */
+function showReport(cwd: string): TrustReport {
+  const store = loadTrustedFingerprints(cwd);
+  const localFingerprint = localKeyFingerprint(cwd);
+  const base = {
+    command: 'trust' as const,
+    action: 'show' as const,
+    version: VERSION,
+    path: TRUSTED_KEYS_REL,
+    localFingerprint,
+  };
+  if (store.reason) {
+    return {
+      ...base,
+      ok: false,
+      exitCode: 1,
+      active: false,
+      count: 0,
+      fingerprints: [],
+      sources: store.sources,
+      localListed: localFingerprint === null ? null : false,
+      reason: store.reason,
+    };
+  }
+  const fingerprints = [...store.fingerprints];
+  return {
+    ...base,
+    ok: true,
+    exitCode: 0,
+    active: trustStoreActive(store),
+    count: fingerprints.length,
+    fingerprints,
+    sources: store.sources,
+    localListed: localFingerprint === null ? null : fingerprints.includes(localFingerprint),
+    reason: null,
+  };
+}
+
 export function cmdTrust(
   cwd: string,
   action: string | undefined,
@@ -120,24 +204,39 @@ export function cmdTrust(
 ): TrustReport {
   const json = Boolean(opts.json);
   const selfFlag = Boolean(opts.self);
-  if (action !== 'list' && action !== 'add' && action !== 'rm') {
+  const verb = action === 'status' ? 'show' : action;
+  if (verb !== 'list' && verb !== 'add' && verb !== 'rm' && verb !== 'show') {
     return emit(
       failed(
         'list',
-        'trust requires list, add <fingerprint>, add --self, or rm <fingerprint>',
+        'trust requires list, show, add <fingerprint>, add --self, or rm <fingerprint>',
       ),
       json,
     );
   }
-  if (selfFlag && action !== 'add') {
-    return emit(failed(action, `trust ${action} does not accept --self`), json);
+  if (selfFlag && verb !== 'add') {
+    return emit(failed(verb, `trust ${verb} does not accept --self`), json);
   }
-  if (action === 'list') return emit(listReport(cwd), json);
+  if (verb === 'list') return emit(listReport(cwd), json);
+  if (verb === 'show') {
+    if (fingerprint && fingerprint.trim()) {
+      return emit(
+        {
+          ...failed('show', 'trust show takes no fingerprint'),
+          path: TRUSTED_KEYS_REL,
+          localFingerprint: null,
+          localListed: null,
+        },
+        json,
+      );
+    }
+    return emit(showReport(cwd), json);
+  }
 
   let resolved = fingerprint;
   let selfFingerprint: string | undefined;
   const bareSelf = resolved?.trim() === 'self';
-  if (action === 'add' && (selfFlag || bareSelf)) {
+  if (verb === 'add' && (selfFlag || bareSelf)) {
     if (resolved && resolved.trim() !== 'self') {
       return emit(failed('add', 'trust add --self does not take a fingerprint'), json);
     }
@@ -152,20 +251,20 @@ export function cmdTrust(
 
   if (!resolved || !resolved.trim()) {
     const reason =
-      action === 'add'
+      verb === 'add'
         ? 'trust add requires a 64-hex fingerprint or --self'
-        : `trust ${action} requires a 64-hex fingerprint`;
-    return emit(failed(action, reason), json);
+        : `trust ${verb} requires a 64-hex fingerprint`;
+    return emit(failed(verb, reason), json);
   }
 
   const changed =
-    action === 'add'
+    verb === 'add'
       ? addTrustedFingerprint(cwd, resolved)
       : removeTrustedFingerprint(cwd, resolved);
   if (changed.reason) {
     return emit(
       {
-        ...failed(action, changed.reason),
+        ...failed(verb, changed.reason),
         sources: [TRUSTED_KEYS_REL],
         fingerprint: selfFingerprint,
       },
@@ -178,15 +277,15 @@ export function cmdTrust(
     {
       ok: true,
       command: 'trust',
-      action,
+      action: verb,
       version: VERSION,
       exitCode: 0,
       active: fingerprints.length > 0 && !store.reason,
       count: fingerprints.length,
       fingerprints,
       sources: store.sources,
-      added: action === 'add' ? (changed as { added: boolean }).added : undefined,
-      removed: action === 'rm' ? (changed as { removed: boolean }).removed : undefined,
+      added: verb === 'add' ? (changed as { added: boolean }).added : undefined,
+      removed: verb === 'rm' ? (changed as { removed: boolean }).removed : undefined,
       fingerprint: selfFingerprint,
       reason: null,
     },

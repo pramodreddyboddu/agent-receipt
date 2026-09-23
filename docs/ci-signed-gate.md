@@ -8,6 +8,7 @@ A job can require an Ed25519 sidecar and a known fingerprint. This is not a CA, 
 agent-receipt keygen
 # or restore .agent-receipt/keys before the step
 agent-receipt trust add --self
+agent-receipt trust show
 
 agent-receipt wrap --sign --fail-on high --json
 agent-receipt prove --json
@@ -16,6 +17,8 @@ agent-receipt verify --require-sig
 ```
 
 Expect `prove` `signature.ok === true`. With that allowlist, also expect `signature.trusted === true`, and `verify --require-sig` exit 0.
+
+`trust show` (alias `trust status`) reports the allowlist and whether the local key is listed (`localListed`). It is read-only: it does not create keys and it does not edit the allowlist. After `keygen` and `trust add --self`, `localListed` is true. Missing keys stay exit 0.
 
 `prove --page` writes a plain-English one-pager next to the receipt (`foo.md` → `foo.prove.md`) so a human can read the verdict without the full receipt or the JSON. It does not change the exit code. The page is not signed.
 
@@ -40,10 +43,10 @@ trusted-keys: "<path-or-comma-fps>"
 
 `share` re-signs published Markdown when local keys exist. It has no `--sign` flag. The examples run `sign` on the gate receipt path when `sign: true` and that path has no sidecar. HTML stays unsigned.
 
-Pin comments are `v1.0.22` (`github:pramodreddyboddu/agent-receipt#v1.0.22` once the tag exists). After `keygen`, `trust add --self` allowlists that fingerprint. A laptop or org config may also set `sign: true` so bare `wrap` signs; CLI `--no-sign` overrides. Not a CA.
+Pin comments are `v1.0.23` (`github:pramodreddyboddu/agent-receipt#v1.0.23` once the tag exists). After `keygen`, `trust add --self` allowlists that fingerprint. `trust show` reports that allowlist and whether the local key is listed. A laptop or org config may also set `sign: true` so bare `wrap` signs; CLI `--no-sign` overrides. Not a CA.
 
 ## Live workflows
 
 This repo does not install the example under [`.github/workflows/`](../.github/workflows). Pushing that tree needs the OAuth `workflow` scope. Copy the example in your own repo. The smoke that runs `wrap --sign` lives in [`docs/github-actions-ci.yml`](github-actions-ci.yml).
 
-`prove --page` landed in 1.0.21 (unsigned Markdown one-pager). Config `sign: true` / `--no-sign` landed in 1.0.22 (capture, wrap, and watch; missing keys tip and stay unsigned). Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, an HTML/share signed package (and a signed one-pager), a background deleter, `trust show`, and multi-agent receipt linking. `trust add --self` is a local allowlist write, not a CA.
+`prove --page` landed in 1.0.21 (unsigned Markdown one-pager). Config `sign: true` / `--no-sign` landed in 1.0.22 (capture, wrap, and watch; missing keys tip and stay unsigned). `trust show` landed in 1.0.23 (read-only allowlist status, including whether the local key is listed). Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, an HTML/share signed package (and a signed one-pager), a background deleter, and multi-agent receipt linking. `trust add --self` is a local allowlist write, not a CA.
