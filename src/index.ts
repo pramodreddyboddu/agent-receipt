@@ -1,6 +1,12 @@
 export { run } from './cli.js';
 export { VERSION } from './lib/version.js';
-export { cmdInit, writeCursorRule, writeGrokIntegration } from './commands/init.js';
+export {
+  cmdInit,
+  writeCursorRule,
+  writeGrokIntegration,
+  applyOrgPolicy,
+  applyOrgPolicyYaml,
+} from './commands/init.js';
 export { cmdCapture } from './commands/capture.js';
 export { cmdWrap } from './commands/wrap.js';
 export { cmdShare } from './commands/share.js';

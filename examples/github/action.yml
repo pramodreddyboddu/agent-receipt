@@ -8,8 +8,12 @@
 #
 # Expects `agent-receipt` on PATH (npm i -D, or a prior install step).
 # Does not publish or install the package itself.
+#
+# The gate JSON may include trailingIgnored (boolean | null): boolean when
+# wrap or share verified a body, null on capture and on usage errors.
+# The job still fails when exitCode !== 0 or ok !== true.
 name: agent-receipt gate
-description: Run wrap or share with --fail-on and --json. Exit 2 fails the job.
+description: Run wrap or share with --fail-on and --json. Exit 2 fails the job. Gate JSON may include trailingIgnored (boolean or null).
 
 inputs:
   fail-on:
@@ -57,5 +61,7 @@ runs:
         set -e
         echo "agent-receipt exit $code"
         cat "$out"
-        node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (g.exitCode !== 0 || g.ok !== true) process.exit(g.exitCode || 1);' "$out"
+        # Fail when exitCode !== 0 or ok !== true. trailingIgnored, when
+        # set, must be a boolean (null is allowed; capture leaves it null).
+        node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (g.exitCode !== 0 || g.ok !== true) process.exit(g.exitCode || 1); if (g.trailingIgnored != null && typeof g.trailingIgnored !== "boolean") { console.error("trailingIgnored must be boolean when set"); process.exit(1); } if (typeof g.trailingIgnored === "boolean") console.log("trailingIgnored=" + g.trailingIgnored);' "$out"
         exit "$code"

@@ -205,6 +205,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         cmdInit(cwd, {
           cursor: flagBool(flags, 'cursor'),
           grok: flagBool(flags, 'grok'),
+          org: flagBool(flags, 'org', 'policy'),
         });
         return 0;
       case 'capture': {

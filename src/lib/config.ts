@@ -286,7 +286,8 @@ ignore:
 #   - "*:docs/**"
 riskAllowlist: []
 
-# Optional org defaults (off unless set). See examples/org-policy.yml
+# Optional org defaults (off unless set). \`agent-receipt init --org\`
+# enables these two keys without replacing ignore. See examples/org-policy.yml
 # and docs/business.md. share still redacts unless you pass --no-redact.
 # redact: true
 # failOn: high
@@ -340,6 +341,8 @@ riskAllowlist: []
    Recipe: \`docs/grok-cli.md\` in the agent-receipt package.
 
 8. Health check (includes a short prod-ready checklist): \`agent-receipt doctor\`
+   \`agent-receipt doctor --strict\` fails when org policy is unset, even on a small outDir.
+   \`agent-receipt init --org\` sets \`redact: true\` and \`failOn: high\`.
 
 9. CI / hooks that should fail on secrets. Exit 0 pass, 2 policy or verify
    failure, 1 usage error. \`--json\` on capture/wrap/share/verify prints one
@@ -358,7 +361,9 @@ riskAllowlist: []
 
 11. Team rollout, org policy, CI gate examples, audit log, and retention:
     \`docs/business.md\` in the agent-receipt package.
-    Copy \`examples/org-policy.yml\` when you want redact + failOn by default.
+    \`agent-receipt init --org\` sets \`redact: true\` and \`failOn: high\` on this file
+    without replacing \`ignore\`. Copy \`examples/org-policy.yml\` when you want
+    the full commented example as a starting point.
 
 12. \`capture\`, \`watch\`, \`wrap\`, \`share\`, and \`export\` append
     \`.agent-receipt/audit.jsonl\` (experimental hash chain, not a signature).

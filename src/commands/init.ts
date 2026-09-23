@@ -1,6 +1,6 @@
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { writeDefaultConfig } from '../lib/config.js';
+import { configPath, writeDefaultConfig } from '../lib/config.js';
 import { CURSOR_RULE_MDC, CURSOR_RULE_REL } from '../lib/cursor-rule.js';
 import {
   GROK_HOOK_JSON,
@@ -17,6 +17,130 @@ export interface InitOptions {
   cursor?: boolean;
   /** Write .grok rule + SessionEnd hook so Grok Build sessions can wrap. */
   grok?: boolean;
+  /**
+   * Set `redact: true` and `failOn: high` on `.agent-receipt.yml`.
+   * Missing config is written like `init`, with those keys enabled.
+   * An existing file is merged in place (ignore, outDir, retention stay).
+   */
+  org?: boolean;
+}
+
+export interface OrgPolicyYamlResult {
+  text: string;
+  redactChanged: boolean;
+  failOnChanged: boolean;
+}
+
+export interface OrgPolicyResult {
+  configFile: string;
+  notesFile: string;
+  created: boolean;
+  redactChanged: boolean;
+  failOnChanged: boolean;
+}
+
+function stripCr(line: string): { text: string; cr: string } {
+  if (line.endsWith('\r')) return { text: line.slice(0, -1), cr: '\r' };
+  return { text: line, cr: '' };
+}
+
+/** Scalar before an inline comment, with surrounding quotes removed. */
+function normalizeScalar(raw: string): string {
+  let v = raw.trim();
+  const hash = v.search(/\s#/);
+  if (hash >= 0) v = v.slice(0, hash).trim();
+  if (
+    (v.startsWith('"') && v.endsWith('"') && v.length >= 2) ||
+    (v.startsWith("'") && v.endsWith("'") && v.length >= 2)
+  ) {
+    v = v.slice(1, -1);
+  }
+  return v;
+}
+
+/**
+ * Set one top-level key. Active lines win: every uncommented `key:` is
+ * rewritten. A commented `# key:` line is uncommented only when no active
+ * line exists. Otherwise the key is appended. Other lines are untouched.
+ * Returns whether the text changed.
+ */
+function setYamlScalar(lines: string[], key: string, value: string): boolean {
+  const active = new RegExp(`^(\\s*)${key}\\s*:(.*)$`);
+  const commented = new RegExp(`^(\\s*)#\\s*${key}\\s*:(.*)$`);
+  const hits: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const { text } = stripCr(lines[i]);
+    if (text.trimStart().startsWith('#')) continue;
+    if (active.test(text)) hits.push(i);
+  }
+  if (hits.length) {
+    let changed = false;
+    for (const i of hits) {
+      const { text, cr } = stripCr(lines[i]);
+      const m = text.match(active);
+      if (!m) continue;
+      if (normalizeScalar(m[2]) === value) continue;
+      const inline = m[2].match(/(\s+#.*)$/);
+      lines[i] = `${m[1]}${key}: ${value}${inline ? inline[1] : ''}${cr}`;
+      changed = true;
+    }
+    return changed;
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const { text, cr } = stripCr(lines[i]);
+    const m = text.match(commented);
+    if (!m) continue;
+    lines[i] = `${m[1]}${key}: ${value}${cr}`;
+    return true;
+  }
+  if (lines.length && (lines[lines.length - 1] === '' || lines[lines.length - 1] === '\r')) {
+    lines.splice(lines.length - 1, 0, `${key}: ${value}`);
+  } else {
+    lines.push(`${key}: ${value}`);
+  }
+  return true;
+}
+
+/**
+ * Enable org policy keys in YAML text. Does not rewrite `ignore`,
+ * `riskAllowlist`, `outDir`, retention keys, or unrelated comments.
+ * Already-correct keys are left byte-for-byte alone.
+ */
+export function applyOrgPolicyYaml(text: string): OrgPolicyYamlResult {
+  const lines = text.split('\n');
+  const redactChanged = setYamlScalar(lines, 'redact', 'true');
+  const failOnChanged = setYamlScalar(lines, 'failOn', 'high');
+  if (!redactChanged && !failOnChanged) {
+    return { text, redactChanged: false, failOnChanged: false };
+  }
+  let next = lines.join('\n');
+  if (!next.endsWith('\n')) next += '\n';
+  return { text: next, redactChanged, failOnChanged };
+}
+
+/**
+ * Write org policy onto `.agent-receipt.yml`. Creates the default config
+ * first when the file is missing. Does not replace an existing file's
+ * ignore list or other keys.
+ */
+export function applyOrgPolicy(cwd: string): OrgPolicyResult {
+  const configFile = configPath(cwd);
+  const created = !existsSync(configFile);
+  let notesFile = join(cwd, '.agent-receipt', 'SETUP.md');
+  if (created) {
+    const written = writeDefaultConfig(cwd);
+    notesFile = written.notesFile;
+  }
+  const before = readFileSync(configFile, 'utf8');
+  const applied = applyOrgPolicyYaml(before);
+  if (applied.text !== before) writeFileSync(configFile, applied.text, 'utf8');
+  return {
+    configFile,
+    notesFile,
+    created,
+    redactChanged: applied.redactChanged,
+    failOnChanged: applied.failOnChanged,
+  };
 }
 
 export function writeCursorRule(cwd: string): string {
@@ -51,10 +175,31 @@ export function writeGrokIntegration(cwd: string): GrokIntegrationPaths {
 }
 
 export function cmdInit(cwd: string, opts: InitOptions = {}): void {
-  const { configFile, notesFile } = writeDefaultConfig(cwd);
-  console.log(color.green('✓') + ' Initialized agent-receipt');
+  let configFile: string;
+  let notesFile: string;
+  let org: OrgPolicyResult | undefined;
+  if (opts.org) {
+    org = applyOrgPolicy(cwd);
+    configFile = org.configFile;
+    notesFile = org.notesFile;
+  } else {
+    const written = writeDefaultConfig(cwd);
+    configFile = written.configFile;
+    notesFile = written.notesFile;
+  }
+  if (org && !org.created) {
+    console.log(color.green('✓') + ' Org policy applied');
+  } else {
+    console.log(color.green('✓') + ' Initialized agent-receipt');
+  }
   console.log(`  config: ${configFile}`);
-  console.log(`  notes:  ${notesFile}`);
+  if (!org || org.created) {
+    console.log(`  notes:  ${notesFile}`);
+  }
+  if (org) {
+    console.log(`  redact: true (${org.redactChanged ? 'set' : 'unchanged'})`);
+    console.log(`  failOn: high (${org.failOnChanged ? 'set' : 'unchanged'})`);
+  }
   if (opts.cursor) {
     const rule = writeCursorRule(cwd);
     console.log(`  cursor: ${rule}`);
@@ -79,5 +224,9 @@ export function cmdInit(cwd: string, opts: InitOptions = {}): void {
   } else {
     console.log('  agent-receipt wrap --agent grok --redact --message "what changed"');
     console.log('  Trust Grok project hooks once: grok --trust   (or /hooks-trust)');
+  }
+  if (opts.org) {
+    console.log('  agent-receipt doctor --strict   # policy row should pass');
+    console.log('  tip: examples/org-policy.yml (init --org does not replace local ignore)');
   }
 }

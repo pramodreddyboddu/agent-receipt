@@ -77,7 +77,7 @@ function parseJsonStdout(r) {
 function assertDoctorShape(body, { strict, exitCode }) {
   assert.equal(body.ok, exitCode === 0);
   assert.equal(body.command, 'doctor');
-  assert.equal(body.version, '1.0.13');
+  assert.equal(body.version, '1.0.14');
   assert.equal(body.exitCode, exitCode);
   assert.equal(body.strict, strict);
   assert.deepEqual(
@@ -143,15 +143,17 @@ describe('doctor --json', () => {
     assert.match(cli(dir, ['help', 'doctor']), /--json/);
   });
 
-  it('keeps exit 0 with --strict on a small directory', () => {
+  it('fails unset policy under --strict on a small directory and keeps retention info', () => {
     const dir = keep(initRepo('agent-receipt-doctor-json-small-'));
     const human = cliResult(dir, ['doctor', '--strict']);
     const json = cliResult(dir, ['doctor', '--strict', '--json']);
-    assert.equal(human.code, 0, human.out);
-    assert.equal(json.code, 0, json.out + json.err);
+    assert.equal(human.code, 1, human.out);
+    assert.equal(json.code, 1, json.out + json.err);
+    assert.equal(human.code, json.code);
     const body = parseJsonStdout(json);
-    assertDoctorShape(body, { strict: true, exitCode: 0 });
-    assert.equal(body.checks.find((c) => c.id === 'policy').status, 'info');
+    assertDoctorShape(body, { strict: true, exitCode: 1 });
+    assert.equal(body.ok, false);
+    assert.equal(body.checks.find((c) => c.id === 'policy').status, 'fail');
     assert.equal(body.checks.find((c) => c.id === 'retention').status, 'info');
     const live = runDoctorChecks(dir, { strict: true });
     for (const row of body.checks) {
@@ -265,7 +267,7 @@ describe('audit --event', () => {
     );
     for (const ev of wraps) {
       assert.equal(ev.event, 'wrap');
-      assert.equal(ev.version, '1.0.13');
+      assert.equal(ev.version, '1.0.14');
     }
 
     const newestWrap = parseJsonStdout(
@@ -299,7 +301,7 @@ describe('audit --event', () => {
     const chain = parseJsonStdout(verified);
     assert.equal(chain.ok, true);
     assert.equal(chain.command, 'audit');
-    assert.equal(chain.version, '1.0.13');
+    assert.equal(chain.version, '1.0.14');
     assert.equal(chain.events, 3);
     assert.equal(chain.brokenAt, null);
 
