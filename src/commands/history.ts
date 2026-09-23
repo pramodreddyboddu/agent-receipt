@@ -1,6 +1,10 @@
 import { listReceipts, parseReceiptGlance, type ReceiptGlance } from './compare.js';
 import { color, severityColor } from '../lib/color.js';
-import { loadIndex, type ReceiptIndexEntry } from '../lib/receipt-index.js';
+import {
+  failedOnFromIndex,
+  loadIndex,
+  type ReceiptIndexEntry,
+} from '../lib/receipt-index.js';
 
 export interface HistoryOptions {
   /** Max rows (default 20). Applied after --agent, --uncommitted, and --failed. */
@@ -67,14 +71,11 @@ function failedBadge(failed: boolean): string {
  * Pre-1.0.12 rows omit the field: high severity only (medium/low stay out).
  */
 function indexRowFailed(entry: ReceiptIndexEntry): boolean {
-  if (typeof entry.failedOn === 'boolean') return entry.failedOn;
-  const risk = entry.risk;
-  if (!risk) return false;
-  return risk.high > 0 || risk.maxSeverity === 'high';
+  return failedOnFromIndex(entry);
 }
 
 /** Scan path has no gate bit. A high-severity glance row counts; medium/low do not. */
-function glanceRowFailed(risks: Array<{ severity: string }>): boolean {
+export function glanceRowFailed(risks: Array<{ severity: string }>): boolean {
   return risks.some((r) => r.severity === 'high');
 }
 

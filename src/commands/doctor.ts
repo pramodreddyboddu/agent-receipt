@@ -25,9 +25,11 @@ export type CheckStatus = 'pass' | 'fail' | 'warn' | 'info';
 
 export interface DoctorOptions {
   /**
-   * Exit non-zero when org policy (redact + failOn) and/or retention is unset
-   * AND outDir is under pressure (100 receipts or 20 MB). Default doctor
-   * leaves those rows WARN/INFO. This is not the CI `--fail-on` risk gate.
+   * Exit non-zero when the audit chain is broken, and when org policy
+   * (redact + failOn) and/or retention is unset AND outDir is under pressure
+   * (100 receipts or 20 MB). Default doctor leaves a broken chain as WARN
+   * and leaves unset policy / retention as WARN/INFO. This is not the CI
+   * `--fail-on` risk gate.
    */
   strict?: boolean;
   /**
@@ -358,10 +360,15 @@ export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCh
       });
     } else {
       const where = chain.brokenAt ? ` at line ${chain.brokenAt}` : '';
+      const detail = `chain broken${where}: ${chain.reason} (agent-receipt audit --verify)`;
+      // Broken chain is WARN by default. `--strict` promotes it to FAIL
+      // even when outDir is small. Policy and retention stay pressure-gated.
       checks.push({
         name: 'audit',
-        status: 'warn',
-        detail: `chain broken${where}: ${chain.reason} (agent-receipt audit --verify)`,
+        status: opts.strict ? 'fail' : 'warn',
+        detail: opts.strict
+          ? `${detail}. Strict: a broken audit chain fails doctor.`
+          : detail,
       });
     }
   } else {
@@ -502,8 +509,9 @@ function printCheck(c: DoctorCheck): void {
  * Run environment health checks.
  * Exit 0 if no FAIL, exit 1 otherwise.
  * WARN/INFO are non-fatal, including unset org policy and retention.
- * `--strict` promotes those two rows to FAIL only when outDir is under
- * pressure (100 receipts or 20 MB). CI `--fail-on` remains the risk gate.
+ * `--strict` promotes a broken audit chain to FAIL always. Unset org policy
+ * and retention still become FAIL only when outDir is under pressure
+ * (100 receipts or 20 MB). CI `--fail-on` remains the risk gate.
  * `--json` prints one object on stdout and does not change the exit code.
  */
 export function cmdDoctor(cwd: string, opts: DoctorOptions = {}): number {
@@ -540,7 +548,7 @@ export function cmdDoctor(cwd: string, opts: DoctorOptions = {}): number {
   if (opts.strict) {
     console.log(
       color.dim(
-        'strict: unset org policy (redact + failOn) and/or retention fail only when outDir is under pressure (100 receipts or 20 MB). CI --fail-on is still the risk gate.',
+        'strict: a broken audit chain fails. Unset org policy (redact + failOn) and/or retention fail only when outDir is under pressure (100 receipts or 20 MB). CI --fail-on is still the risk gate.',
       ),
     );
   }

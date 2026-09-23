@@ -37,6 +37,34 @@ export function indexPath(cwd: string): string {
   return join(cwd, INDEX_REL);
 }
 
+/**
+ * Stored `failedOn` wins, including `false` on a high-risk row.
+ * Rows that omit the field (pre-1.0.12) match high severity only.
+ */
+export function failedOnFromIndex(
+  entry: Pick<ReceiptIndexEntry, 'failedOn' | 'risk'>,
+): boolean {
+  if (typeof entry.failedOn === 'boolean') return entry.failedOn;
+  const risk = entry.risk;
+  if (!risk) return false;
+  return risk.high > 0 || risk.maxSeverity === 'high';
+}
+
+/** Index row for this receipt, matched on repo-relative or absolute path. */
+export function findIndexEntry(cwd: string, filePath: string): ReceiptIndexEntry | null {
+  const idx = loadIndex(cwd);
+  if (!idx.receipts.length) return null;
+  const abs = isAbsolute(filePath) ? resolve(filePath) : resolve(cwd, filePath);
+  const rel = relative(cwd, abs).replace(/\\/g, '/');
+  for (const entry of idx.receipts) {
+    if (!entry || typeof entry.path !== 'string' || !entry.path) continue;
+    if (entry.path === rel || entry.path === abs || entry.path === filePath) return entry;
+    const entryAbs = isAbsolute(entry.path) ? resolve(entry.path) : resolve(cwd, entry.path);
+    if (entryAbs === abs) return entry;
+  }
+  return null;
+}
+
 export function loadIndex(cwd: string): ReceiptIndex {
   const p = indexPath(cwd);
   if (!existsSync(p)) {

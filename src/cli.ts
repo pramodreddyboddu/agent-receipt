@@ -10,6 +10,7 @@ import { cmdInit } from './commands/init.js';
 import { cmdCapture } from './commands/capture.js';
 import { cmdShow } from './commands/show.js';
 import { cmdVerify } from './commands/verify.js';
+import { cmdProve, printProveError } from './commands/prove.js';
 import { cmdLast } from './commands/last.js';
 import { cmdInstallHooks, cmdUninstallHooks } from './commands/hooks.js';
 import { cmdDoctor } from './commands/doctor.js';
@@ -26,7 +27,7 @@ const JSON_GATE_COMMANDS = new Set(['capture', 'wrap', 'share', 'verify']);
 
 /**
  * `--fail-on` on the CLI wins. Otherwise capture/wrap/watch/share honor
- * config `failOn`. verify does not (integrity-only unless the flag is passed).
+ * config `failOn`. verify and prove do not (integrity-first unless the flag is passed).
  */
 function resolveFailOn(
   cwd: string,
@@ -141,6 +142,18 @@ function flagHistoryUncommitted(flags: Record<string, string | boolean>): boolea
   throw new Error(
     '--uncommitted does not take a value. It keeps receipts where uncommitted is true.',
   );
+}
+
+const PROVE_FLAGS = new Set(['cwd', 'json', 'fail-on']);
+
+function assertKnownProveFlags(flags: Record<string, string | boolean>): void {
+  for (const key of Object.keys(flags)) {
+    if (!PROVE_FLAGS.has(key)) {
+      throw new Error(
+        `Unknown flag: --${key}. prove accepts --json, --fail-on [high|medium|low], and --cwd.`,
+      );
+    }
+  }
 }
 
 function flagHistoryFailed(flags: Record<string, string | boolean>): boolean {
@@ -262,7 +275,10 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         cmdShow(cwd, positional[0]);
         return 0;
       case 'last':
-        cmdLast(cwd, { pathOnly: flagBool(flags, 'path') });
+        cmdLast(cwd, {
+          pathOnly: flagBool(flags, 'path'),
+          json: flagBool(flags, 'json'),
+        });
         return 0;
       case 'history':
       case 'ls':
@@ -291,6 +307,16 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         const explicitFail = flags['fail-on'] !== undefined;
         const failOn = explicitFail ? parseFailOn(flags['fail-on']) : undefined;
         const result = cmdVerify(cwd, positional[0], {
+          json: flagBool(flags, 'json'),
+          failOn,
+        });
+        return result.exitCode;
+      }
+      case 'prove': {
+        assertKnownProveFlags(flags);
+        const explicitFail = flags['fail-on'] !== undefined;
+        const failOn = explicitFail ? parseFailOn(flags['fail-on']) : undefined;
+        const result = cmdProve(cwd, positional[0], {
           json: flagBool(flags, 'json'),
           failOn,
         });
@@ -348,7 +374,9 @@ export async function run(argv: string[] = process.argv): Promise<number> {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (command && JSON_GATE_COMMANDS.has(command) && flagBool(flags, 'json')) {
+    if (command === 'prove' && flagBool(flags, 'json')) {
+      printProveError(msg);
+    } else if (command && JSON_GATE_COMMANDS.has(command) && flagBool(flags, 'json')) {
       printGate(errorGate(command, msg));
     } else {
       console.error(color.red('Error:') + ` ${msg}`);

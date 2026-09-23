@@ -23,6 +23,13 @@
 # Receipts that failed the gate (index failedOn; older rows use high risk):
 #   agent-receipt history --failed
 #   agent-receipt history --agent ci --failed
+# Prove-this-run (hash + audit link, not a signature). Config failOn is
+# not applied unless you pass --fail-on:
+#   agent-receipt prove --json
+# Newest receipt as one JSON object (wins over --path):
+#   agent-receipt last --json
+# doctor --strict fails a broken audit chain. Unset policy/retention still
+# fail only when outDir is under pressure.
 # prune appends one line per receipt it deletes and does not delete audit.jsonl.
 # --dry-run does not append.
 #

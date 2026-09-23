@@ -350,6 +350,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
         sha256,
         risk: riskToGate(riskSum),
         ignored: ignored.length,
+        trailingIgnored: null,
         reason: failedOn ? failOnReason(opts.failOn, riskSum.maxSeverity) : null,
       }),
     );
