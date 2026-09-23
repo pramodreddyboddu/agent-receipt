@@ -131,13 +131,15 @@ Inside Aider:
 | Recent sessions | `agent-receipt history` |
 | Full Markdown dump | `agent-receipt show` |
 | Integrity check | `agent-receipt verify` |
-| Prove this run | `agent-receipt prove` (hash + audit link; not a signature) |
+| Prove this run | `agent-receipt prove` (hash + audit link + signature status) |
+| Local Ed25519 attest | `agent-receipt keygen` then `agent-receipt sign` (not a CA) |
 | Newest receipt JSON | `agent-receipt last --json` |
 | Whole-branch review | `agent-receipt capture --since main --full` |
 | Fail CI on secrets | `agent-receipt capture --fail-on high` |
 | After next commit | `agent-receipt watch --once --agent <name>` |
 | Scripting cwd | `agent-receipt capture --cwd /path/to/repo …` |
 
-Receipts are **tamper-evident**, not signed. Treat high-severity risk hints
-(secrets, `.env`, private keys, lockfile/CI deletions) as a review checklist,
-not a security boundary.
+Receipts are **tamper-evident**. `verify` is the hash check. `sign` can add a
+local Ed25519 attest of that hash; it is not a CA. Treat high-severity risk
+hints (secrets, `.env`, private keys, lockfile/CI deletions) as a review
+checklist, not a security boundary.

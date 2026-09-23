@@ -23,6 +23,7 @@ import {
 } from '../lib/risk.js';
 import { loadConfig, ensureOutDir } from '../lib/config.js';
 import { filterIgnored } from '../lib/ignore.js';
+import { isLocalKeyMaterialPath } from '../lib/sign.js';
 import {
   formatMarkdown,
   formatJson,
@@ -130,7 +131,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
           'Make edits / stage files, or omit --uncommitted to capture commits.',
       );
     }
-    const allFiles = getWorkingTreeFiles(cwd);
+    const allFiles = getWorkingTreeFiles(cwd).filter((f) => !isLocalKeyMaterialPath(f.path));
     const filtered = filterIgnored(allFiles, cfg.ignore);
     files = filtered.kept;
     ignored = filtered.ignored;
@@ -150,7 +151,9 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
       commits: commitsN,
       base: opts.base,
     });
-    const allFiles = getChangedFiles(cwd, range.base, range.head);
+    const allFiles = getChangedFiles(cwd, range.base, range.head).filter(
+      (f) => !isLocalKeyMaterialPath(f.path),
+    );
     const filtered = filterIgnored(allFiles, cfg.ignore);
     files = filtered.kept;
     ignored = filtered.ignored;

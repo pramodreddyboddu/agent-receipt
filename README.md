@@ -7,8 +7,10 @@ one-screen, hash-checked snapshot of what just happened — files, diffs, and
 high-signal risk hints — so you can glance a session, list recent ones, and
 catch `.env` / AWS keys / private keys before they ship.
 
-This is **tamper-evident**, not a signature. Nobody can quietly edit a receipt
-without `verify` failing. It is not cryptographic signing.
+This is **tamper-evident**. Nobody can quietly edit a receipt without `verify`
+failing. `verify` stays a hash check. `keygen` and `sign` add a thin local
+Ed25519 attest of that hash (`foo.sig.json` beside the receipt). It is not a
+CA and not PKI. The private key stays under `.agent-receipt/keys/`.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 <!-- Optional after public + npm: -->
@@ -68,8 +70,10 @@ agent-receipt export --redact --out share.html
 agent-receipt history           # time, agent, risk, summary (+ [uncommitted] badge)
 agent-receipt last              # glance the newest
 agent-receipt last --json       # one object: path, sha256, agent, failedOn
-agent-receipt verify            # integrity
-agent-receipt prove             # prove-this-run: hash + audit link (not a signature)
+agent-receipt verify            # integrity (hash-only)
+agent-receipt keygen             # local Ed25519 keypair (optional)
+agent-receipt sign               # attest the receipt sha256
+agent-receipt prove             # hash + audit link + signature status
 agent-receipt --version
 ```
 
@@ -118,11 +122,13 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `last` | Path + glance of the most recent receipt. `--json` prints one object (`path`, `sha256`, agent, `failedOn`, `uncommitted`, TL;DR). `--json` wins over `--path` |
 | `history` / `ls` | List recent receipts (`--agent`, `--uncommitted`, `--failed`, `--json`, `--limit`; `[uncommitted]` and `[failed]` badges; index at `.agent-receipt/index.json` stores `failedOn`) |
 | `watch` | Poll git; auto-capture on commits **or dirty tree** (`--once`, `--commits-only`) |
-| `verify [path]` | Hash-check tamper-evident integrity. `--json` includes `trailingIgnored` (boolean) |
-| `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, and an audit-log link. Not a signature. `--json` is one object. Config `failOn` is not applied |
+| `keygen [--force]` | Create a local Ed25519 keypair under `.agent-receipt/keys/` (PKCS8 private, SPKI public). Idempotent; `--force` rotates. No network |
+| `sign [path]` | Hash-check a receipt, then write `foo.sig.json` over the sha256 hex. Missing keys exit 1. Hash failure exits 2 and writes nothing. Not run by capture/wrap/share |
+| `verify [path]` | Hash-check tamper-evident integrity. Stays hash-only (unsigned receipts still pass). `--json` includes `trailingIgnored` (boolean) |
+| `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, an audit-log link, and signature status when a sidecar is present. `--json` adds `signature`. Config `failOn` is not applied |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
 | `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default). Trusted prune refuses the delete when the audit chain is broken (`--force` is break-glass) |
-| `doctor` | Health check plus a prod checklist (policy, audit, retention, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`) and a broken audit chain on any receipt dir. Unset retention fails only under receipt-dir pressure |
+| `doctor` | Health check plus a prod checklist (policy, audit, keys, retention, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`) and a broken audit chain on any receipt dir. Unset retention fails only under receipt-dir pressure. Missing signing keys stay INFO |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
 | `diff [a] [b]` | Alias for `compare` |
 | `install-hooks` | Opt-in post-commit auto-capture (`--pre-push` optional) |
@@ -146,6 +152,8 @@ agent-receipt init --org
 agent-receipt init --retention
 agent-receipt doctor --strict
 agent-receipt doctor --json
+agent-receipt keygen
+agent-receipt sign
 agent-receipt prove --json
 agent-receipt last --json
 agent-receipt audit --event wrap --limit 20
@@ -351,7 +359,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.15`, optional `prove`) and
+`github:pramodreddyboddu/agent-receipt#v1.0.16`, optional `prove`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, upload `receipt-gate.json`). Gate JSON:
 [`docs/gate.schema.json`](docs/gate.schema.json). `init --retention` sets
@@ -436,15 +444,23 @@ you need a new sealed artifact.
 leaves it null.
 
 `prove` is the prove-this-run report: the same hash check, plus trailing
-content, risk, TL;DR, agent, stored `failedOn` / `uncommitted`, and whether
-`.agent-receipt/audit.jsonl` links this receipt. Exit 0 when the hash matches
-and the log is missing or intact. Exit 2 when the body was edited, the audit
-chain is broken, or you passed `--fail-on` and it tripped. Config `failOn`
-does not apply. `prove --json` prints one object.
+content, risk, TL;DR, agent, stored `failedOn` / `uncommitted`, whether
+`.agent-receipt/audit.jsonl` links this receipt, and signature status.
+Exit 0 when the hash matches, the log is missing or intact, and any sidecar
+is valid or absent. Exit 2 when the body was edited, the audit chain is
+broken, a present `.sig.json` does not verify, or you passed `--fail-on`
+and it tripped. A missing sidecar does not fail prove. Config `failOn`
+does not apply. `prove --json` prints one object, including `signature`.
 
-This is **tamper-evident**, not cryptographic signing. Signed receipts (PKI,
-minisign, GPG) are still deferred. For signatures today, wrap the receipt
-with your own signing flow.
+`keygen` writes a local Ed25519 keypair (Node `crypto` only) under
+`.agent-receipt/keys/`. `sign` attests the receipt sha256 hex into
+`foo.sig.json`, embedding the SPKI public key so a peer can check it
+without that directory. The private key never leaves `.agent-receipt/keys/`
+and is never written into a receipt or sidecar. Capture, wrap, and share
+do not sign. `verify` remains the tamper-evident hash check.
+
+Thin local Ed25519 attest landed in 1.0.16. Full PKI/CA, minisign, GPG,
+and auto-sign on capture are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
 

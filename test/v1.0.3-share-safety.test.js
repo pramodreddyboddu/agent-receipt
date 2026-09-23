@@ -196,9 +196,9 @@ describe('index: out-of-outDir --out does not become newest', () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('version is 1.0.15', () => {
+  it('version is 1.0.16', () => {
     const out = cli(dir, ['version']);
-    assert.match(out, /1\.0\.15/);
+    assert.match(out, /1\.0\.16/);
   });
 
   it('isInsideOutDir distinguishes --out paths', () => {

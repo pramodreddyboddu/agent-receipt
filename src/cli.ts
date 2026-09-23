@@ -11,6 +11,8 @@ import { cmdCapture } from './commands/capture.js';
 import { cmdShow } from './commands/show.js';
 import { cmdVerify } from './commands/verify.js';
 import { cmdProve, printProveError } from './commands/prove.js';
+import { cmdKeygen, printKeygenError } from './commands/keygen.js';
+import { cmdSign, printSignError } from './commands/sign.js';
 import { cmdLast } from './commands/last.js';
 import { cmdInstallHooks, cmdUninstallHooks } from './commands/hooks.js';
 import { cmdDoctor } from './commands/doctor.js';
@@ -145,6 +147,26 @@ function flagHistoryUncommitted(flags: Record<string, string | boolean>): boolea
 }
 
 const PROVE_FLAGS = new Set(['cwd', 'json', 'fail-on']);
+const KEYGEN_FLAGS = new Set(['cwd', 'json', 'force']);
+const SIGN_FLAGS = new Set(['cwd', 'json']);
+
+function assertKnownKeygenFlags(flags: Record<string, string | boolean>): void {
+  for (const key of Object.keys(flags)) {
+    if (!KEYGEN_FLAGS.has(key)) {
+      throw new Error(
+        `Unknown flag: --${key}. keygen accepts --force, --json, and --cwd.`,
+      );
+    }
+  }
+}
+
+function assertKnownSignFlags(flags: Record<string, string | boolean>): void {
+  for (const key of Object.keys(flags)) {
+    if (!SIGN_FLAGS.has(key)) {
+      throw new Error(`Unknown flag: --${key}. sign accepts --json and --cwd.`);
+    }
+  }
+}
 
 function assertKnownProveFlags(flags: Record<string, string | boolean>): void {
   for (const key of Object.keys(flags)) {
@@ -314,6 +336,21 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         });
         return result.exitCode;
       }
+      case 'keygen': {
+        assertKnownKeygenFlags(flags);
+        const result = cmdKeygen(cwd, {
+          force: flagBool(flags, 'force'),
+          json: flagBool(flags, 'json'),
+        });
+        return result.exitCode;
+      }
+      case 'sign': {
+        assertKnownSignFlags(flags);
+        const result = cmdSign(cwd, positional[0], {
+          json: flagBool(flags, 'json'),
+        });
+        return result.exitCode;
+      }
       case 'prove': {
         assertKnownProveFlags(flags);
         const explicitFail = flags['fail-on'] !== undefined;
@@ -380,6 +417,10 @@ export async function run(argv: string[] = process.argv): Promise<number> {
     const msg = err instanceof Error ? err.message : String(err);
     if (command === 'prove' && flagBool(flags, 'json')) {
       printProveError(msg);
+    } else if (command === 'keygen' && flagBool(flags, 'json')) {
+      printKeygenError(msg);
+    } else if (command === 'sign' && flagBool(flags, 'json')) {
+      printSignError(msg);
     } else if (command && JSON_GATE_COMMANDS.has(command) && flagBool(flags, 'json')) {
       printGate(errorGate(command, msg));
     } else {

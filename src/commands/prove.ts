@@ -14,6 +14,11 @@ import { findIndexEntry, failedOnFromIndex } from '../lib/receipt-index.js';
 import { glanceRowFailed } from './history.js';
 import { parseReceiptGlance } from './compare.js';
 import { cmdVerify } from './verify.js';
+import {
+  ABSENT_SIGNATURE,
+  inspectReceiptSignature,
+  type SignatureStatus,
+} from '../lib/sign.js';
 import type { FailOnThreshold } from '../lib/risk.js';
 
 export interface ProveOptions {
@@ -51,6 +56,7 @@ export interface ProveReport {
   agent: string | null;
   risk: GateRisk | null;
   audit: ProveAudit;
+  signature: SignatureStatus;
   reason: string | null;
 }
 
@@ -185,6 +191,12 @@ function formatAudit(audit: ProveAudit): string {
   return `present, ${chain}, ${events}, ${matched}`;
 }
 
+function formatSignature(signature: SignatureStatus): string {
+  if (!signature.present) return 'absent';
+  if (signature.ok) return `ok ${signature.fingerprint ?? ''}`.trim();
+  return signature.reason ? `FAIL ${signature.reason}` : 'FAIL';
+}
+
 function yesNo(value: boolean): string {
   return value ? 'yes' : 'no';
 }
@@ -204,6 +216,7 @@ function printHuman(report: ProveReport): void {
     `  uncommitted: ${report.uncommitted === null ? 'unknown' : yesNo(report.uncommitted)}`,
     `  failedOn: ${yesNo(report.failedOn)}`,
     `  audit: ${formatAudit(report.audit)}`,
+    `  signature: ${formatSignature(report.signature)}`,
   ];
   if (report.failOn) lines.push(`  failOn: ${report.failOn}`);
   if (report.reason) lines.push(`  reason: ${report.reason}`);
@@ -211,7 +224,7 @@ function printHuman(report: ProveReport): void {
   console.log('');
   console.log(
     color.dim(
-      'Tip: prove-this-run is tamper-evident. It is not a cryptographic signature.',
+      'Tip: the hash and audit link are tamper-evident, not a cryptographic signature. The signature line reports a local Ed25519 sidecar when one is present.',
     ),
   );
 }
@@ -239,14 +252,17 @@ export function printProveError(reason: string): void {
     agent: null,
     risk: null,
     audit: { ...ABSENT_AUDIT },
+    signature: { ...ABSENT_SIGNATURE },
     reason,
   });
 }
 
 /**
- * Thin prove-this-run: same Markdown hash as verify, plus an audit-log link.
- * Not a signature. Exit 0 when the hash matches and the audit log is absent
- * or intact. Exit 2 when verify fails, the chain is broken, or `--fail-on` trips.
+ * Thin prove-this-run: same Markdown hash as verify, plus an audit-log link
+ * and optional Ed25519 sidecar status. `verify` stays hash-only.
+ * Exit 0 when the hash matches, the audit log is absent or intact, and any
+ * sidecar is valid. Exit 2 when verify fails, the chain is broken, a present
+ * sidecar is invalid, or `--fail-on` trips. A missing sidecar does not fail.
  */
 export function cmdProve(
   cwd: string,
@@ -260,6 +276,8 @@ export function cmdProve(
   const failedOn = failOnTripped ? true : memory.failedOn;
   const audit = readAudit(cwd, verified.path);
   const auditBroken = audit.present && audit.chainOk === false;
+  const signature = inspectReceiptSignature(verified.path, verified.sha256);
+  const signatureBad = signature.present && signature.ok === false;
 
   const reasons: string[] = [];
   if (!verified.ok && verified.reason) reasons.push(verified.reason);
@@ -269,8 +287,12 @@ export function cmdProve(
       audit.reason ? `audit chain broken: ${audit.reason}` : 'audit chain broken',
     );
   }
+  if (signatureBad) {
+    reasons.push(signature.reason ? `signature: ${signature.reason}` : 'signature invalid');
+  }
   const reason = reasons.length ? reasons.join('; ') : null;
-  const exitCode: 0 | 2 = !verified.ok || failOnTripped || auditBroken ? 2 : 0;
+  const exitCode: 0 | 2 =
+    !verified.ok || failOnTripped || auditBroken || signatureBad ? 2 : 0;
 
   const report: ProveReport = {
     ok: exitCode === 0,
@@ -289,6 +311,7 @@ export function cmdProve(
     agent: memory.agent,
     risk: riskToGate(verified.risk),
     audit,
+    signature,
     reason,
   };
 

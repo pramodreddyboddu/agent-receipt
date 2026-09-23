@@ -27,9 +27,12 @@
 # Receipts that failed the gate (index failedOn; older rows use high risk):
 #   agent-receipt history --failed
 #   agent-receipt history --agent ci --failed
-# Prove-this-run (hash + audit link, not a signature). Config failOn is
-# not applied unless you pass --fail-on:
+# Prove-this-run (hash + audit link + signature status). Config failOn is
+# not applied unless you pass --fail-on. verify stays hash-only.
 #   agent-receipt prove --json
+# Local Ed25519 attest (not a CA). Private key stays in .agent-receipt/keys/:
+#   agent-receipt keygen
+#   agent-receipt sign
 # Newest receipt as one JSON object (wins over --path):
 #   agent-receipt last --json
 # doctor --strict always fails unset org policy (redact + failOn), including
@@ -51,8 +54,9 @@
 # Then: agent-receipt prune --dry-run
 # Docs: docs/business.md
 # Gate JSON schema: docs/gate.schema.json (next to docs/receipt.schema.json)
+# Signature sidecar: docs/signature.schema.json
 # Drop-in CI: examples/github/action.yml and examples/github/pr-gate.yml
-#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.15
+#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.16
 #   prove after a green gate; upload receipt-gate.json
 
 outDir: .agent-receipt/receipts

@@ -21,6 +21,7 @@ const CHECK_IDS = [
   'redact',
   'policy',
   'audit',
+  'keys',
   'retention',
   'git-clean',
   'cursor',
@@ -77,7 +78,7 @@ function parseJsonStdout(r) {
 function assertDoctorShape(body, { strict, exitCode }) {
   assert.equal(body.ok, exitCode === 0);
   assert.equal(body.command, 'doctor');
-  assert.equal(body.version, '1.0.15');
+  assert.equal(body.version, '1.0.16');
   assert.equal(body.exitCode, exitCode);
   assert.equal(body.strict, strict);
   assert.deepEqual(
@@ -267,7 +268,7 @@ describe('audit --event', () => {
     );
     for (const ev of wraps) {
       assert.equal(ev.event, 'wrap');
-      assert.equal(ev.version, '1.0.15');
+      assert.equal(ev.version, '1.0.16');
     }
 
     const newestWrap = parseJsonStdout(
@@ -301,7 +302,7 @@ describe('audit --event', () => {
     const chain = parseJsonStdout(verified);
     assert.equal(chain.ok, true);
     assert.equal(chain.command, 'audit');
-    assert.equal(chain.version, '1.0.15');
+    assert.equal(chain.version, '1.0.16');
     assert.equal(chain.events, 3);
     assert.equal(chain.brokenAt, null);
 

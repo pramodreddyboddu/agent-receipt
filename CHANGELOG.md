@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.16] — 2026-09-22
+
+### Added
+
+- `keygen [--force] [--json]` writes a local Ed25519 keypair under `.agent-receipt/keys/` using Node `crypto` only (`ed25519.private` PKCS8 PEM mode `0600`, `ed25519.public` SPKI PEM). The key fingerprint is the lowercase hex SHA-256 of the DER SPKI bytes. Existing keys are left unchanged (exit 0). `--force` rotates. No network, no CA, no key escrow. The private key is never printed.
+- `sign [path] [--json]` resolves a receipt the same way `verify` does, hash-checks it, and writes `foo.sig.json` beside `foo.md`. The signature is over the UTF-8 bytes of the receipt sha256 hex string (the same hex `verify` uses), not the raw Markdown. The sidecar is `{ alg: "ed25519", version: 1, sha256, fingerprint, signature, publicKey }` with the SPKI PEM embedded so a peer can verify without the local keys directory. Hash failure exits 2 and does not write a sidecar. Missing keys exit 1 and name `keygen`. Capture, wrap, and share do not sign.
+- `prove` (and `prove --json`) gains a `signature` object: `{ present, ok, alg, fingerprint, reason }`. A missing sidecar is `present: false`, `ok: null`, and does not change the exit. A valid sidecar that matches the current receipt sha256 is `ok: true`. A present sidecar that is invalid, mismatched, or malformed JSON is `ok: false` and prove exits 2. Human output adds one signature line. `verify` stays hash-only.
+- [`docs/signature.schema.json`](docs/signature.schema.json) documents the sidecar. No new npm dependency validates it. Receipt capture omits `.agent-receipt/keys/` and `ed25519.private` / `ed25519.public` paths so a local key is not copied into a receipt.
+- `doctor` adds an optional `keys` row: INFO when no keys, PASS with the key fingerprint when the pair is readable, WARN when the pair is incomplete or unreadable. Missing keys do not fail default `doctor` or `doctor --strict`.
+
+### Changed
+
+- Package version bumped to `1.0.16`.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) smokes `keygen`, `sign`, and `prove --json` (`signature.ok === true`) after wrap. Unsigned prove still expects `signature.present === false`. Version-range comments include 1.0.16. Live [`.github/workflows/*`](.github/workflows) was not edited.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This is a thin local Ed25519 attest of the receipt hash. It is not a CA and not PKI. The private key stays under `.agent-receipt/keys/`.
+- Still deferred: full PKI/CA, auto-sign on capture, SSO / IdP, Cloud Agents, a background deleter, live workflow sync (no `workflow` OAuth scope), npm Trusted Publishing (this cut does not publish), and `doctor --strict` always-fail for unset retention (retention stays pressure-gated at 100 receipts or 20 MB).
+
 ## [1.0.15] — 2026-09-22
 
 ### Added

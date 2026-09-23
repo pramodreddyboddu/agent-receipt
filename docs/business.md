@@ -1,6 +1,6 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.15 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.16 for teams: install once, capture every session, fail CI
 on high-severity findings, share only redacted HTML, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
@@ -128,7 +128,7 @@ is the artifact, not the gate. The gate object itself is
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -230,7 +230,7 @@ Copy one of:
 | Example | What to do with it |
 |---------|--------------------|
 | [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. After a green gate it runs `prove --json` (`prove` defaults to true) and uploads `receipt-gate.json` plus the receipt Markdown (`actions/upload-artifact@v4`, name `agent-receipt-gate`). |
-| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.15`) and `prove`. Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.16`) and `prove`. Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
 
 ### Drop-in
 
@@ -249,7 +249,7 @@ true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
 - uses: ./.github/actions/agent-receipt
   with:
     install: true
-    from: github:pramodreddyboddu/agent-receipt#v1.0.15
+    from: github:pramodreddyboddu/agent-receipt#v1.0.16
     prove: true
     fail-on: high
     base: origin/main
@@ -261,7 +261,8 @@ Or copy [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) to
 uploads the gate JSON and the receipt. A missing receipt file after a green
 gate does not fail the job. The gate object is documented in
 [`docs/gate.schema.json`](gate.schema.json), next to
-[`docs/receipt.schema.json`](receipt.schema.json).
+[`docs/receipt.schema.json`](receipt.schema.json). The optional Ed25519
+sidecar is [`docs/signature.schema.json`](signature.schema.json).
 
 Exit codes are unchanged: 0 pass, 2 policy and/or verify failure, 1 usage
 error. The step prints the gate JSON from `$RUNNER_TEMP/receipt-gate.json`
@@ -360,26 +361,46 @@ file aside and let the next command start a new one (`prev: null`).
 ### Prove this run
 
 `prove` is the one-screen check that a receipt still matches its hash and
-that the local audit log still links it. It is tamper-evident. It is not a
-signature and it does not create keys.
+that the local audit log still links it. It also reports a local Ed25519
+sidecar when `sign` wrote one. `verify` stays hash-only. This is not a CA.
+The private key never leaves `.agent-receipt/keys/`.
 
 ```bash
+agent-receipt keygen
+agent-receipt sign
 agent-receipt prove
 agent-receipt prove --json
 agent-receipt prove receipt.md --fail-on high
 agent-receipt last --json
 ```
 
+`keygen` writes `ed25519.private` (PKCS8 PEM, mode 0600) and
+`ed25519.public` (SPKI PEM) under `.agent-receipt/keys/`. The key
+fingerprint is the lowercase hex SHA-256 of the DER SPKI bytes. Re-running
+without `--force` leaves the pair unchanged. `sign` hash-checks the receipt
+first (exit 2, no sidecar, when the hash fails), then signs the sha256 hex
+string as UTF-8 bytes. `foo.md` gets `foo.sig.json` with `alg`, `version`,
+`sha256`, `fingerprint`, `signature`, and `publicKey`. Capture, wrap, and
+share do not call `sign`.
+
 `prove --json` is one object: `ok`, `command` (`prove`), `version`,
 `exitCode`, `verified`, `trailingIgnored`, `failedOn`, `failOn`, `redacted`,
 `uncommitted`, `path`, `sha256`, `tldr`, `agent`, `risk`, `audit`
-(`present`, `chainOk`, `events`, `matched`, `reason`), and `reason`.
+(`present`, `chainOk`, `events`, `matched`, `reason`), `signature`
+(`present`, `ok`, `alg`, `fingerprint`, `reason`), and `reason`.
 `ok` is true only when `exitCode` is 0.
 
-Exit 0 when the hash matches and the audit log is absent or intact. Exit 2
-when the body fails verify, the chain is broken, or explicit `--fail-on`
-trips. Exit 1 when the receipt is missing or a flag is bad. Config `failOn`
-does not apply — pass `--fail-on` if this invocation should also enforce risk.
+`signature.ok` is null when no sidecar is present, and that alone does not
+change the exit. A sidecar that verifies against the current receipt sha256
+is `ok: true`. A present sidecar that is invalid, mismatched, or malformed
+is `ok: false` and the exit is 2. Peers use the embedded `publicKey`; they
+do not need the local keys directory.
+
+Exit 0 when the hash matches, the audit log is absent or intact, and the
+signature is absent or valid. Exit 2 when the body fails verify, the chain
+is broken, a present signature fails, or explicit `--fail-on` trips. Exit 1
+when the receipt is missing or a flag is bad. Config `failOn` does not
+apply — pass `--fail-on` if this invocation should also enforce risk.
 
 `last --json` is a different object (`command: "last"`): path, sha256, agent,
 message, timestamp, failedOn, uncommitted, and TL;DR. It prefers the index
@@ -485,32 +506,35 @@ listing (`[]` with `--json`). An empty receipt store still errors, same as
 
 ### Deferred
 
-Drop-in CI/PR gate polish landed in 1.0.15 (composite action with `install` /
-`prove` / step outputs, `pr-gate.yml` prove + artifact upload, and
+Thin local Ed25519 attest landed in 1.0.16 (`keygen`, `sign`, prove
+`signature`, `docs/signature.schema.json`). It signs the receipt sha256 with
+a key that stays under `.agent-receipt/keys/`. It is not a CA. Full PKI/CA,
+minisign, GPG, and auto-sign on capture are still deferred. Drop-in CI/PR
+gate polish landed in 1.0.15 (composite action with `install` / `prove` /
+step outputs, `pr-gate.yml` prove + artifact upload, and
 `docs/gate.schema.json`). Trusted retention landed as `init --retention`
 (`maxCount: 100`, `maxAgeDays: 30`) and trusted prune (a broken audit chain
 refuses the delete, including dry-run, unless `prune --force`). Fail-closed
 org policy landed in 1.0.14 (`doctor --strict` always fails unset `redact` +
 `failOn`, including a small `outDir`; `init --org` / `init --policy` sets
 those keys). Prove-this-run UX landed in 1.0.13 (`prove`, audit link,
-`last --json`, `trailingIgnored` on the gate). Cryptographic signing / signed
-receipts (PKI) are still deferred — this cut does not add a signing or attest
-key slice. No minisign, GPG, or key management. Also deferred: SSO / IdP,
+`last --json`, `trailingIgnored` on the gate). Also deferred: SSO / IdP,
 Cloud Agents, a background job that deletes receipts by itself, live GitHub
 Actions workflow sync (the checkout token has no `workflow` scope), and npm
 Trusted Publishing (this cut does not publish). `prune` stays manual. Unset
 retention under `doctor --strict` stays pressure-gated (100 receipts or
-20 MB); always-fail for unset retention is deferred. CI `--fail-on` is still
-the enforcement point for risk. A broken audit chain still fails `--strict`.
+20 MB); always-fail for unset retention is deferred. Missing signing keys
+do not fail `doctor` or `doctor --strict`. CI `--fail-on` is still the
+enforcement point for risk. A broken audit chain still fails `--strict`.
 `doctor --json`, `audit --event`, `audit --agent`, `audit --failed`,
 `history --agent`, `history --uncommitted`, `history --failed`, and `prove`
-are checklist and listing tools; they do not sign the log.
+are checklist and listing tools; they do not sign the audit log.
 
 ### Workflow scope
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.15 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.16 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:
