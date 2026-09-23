@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.15] — 2026-09-22
+
+### Added
+
+- Drop-in CI/PR gate polish in examples only (live `.github/workflows/*` was not edited). [`examples/github/action.yml`](examples/github/action.yml) is a composite action to copy to `.github/actions/agent-receipt/`. Optional `install` (default false) runs `npm install -g` from `from` (default `github:pramodreddyboddu/agent-receipt`, pin `#v1.0.15`). Optional `prove` (default false) runs `prove --json` after a green wrap/share gate and fails the step unless `ok` is true, `verified` is true, and `exitCode` is 0. Step outputs: `ok`, `exit-code`, `sha256`, `path`, `gate-json`. The exit rule is unchanged (`exitCode !== 0` or `ok !== true` fails), including the `trailingIgnored` boolean-when-set check. [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) keeps an explicit `--fail-on`, bumps the install pin comment to `v1.0.15`, adds `workflow_call` input `prove` (boolean, default true), runs `prove --json` after a green gate (share proves the latest receipt), and uploads `receipt-gate.json` plus the receipt Markdown with `actions/upload-artifact@v4` (name `agent-receipt-gate`). A missing receipt file does not fail the job.
+- [`docs/gate.schema.json`](docs/gate.schema.json) documents the CI `GateReport` object (`command` `capture|wrap|share|verify`, `ok`, `version`, `exitCode` 0|1|2, `verified`, `failedOn`, `failOn`, `redacted`, `uncommitted`, `path`, `jsonPath`, `htmlPath`, `markdownPath`, `tldr`, `sha256`, `risk`, `ignored`, `trailingIgnored`, `reason`). No new npm dependency validates it.
+- `init --retention` merges opt-in retention defaults onto `.agent-receipt.yml`: `maxCount: 100` and `maxAgeDays: 30` (the same numbers as the disk-pressure and org-policy tips). A missing file is written like `init` with those keys set. An existing file rewrites only those two keys (`ignore`, `redact`, `failOn`, `outDir`, and comments stay). Re-running when both are already set exits 0 and does not rewrite them. Prints the config path and whether each key was set or unchanged, then suggests `prune --dry-run`. No network.
+- Trusted prune. When `.agent-receipt/audit.jsonl` exists, `prune` runs `verifyAuditChain` before deleting. A broken chain exits 1, deletes nothing, and appends no audit line. Dry-run exits 1 as well: the plan may still list candidates, with `ok: false`, `exitCode: 1`, `reason`, `chainOk: false`, and `auditPresent: true`. A missing audit log is unchanged (absence is fine). `prune --force` skips the trust gate and deletes even when the chain is broken.
+
+### Changed
+
+- Package version bumped to `1.0.15`
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) checks that `docs/gate.schema.json` exists and that every required gate key is present on the wrap JSON smoke. Version-range comments include 1.0.15. Live [`.github/workflows/*`](.github/workflows) was not edited.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- `doctor --strict` retention pressure-gating is unchanged. Unset retention still fails only when `outDir` is under pressure (100 receipts or 20 MB). Always-fail for unset retention stays deferred.
+- Still deferred: cryptographic signing / signed receipts (PKI) and any attest or key-management slice (no minisign, GPG, or signing keys in this cut), SSO / IdP, Cloud Agents, a background deleter, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing (this cut does not publish).
+
 ## [1.0.14] — 2026-09-22
 
 ### Added

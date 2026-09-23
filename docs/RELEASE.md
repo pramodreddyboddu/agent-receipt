@@ -14,7 +14,8 @@ want a public release. This checklist is the playbook when you are ready.
   - [ ] `CHANGELOG.md` → dated section
 - [ ] `npm run pack:check` — **automated** (`npm pack --dry-run` asserts `bin` + `dist`, and bin path has no leading `./`)
 - [ ] README 60-second path still works from a fresh clone / GitHub install
-- [ ] `docs/receipt.schema.json` matches current `--json` shape
+- [ ] `docs/receipt.schema.json` matches current companion `--json` shape
+- [ ] `docs/gate.schema.json` matches the CI gate object (`capture` / `wrap` / `share` / `verify --json`)
 - [ ] Example receipt under `examples/` still looks sane (`verify` on it optional)
 
 ## CI workflow
@@ -34,13 +35,16 @@ gh auth refresh -h github.com -s workflow
 
 Fine-grained PAT: **Actions: Read and write**. GitHub App: **Workflows**.
 A token whose `gh auth status` scopes are only `gist`, `read:org`, `repo`
-cannot push `.github/workflows/*`. v1.0.6 through v1.0.14 left
+cannot push `.github/workflows/*`. v1.0.6 through v1.0.15 left
 `.github/workflows/ci.yml` unchanged for that reason; the docs mirror has
 the `share --json` smoke, `prove --json`, `last --json`, a `prune --dry-run`
-check, fail-closed `doctor --strict` (fails unset policy, passes after
+check, a `docs/gate.schema.json` required-key check on `wrap.json`,
+fail-closed `doctor --strict` (fails unset policy, passes after
 `init --org`), `doctor --json`, `audit --event wrap`,
 `audit --agent ci --failed`, and `history --agent ci` /
-`history --uncommitted` / `history --failed`.
+`history --uncommitted` / `history --failed`. The drop-in PR gate
+(`examples/github/pr-gate.yml`, `examples/github/action.yml`) is an example
+to copy, not this repo's live workflow.
 
 ```bash
 mkdir -p .github/workflows

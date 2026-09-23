@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { loadConfig } from '../lib/config.js';
 import { color } from '../lib/color.js';
-import { auditDisplayPath, recordAuditEvent } from '../lib/audit.js';
+import { auditDisplayPath, auditLogPath, recordAuditEvent, verifyAuditChain } from '../lib/audit.js';
 import { extractEmbeddedHash, verifyMarkdown } from '../lib/hash.js';
 import { readIndexStrict, receiptsDir, type ReceiptIndex } from '../lib/receipt-index.js';
 import { VERSION } from '../lib/version.js';
@@ -25,6 +25,11 @@ export interface PruneOptions {
   maxCount?: number;
   maxAgeDays?: number;
   json?: boolean;
+  /**
+   * Skip the audit-chain trust gate. Deletes even when `.agent-receipt/audit.jsonl`
+   * is present and `verifyAuditChain` fails.
+   */
+  force?: boolean;
 }
 
 /** Identity fields shared with an audit line. No message and no diff body. */
@@ -38,10 +43,10 @@ export interface PruneIdentity {
 }
 
 export interface PruneReport {
-  ok: true;
+  ok: boolean;
   command: 'prune';
   version: string;
-  exitCode: 0;
+  exitCode: 0 | 1;
   dryRun: boolean;
   enabled: boolean;
   maxCount: number | null;
@@ -59,6 +64,56 @@ export interface PruneReport {
   indexUpdated: boolean;
   /** Audit lines appended. Always 0 for dry-run and when nothing was deleted. */
   audited: number;
+  /** True when `.agent-receipt/audit.jsonl` exists. Absence is not a failure. */
+  auditPresent: boolean;
+  /**
+   * Result of `verifyAuditChain` when the log exists. Null when the log is absent.
+   * False refuses the delete unless `--force` was passed.
+   */
+  chainOk: boolean | null;
+  /** Set when trusted prune refuses. Null when the run is allowed. */
+  reason: string | null;
+  /** True when `--force` skipped a broken audit chain and the run continued. */
+  forced: boolean;
+}
+
+interface AuditTrust {
+  auditPresent: boolean;
+  chainOk: boolean | null;
+  /** Short break description, set only when the chain is broken. */
+  detail: string | null;
+}
+
+function auditTrust(cwd: string): AuditTrust {
+  if (!existsSync(auditLogPath(cwd))) {
+    return { auditPresent: false, chainOk: null, detail: null };
+  }
+  const chain = verifyAuditChain(cwd);
+  if (chain.ok) return { auditPresent: true, chainOk: true, detail: null };
+  const where = chain.brokenAt != null ? ` at line ${chain.brokenAt}` : '';
+  const why = chain.reason ? ` (${chain.reason})` : '';
+  return {
+    auditPresent: true,
+    chainOk: false,
+    detail: `audit chain broken${where}${why}`,
+  };
+}
+
+function refusalReason(detail: string): string {
+  return `trusted prune refused: ${detail}. Nothing was deleted. Pass --force to delete anyway.`;
+}
+
+function emitReport(report: PruneReport, json: boolean | undefined, human: () => void): PruneReport {
+  if (json) {
+    console.log(JSON.stringify(report));
+    if (!report.ok && report.reason) console.error(report.reason);
+    else if (report.forced) {
+      console.error('warn: --force skipped the audit trust gate (chain broken).');
+    }
+  } else {
+    human();
+  }
+  return report;
 }
 
 const EMPTY_IDENTITY: PruneIdentity = {
@@ -146,9 +201,14 @@ function auditDeleted(
 /**
  * Delete old receipts under outDir and refresh index.json.
  * Opt-in: with no maxCount / maxAgeDays, deletes nothing (exit 0).
- * `--dry-run` lists the plan and does not delete, rewrite the index, or append audit.
+ * Trusted prune: when `.agent-receipt/audit.jsonl` exists, `verifyAuditChain`
+ * must pass before any delete. A broken chain exits 1, deletes nothing, and
+ * appends no audit line (dry-run included). A missing log is fine.
+ * `--force` skips that gate. `--dry-run` lists the plan and does not delete,
+ * rewrite the index, or append audit.
  * An applied delete appends one `prune` line per receipt (not the sibling json).
- * Exit 0 ok, exit 1 (thrown) on invalid config, unsafe outDir, or a broken index.
+ * Exit 0 ok, exit 1 on a broken audit chain, invalid config, unsafe outDir,
+ * or a broken index.
  */
 export function cmdPrune(cwd: string, opts: PruneOptions = {}): PruneReport {
   const cfg = loadConfig(cwd);
@@ -160,6 +220,8 @@ export function cmdPrune(cwd: string, opts: PruneOptions = {}): PruneReport {
     maxAgeDays: opts.maxAgeDays,
   });
   const dryRun = Boolean(opts.dryRun);
+  const trust = auditTrust(cwd);
+  const skippedBroken = Boolean(opts.force) && trust.chainOk === false;
 
   if (!policy.enabled) {
     const report: PruneReport = {
@@ -177,18 +239,19 @@ export function cmdPrune(cwd: string, opts: PruneOptions = {}): PruneReport {
       staleIndex: 0,
       indexUpdated: false,
       audited: 0,
+      auditPresent: trust.auditPresent,
+      chainOk: trust.chainOk,
+      reason: null,
+      forced: false,
     };
-    if (opts.json) {
-      console.log(JSON.stringify(report));
-    } else {
+    return emitReport(report, opts.json, () => {
       console.log(color.bold('agent-receipt prune') + color.dim(dryRun ? ' (dry-run)' : ''));
       console.log('Retention is opt-in. Nothing deleted.');
       console.log(
         'Set maxCount and/or maxAgeDays in .agent-receipt.yml, or pass --max-count / --max-age-days.',
       );
       console.log(color.dim('Preview with: agent-receipt prune --dry-run'));
-    }
-    return report;
+    });
   }
 
   assertPruneOutDir(cwd, receiptsDir(cwd));
@@ -199,6 +262,45 @@ export function cmdPrune(cwd: string, opts: PruneOptions = {}): PruneReport {
   const bytes = plan.delete.reduce((n, d) => n + d.bytes, 0);
   const meta = new Map<string, PruneIdentity>();
   for (const item of plan.delete) meta.set(item.rel, receiptIdentity(cwd, item, index));
+
+  if (trust.chainOk === false && !opts.force) {
+    const report: PruneReport = {
+      ok: false,
+      command: 'prune',
+      version: VERSION,
+      exitCode: 1,
+      dryRun,
+      enabled: true,
+      maxCount: policy.maxCount,
+      maxAgeDays: policy.maxAgeDays,
+      deleted: toJsonDeleted(plan.delete, meta),
+      kept: plan.keep.length,
+      bytes,
+      staleIndex: stale,
+      indexUpdated: false,
+      audited: 0,
+      auditPresent: true,
+      chainOk: false,
+      reason: refusalReason(trust.detail ?? 'audit chain broken'),
+      forced: false,
+    };
+    return emitReport(report, opts.json, () => {
+      const suffix = dryRun ? ' (dry-run)' : '';
+      console.log(color.bold('agent-receipt prune') + color.dim(suffix));
+      console.log(color.dim(policyLabel(policy)));
+      console.log(color.red('✗') + ' ' + report.reason);
+      if (plan.delete.length) {
+        console.log('Plan (not applied — trust failed):');
+        for (const item of plan.delete) {
+          const extra = item.jsonRel ? ' +json' : '';
+          console.log(`  ${item.rel}${extra}  ${item.reasons.join('+')}`);
+        }
+      } else {
+        console.log('No receipts matched the limits. Trust still failed, so this is not a clean prune.');
+      }
+      console.log('Nothing deleted.');
+    });
+  }
 
   if (dryRun) {
     const report: PruneReport = {
@@ -216,12 +318,17 @@ export function cmdPrune(cwd: string, opts: PruneOptions = {}): PruneReport {
       staleIndex: stale,
       indexUpdated: false,
       audited: 0,
+      auditPresent: trust.auditPresent,
+      chainOk: trust.chainOk,
+      reason: null,
+      forced: skippedBroken,
     };
-    if (opts.json) {
-      console.log(JSON.stringify(report));
-    } else {
+    return emitReport(report, opts.json, () => {
       console.log(color.bold('agent-receipt prune') + color.dim(' (dry-run)'));
       console.log(color.dim(policyLabel(policy)));
+      if (skippedBroken) {
+        console.log(color.dim('warn: --force skipped the audit trust gate (chain broken).'));
+      }
       if (!plan.delete.length) {
         console.log(`Would delete 0 receipt(s). ${plan.keep.length} kept (${formatBytes(receiptBytes(files))}).`);
       } else {
@@ -242,8 +349,7 @@ export function cmdPrune(cwd: string, opts: PruneOptions = {}): PruneReport {
         );
       }
       console.log('Nothing deleted.');
-    }
-    return report;
+    });
   }
 
   deletePlanned(cwd, plan.delete);
@@ -274,12 +380,17 @@ export function cmdPrune(cwd: string, opts: PruneOptions = {}): PruneReport {
     staleIndex: stale,
     indexUpdated: removed > 0,
     audited,
+    auditPresent: trust.auditPresent,
+    chainOk: trust.chainOk,
+    reason: null,
+    forced: skippedBroken,
   };
-  if (opts.json) {
-    console.log(JSON.stringify(report));
-  } else {
+  return emitReport(report, opts.json, () => {
     console.log(color.bold('agent-receipt prune'));
     console.log(color.dim(policyLabel(policy)));
+    if (skippedBroken) {
+      console.log(color.dim('warn: --force skipped the audit trust gate (chain broken).'));
+    }
     if (!plan.delete.length) {
       console.log(`Deleted 0 receipt(s). ${plan.keep.length} kept.`);
     } else {
@@ -300,6 +411,5 @@ export function cmdPrune(cwd: string, opts: PruneOptions = {}): PruneReport {
         ),
       );
     }
-  }
-  return report;
+  });
 }

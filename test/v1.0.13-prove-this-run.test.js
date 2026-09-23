@@ -117,7 +117,7 @@ describe('v1.0.13 prove-this-run', () => {
     assert.deepEqual(Object.keys(body).sort(), PROVE_KEYS);
     assert.equal(body.ok, true);
     assert.equal(body.command, 'prove');
-    assert.equal(body.version, '1.0.14');
+    assert.equal(body.version, '1.0.15');
     assert.equal(body.exitCode, 0);
     assert.equal(body.verified, true);
     assert.equal(body.trailingIgnored, false);
@@ -153,7 +153,7 @@ describe('v1.0.13 prove-this-run', () => {
     const last = parseJson(cli(dir, ['last', '--json']));
     assert.equal(last.ok, true);
     assert.equal(last.command, 'last');
-    assert.equal(last.version, '1.0.14');
+    assert.equal(last.version, '1.0.15');
     assert.equal(last.path, body.path);
     assert.equal(last.sha256, body.sha256);
     assert.equal(last.agent, 'ci');
@@ -401,9 +401,9 @@ describe('v1.0.13 docs', () => {
     assert.equal(/^maxCount:/m.test(policy), false);
     assert.equal(/^maxAgeDays:/m.test(policy), false);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.14');
+    assert.equal(pkg.version, '1.0.15');
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.14/);
+    assert.match(versionTs, /1\.0\.15/);
     const help = cliResult(root, ['help', 'prove']);
     assert.equal(help.code, 0, help.err);
     assert.match(help.out, /prove-this-run/);

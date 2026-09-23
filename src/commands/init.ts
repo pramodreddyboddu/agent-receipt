@@ -23,7 +23,17 @@ export interface InitOptions {
    * An existing file is merged in place (ignore, outDir, retention stay).
    */
   org?: boolean;
+  /**
+   * Set `maxCount: 100` and `maxAgeDays: 30` on `.agent-receipt.yml`.
+   * Missing config is written like `init`, with those keys enabled.
+   * An existing file is merged in place (ignore, redact, failOn stay).
+   */
+  retention?: boolean;
 }
+
+/** Disk-pressure tip and examples/org-policy.yml use these same numbers. */
+export const INIT_RETENTION_MAX_COUNT = '100';
+export const INIT_RETENTION_MAX_AGE_DAYS = '30';
 
 export interface OrgPolicyYamlResult {
   text: string;
@@ -143,6 +153,62 @@ export function applyOrgPolicy(cwd: string): OrgPolicyResult {
   };
 }
 
+export interface RetentionYamlResult {
+  text: string;
+  maxCountChanged: boolean;
+  maxAgeDaysChanged: boolean;
+}
+
+export interface RetentionResult {
+  configFile: string;
+  notesFile: string;
+  created: boolean;
+  maxCountChanged: boolean;
+  maxAgeDaysChanged: boolean;
+}
+
+/**
+ * Enable retention defaults in YAML text. Does not rewrite `ignore`,
+ * `redact`, `failOn`, `outDir`, or unrelated comments.
+ * Already-correct keys are left byte-for-byte alone.
+ */
+export function applyRetentionYaml(text: string): RetentionYamlResult {
+  const lines = text.split('\n');
+  const maxCountChanged = setYamlScalar(lines, 'maxCount', INIT_RETENTION_MAX_COUNT);
+  const maxAgeDaysChanged = setYamlScalar(lines, 'maxAgeDays', INIT_RETENTION_MAX_AGE_DAYS);
+  if (!maxCountChanged && !maxAgeDaysChanged) {
+    return { text, maxCountChanged: false, maxAgeDaysChanged: false };
+  }
+  let next = lines.join('\n');
+  if (!next.endsWith('\n')) next += '\n';
+  return { text: next, maxCountChanged, maxAgeDaysChanged };
+}
+
+/**
+ * Write retention defaults onto `.agent-receipt.yml`. Creates the default
+ * config first when the file is missing. Does not replace ignore, redact,
+ * or failOn.
+ */
+export function applyRetention(cwd: string): RetentionResult {
+  const configFile = configPath(cwd);
+  const created = !existsSync(configFile);
+  let notesFile = join(cwd, '.agent-receipt', 'SETUP.md');
+  if (created) {
+    const written = writeDefaultConfig(cwd);
+    notesFile = written.notesFile;
+  }
+  const before = readFileSync(configFile, 'utf8');
+  const applied = applyRetentionYaml(before);
+  if (applied.text !== before) writeFileSync(configFile, applied.text, 'utf8');
+  return {
+    configFile,
+    notesFile,
+    created,
+    maxCountChanged: applied.maxCountChanged,
+    maxAgeDaysChanged: applied.maxAgeDaysChanged,
+  };
+}
+
 export function writeCursorRule(cwd: string): string {
   const dest = join(cwd, CURSOR_RULE_REL);
   mkdirSync(dirname(dest), { recursive: true });
@@ -175,30 +241,51 @@ export function writeGrokIntegration(cwd: string): GrokIntegrationPaths {
 }
 
 export function cmdInit(cwd: string, opts: InitOptions = {}): void {
-  let configFile: string;
-  let notesFile: string;
+  let configFile = '';
+  let notesFile = '';
   let org: OrgPolicyResult | undefined;
-  if (opts.org) {
-    org = applyOrgPolicy(cwd);
-    configFile = org.configFile;
-    notesFile = org.notesFile;
-  } else {
+  let retention: RetentionResult | undefined;
+  if (!opts.org && !opts.retention) {
     const written = writeDefaultConfig(cwd);
     configFile = written.configFile;
     notesFile = written.notesFile;
+  } else {
+    if (opts.org) {
+      org = applyOrgPolicy(cwd);
+      configFile = org.configFile;
+      notesFile = org.notesFile;
+    }
+    if (opts.retention) {
+      retention = applyRetention(cwd);
+      configFile = retention.configFile;
+      notesFile = retention.notesFile;
+    }
   }
-  if (org && !org.created) {
+  const fresh = Boolean(org?.created || retention?.created || (!org && !retention));
+  if (!fresh && org && retention) {
+    console.log(color.green('✓') + ' Org policy and retention applied');
+  } else if (!fresh && org) {
     console.log(color.green('✓') + ' Org policy applied');
+  } else if (!fresh && retention) {
+    console.log(color.green('✓') + ' Retention defaults applied');
   } else {
     console.log(color.green('✓') + ' Initialized agent-receipt');
   }
   console.log(`  config: ${configFile}`);
-  if (!org || org.created) {
+  if (fresh) {
     console.log(`  notes:  ${notesFile}`);
   }
   if (org) {
     console.log(`  redact: true (${org.redactChanged ? 'set' : 'unchanged'})`);
     console.log(`  failOn: high (${org.failOnChanged ? 'set' : 'unchanged'})`);
+  }
+  if (retention) {
+    console.log(
+      `  maxCount: ${INIT_RETENTION_MAX_COUNT} (${retention.maxCountChanged ? 'set' : 'unchanged'})`,
+    );
+    console.log(
+      `  maxAgeDays: ${INIT_RETENTION_MAX_AGE_DAYS} (${retention.maxAgeDaysChanged ? 'set' : 'unchanged'})`,
+    );
   }
   if (opts.cursor) {
     const rule = writeCursorRule(cwd);
@@ -228,5 +315,9 @@ export function cmdInit(cwd: string, opts: InitOptions = {}): void {
   if (opts.org) {
     console.log('  agent-receipt doctor --strict   # policy row should pass');
     console.log('  tip: examples/org-policy.yml (init --org does not replace local ignore)');
+  }
+  if (opts.retention) {
+    console.log('  agent-receipt prune --dry-run   # preview trusted retention');
+    console.log('  tip: trusted prune refuses to delete when the audit chain is broken');
   }
 }

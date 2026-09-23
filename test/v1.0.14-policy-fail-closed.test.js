@@ -287,7 +287,7 @@ describe('v1.0.14 docs', () => {
     const mirror = readFileSync(join(root, 'docs', 'github-actions-ci.yml'), 'utf8');
     assert.match(mirror, /init --org/);
     assert.match(mirror, /doctor --strict --json/);
-    assert.match(mirror, /v1\.0\.14/);
+    assert.match(mirror, /v1\.0\.15/);
     assert.doesNotMatch(mirror, /--strict stays exit 0/);
     const live = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
     assert.doesNotMatch(live, /init --org/);
@@ -300,9 +300,9 @@ describe('v1.0.14 docs', () => {
     assert.match(action, /trailingIgnored/);
     assert.match(action, /exitCode !== 0 \|\| g\.ok !== true/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.14');
+    assert.equal(pkg.version, '1.0.15');
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.14/);
+    assert.match(versionTs, /1\.0\.15/);
     const helpInit = cli(root, ['help', 'init']);
     assert.match(helpInit, /--org/);
     assert.match(helpInit, /--policy/);

@@ -4,17 +4,24 @@
 # Also reusable:
 #   jobs:
 #     receipt:
-#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.14
+#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.15
 #       with:
 #         base: main
 #         fail-on: high
 #         command: wrap
+#         prove: true
 #
 # Install pin: npm install -g github:pramodreddyboddu/agent-receipt
-# Or, once the tag exists: github:pramodreddyboddu/agent-receipt#v1.0.14
+# Or, once the tag exists: github:pramodreddyboddu/agent-receipt#v1.0.15
 # Always pass --fail-on (this job does; default high) so a missing
 # .agent-receipt.yml cannot silently weaken the gate.
 # After a successful wrap or share, trailingIgnored is a boolean when set.
+# prove (default true) runs `agent-receipt prove --json` after a green
+# gate and fails unless ok, verified, and exitCode 0. Share-only runs
+# still prove the latest receipt.
+# A green gate uploads actions/upload-artifact@v4 (name agent-receipt-gate):
+# receipt-gate.json, plus the Markdown at the gate JSON `path` when that
+# file is still there. A missing receipt does not fail the job.
 #
 # Not installed as a live workflow in this repo: pushing .github/workflows
 # needs the OAuth `workflow` scope. See docs/business.md.
@@ -39,6 +46,11 @@ on:
         required: false
         type: string
         default: wrap
+      prove:
+        description: After a green gate, run prove --json and fail unless ok and verified. Share still proves the latest receipt.
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -60,11 +72,12 @@ jobs:
           set -eu
           if ! command -v agent-receipt >/dev/null 2>&1; then
             # Pin the GitHub install. Use a tag once it exists, for example:
-            #   npm install -g github:pramodreddyboddu/agent-receipt#v1.0.14
+            #   npm install -g github:pramodreddyboddu/agent-receipt#v1.0.15
             npm install -g github:pramodreddyboddu/agent-receipt
           fi
 
       - name: Fail-on JSON gate
+        id: gate
         env:
           FAIL_ON: ${{ inputs.fail-on || 'high' }}
           BASE_IN: ${{ inputs.base || github.base_ref }}
@@ -99,3 +112,52 @@ jobs:
           # (null on capture). A non-boolean value fails the job.
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (g.exitCode !== 0 || g.ok !== true) process.exit(g.exitCode || 1); if (g.trailingIgnored != null && typeof g.trailingIgnored !== "boolean") { console.error("trailingIgnored must be boolean when set"); process.exit(1); } if (typeof g.trailingIgnored === "boolean") console.log("trailingIgnored=" + g.trailingIgnored);' "$out"
           exit "$code"
+
+      - name: Prove this run
+        if: steps.gate.outcome == 'success' && inputs.prove != false
+        run: |
+          set -eu
+          out="$RUNNER_TEMP/receipt-prove.json"
+          set +e
+          agent-receipt prove --json > "$out"
+          code=$?
+          set -e
+          echo "agent-receipt prove exit $code"
+          cat "$out"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (g.ok !== true || g.verified !== true || g.exitCode !== 0) { console.error("prove is not ok"); process.exit(g.exitCode || 1); }' "$out"
+          exit "$code"
+
+      - name: Stage gate artifacts
+        if: always()
+        run: |
+          set -eu
+          stage="$RUNNER_TEMP/agent-receipt-gate"
+          mkdir -p "$stage"
+          json="$RUNNER_TEMP/receipt-gate.json"
+          if [ ! -f "$json" ]; then
+            echo "receipt-gate.json missing; nothing to upload"
+            exit 0
+          fi
+          cp "$json" "$stage/receipt-gate.json"
+          node - "$json" "$stage" <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const g = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const src = g && typeof g.path === 'string' ? g.path : '';
+          if (!src || !fs.existsSync(src)) {
+            console.log('receipt path missing; uploading gate JSON only');
+            process.exit(0);
+          }
+          const dest = path.join(process.argv[3], path.basename(src));
+          fs.copyFileSync(src, dest);
+          console.log('staged ' + path.basename(src));
+          NODE
+
+      - name: Upload agent-receipt gate
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-receipt-gate
+          path: ${{ runner.temp }}/agent-receipt-gate
+          if-no-files-found: ignore
