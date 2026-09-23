@@ -27,6 +27,8 @@ You should hear back within a few days. Coordinated disclosure is preferred.
 `agent-receipt` produces **tamper-evident** Markdown/HTML receipts (SHA-256 of the
 canonical body). Default `verify` recomputes that hash and stays hash-only.
 `verify --require-sig` (1.0.17) additionally requires a valid `*.sig.json`.
+When a fingerprint trust store is configured (1.0.18), that check also
+requires the sidecar fingerprint to be on the known-keys allowlist.
 `audit` adds an experimental hash chain over capture, watch, wrap, share,
 export, and prune-delete events (`.agent-receipt/audit.jsonl`). That chain
 is not a signature.
@@ -35,12 +37,19 @@ is not a signature.
 sha256 hex. The sidecar (`foo.sig.json`) carries the signature and the SPKI
 public key. The private key is PKCS8 PEM mode `0600` under
 `.agent-receipt/keys/` and is never written into a receipt or sidecar.
-There is no CA, no PKI, no key escrow, no fingerprint trust store, and no
-auto-sign on capture. `prove` reports the sidecar when it is present. A
-missing sidecar does not fail default `verify` or `prove`. It does fail
-`verify --require-sig`. `share` and Markdown `export` copy a matching
-sidecar or re-sign the published Markdown when local keys exist. They do
-not attach a stale sidecar, and they do not sign HTML.
+There is no CA, no PKI, and no key escrow. A thin fingerprint trust store
+(known-keys allowlist) is opt-in: `.agent-receipt/trusted-keys.txt` and/or
+`trustedFingerprints` in `.agent-receipt.yml`. Empty or missing both leaves
+the allowlist inactive, so any cryptographically valid sidecar still passes
+`verify --require-sig`. A non-empty store requires that fingerprint. This
+is not a certificate chain and not a revocation list. There is no default
+auto-sign on capture. `capture --sign` and `wrap --sign` are opt-in and
+leave the receipt unsigned when keys are missing. `prove` reports the
+sidecar when it is present (`trusted` is null when the allowlist is
+inactive). A missing sidecar does not fail default `verify` or `prove`.
+It does fail `verify --require-sig`. `share` and Markdown `export` copy a
+matching sidecar or re-sign the published Markdown when local keys exist.
+They do not attach a stale sidecar, and they do not sign HTML.
 
 It is **not**:
 

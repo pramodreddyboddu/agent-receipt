@@ -81,6 +81,11 @@ Options:
                          Exit 2 after writing if max severity meets threshold.
                          Bare --fail-on means high. Overrides config failOn.
                          Exit codes: 0 pass, 2 policy failure, 1 usage error.
+  --sign                 Opt-in. After a successful write, if local Ed25519
+                         keys exist, write *.sig.json beside the receipt
+                         (same sidecar as \`sign\`). Missing keys print a tip
+                         and leave the file unsigned. That does not exit 2.
+                         Off by default. Not a CA.
   --cwd <path>           Run as if started in this directory
 
 Config \`.agent-receipt.yml\` may set \`redact: true\` and \`failOn: high\`
@@ -123,6 +128,10 @@ Options:
   --json                 Companion .json plus one CI gate object on stdout
                          (human progress on stderr). Exit codes stay 0 / 2 / 1.
   --full                 Include full diffs
+  --sign                 Opt-in. After capture, write *.sig.json when local
+                         keys exist (same as \`sign\`). Missing keys print a
+                         tip and leave the receipt unsigned. Not exit 2.
+                         Off by default. Not a CA.
   --cwd <path>           Run as if started in this directory
 
 Exit codes: 0 OK, 2 fail-on threshold or verify failure, 1 usage/runtime error.
@@ -405,8 +414,31 @@ A valid sidecar for the current sha256 exits 0 unless --fail-on also trips.
 There is no config key for this flag. capture, wrap, and share do not
 turn it on.
 
---json with --require-sig adds signature { present, ok, alg, fingerprint, reason }
+--json with --require-sig adds signature { present, ok, alg, fingerprint, reason, trusted }
 after the hash passes. Without --require-sig the gate omits signature.
+\`trusted\` is true when a non-empty known-keys allowlist lists the sidecar
+fingerprint, false when that allowlist rejects it, and null when the
+allowlist is inactive.
+
+Fingerprint trust store (known-keys allowlist, not a CA). After the hash
+matches and the sidecar is cryptographically valid, \`--require-sig\` checks
+the fingerprint when a store is configured:
+  - \`.agent-receipt/trusted-keys.txt\` — one lowercase 64-hex fingerprint
+    per line. \`#\` comments and blank lines are ignored. An invalid line
+    fails closed (exit 2) instead of being skipped.
+  - \`.agent-receipt.yml\` key \`trustedFingerprints:\` (YAML list). Union
+    with the file. Either source alone is enough.
+  - \`--trusted-key <fp>\` (repeatable, or comma-separated) adds fingerprints
+    for this invocation only.
+Empty or missing file and config (and no \`--trusted-key\`) means the
+allowlist is inactive: any cryptographically valid sidecar still passes,
+same as 1.0.17. A non-empty store that does not list the sidecar
+fingerprint exits 2 (\`fingerprint not trusted\`, fingerprint included).
+
+\`trust list\`, \`trust add <fp>\`, and \`trust rm <fp>\` edit the file.
+Teams may commit a copy under examples/ or docs/ and copy it into
+\`.agent-receipt/\` (that directory stays gitignored, so local keys and
+the default list stay private).
 
 Examples:
   agent-receipt verify
@@ -414,6 +446,7 @@ Examples:
   agent-receipt verify --json
   agent-receipt verify --require-sig
   agent-receipt verify --require-sig receipt.md --json
+  agent-receipt verify --require-sig --trusted-key <64-hex-fingerprint>
   agent-receipt verify --fail-on high --json
 `,
 
@@ -464,10 +497,13 @@ signature (base64 raw 64-byte signature), publicKey (SPKI PEM). The
 public key is embedded so a peer can verify without the local keys
 directory. The private key is never written.
 
-capture and wrap do not sign. share and export do not sign the source
-receipt. When they write published Markdown they may copy a valid sidecar
-or re-sign that file (see \`help share\`). Default verify stays hash-only.
-\`verify --require-sig\` opts in. prove reports the sidecar when it is present.
+capture and wrap do not sign unless you pass \`--sign\` (opt-in; missing
+keys leave the receipt unsigned and do not exit 2). share and export do
+not sign the source receipt. When they write published Markdown they may
+copy a valid sidecar or re-sign that file (see \`help share\`). Default
+verify stays hash-only. \`verify --require-sig\` opts in and, when a
+known-keys allowlist is configured, requires that fingerprint. prove
+reports the sidecar when it is present.
 
 --json prints one object (command "sign"):
   ok, version, exitCode, verified, path, sigPath, sha256, fingerprint, reason
@@ -483,10 +519,37 @@ Examples:
   agent-receipt keygen && agent-receipt sign && agent-receipt prove --json
 `,
 
+  trust: `agent-receipt trust — fingerprint trust store (known-keys allowlist)
+
+Usage:
+  agent-receipt trust list [--json]
+  agent-receipt trust add <fingerprint> [--json]
+  agent-receipt trust rm <fingerprint> [--json]
+
+Edits \`.agent-receipt/trusted-keys.txt\` (one lowercase 64-hex fingerprint
+per line). \`#\` comments and blank lines are kept. An invalid line is not
+rewritten and the command exits 1.
+
+This is a local allowlist, not a CA. Empty or missing file plus no
+\`trustedFingerprints\` config means \`verify --require-sig\` still accepts
+any cryptographically valid sidecar. \`trust add\` / \`trust rm\` only
+change the file. Config \`trustedFingerprints\` is a separate union.
+
+--json prints one object:
+  ok, command ("trust"), action, version, exitCode, active, count,
+  fingerprints, sources, reason
+  add also sets added; rm also sets removed.
+
+Examples:
+  agent-receipt trust list
+  agent-receipt trust add <64-hex-fingerprint>
+  agent-receipt trust rm <64-hex-fingerprint> --json
+`,
+
   prove: `agent-receipt prove — prove-this-run (integrity + audit link)
 
 Usage:
-  agent-receipt prove [path] [--json] [--fail-on high|medium|low]
+  agent-receipt prove [path] [--json] [--fail-on high|medium|low] [--trusted-key <fp>]
 
 Resolves the path the same way verify does (newest receipt when omitted).
 Recomputes the same SHA-256 as verify, then reports the path, hash,
@@ -503,8 +566,17 @@ Signature status (foo.md → foo.sig.json, written by \`sign\`):
   - Present and valid for the current receipt sha256: ok true, plus alg and
     the key fingerprint
   - Present but invalid, mismatched, or malformed JSON: ok false, exit 2
+  - Present, cryptographically valid, and a non-empty trust store does not
+    list the fingerprint: ok false, exit 2, reason mentions the trust store.
+    An empty or missing store does not change the 1.0.17 exit rules.
+    An invalid line in the trust store fails closed.
 
---json adds signature { present, ok, alg, fingerprint, reason }.
+--json adds signature { present, ok, alg, fingerprint, reason, trusted }.
+trusted is true when the allowlist lists the fingerprint, false when an
+active allowlist rejects it, and null when the allowlist is inactive
+(or the sidecar was not checked). --trusted-key <fp> is repeatable or
+comma-separated and unions with the file and trustedFingerprints for
+this invocation only.
 
 Audit link (still not a signature):
   - No .agent-receipt/audit.jsonl: present false, chainOk null, matched false
@@ -528,14 +600,16 @@ true and the exit is 2 even if the hash matches.
   path, sha256, tldr, agent,
   risk { high, medium, low, total, maxSeverity } or null,
   audit { present, chainOk, events, matched, reason },
-  signature { present, ok, alg, fingerprint, reason },
+  signature { present, ok, alg, fingerprint, reason, trusted },
   reason
   ok is true only when exitCode is 0.
 
 Exit codes:
   0  verified, audit log absent or intact, and signature absent or valid
+     (including a valid sidecar when the trust store is inactive)
   2  verify failed, the audit chain is broken, a signature sidecar is
-     present but invalid, or --fail-on tripped
+     present but invalid, an active trust store rejects the fingerprint,
+     or --fail-on tripped
   1  usage or runtime (missing receipt, unknown flag, bad --fail-on)
 
 Examples:
@@ -697,6 +771,13 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
                 is missing while the public key is present, or the files
                 are unreadable. Missing keys do not fail doctor or
                 doctor --strict.
+  trust         Fingerprint trust store / known-keys (optional allowlist).
+                INFO when no store is configured (allowlist inactive).
+                PASS when the file or trustedFingerprints lists N
+                fingerprints. WARN when the store is present but empty,
+                unreadable, or has an invalid line. Invalid lines FAIL
+                under --strict. A missing store does not fail doctor
+                or doctor --strict.
   retention     maxCount / maxAgeDays (opt-in). Over the cap or a large outDir is a warning.
                 Unset fails under --strict on any outDir, including a small one.
                 Default doctor leaves unset retention as INFO/WARN.
@@ -837,13 +918,14 @@ Commands:
   watch                  Poll git; auto-capture on commits or dirty tree
   keygen                 Create a local Ed25519 keypair under .agent-receipt/keys
   sign [path]            Attest the receipt sha256 into a .sig.json sidecar
+  trust                  Known-keys allowlist: list, add <fp>, rm <fp>
   verify [path]          Hash-check integrity (hash-only; --require-sig opts in)
   prove [path]           Prove-this-run: verify + audit link + signature status
   audit                  List the compliance log (--event, --agent, --failed filter the listing)
   log                    Alias for audit
   prune                  Delete old receipts under outDir (opt-in; trusted prune; --dry-run, --force)
   retain                 Alias for prune
-  doctor                 Health check (--json; --strict fails unset policy, unset retention, and a broken audit chain)
+  doctor                 Health check (--json; --strict fails unset policy, unset retention, a broken audit chain, and an invalid trust store)
   compare [a] [b]        Diff two receipts (default: last vs previous)
   diff [a] [b]           Alias for compare
   install-hooks          Install opt-in post-commit capture hook
@@ -893,6 +975,7 @@ Examples:
   agent-receipt sign
   agent-receipt verify
   agent-receipt verify --require-sig
+  agent-receipt trust list
   agent-receipt prove
   agent-receipt prove --json
   agent-receipt audit

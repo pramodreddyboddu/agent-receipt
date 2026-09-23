@@ -23,6 +23,11 @@ export interface WrapOptions {
   full?: boolean;
   /** Force uncommitted even if also passing base (rejected by capture). */
   uncommitted?: boolean;
+  /**
+   * Opt-in. After capture, write `*.sig.json` when local keys exist.
+   * Missing keys print a tip and do not fail the wrap.
+   */
+  sign?: boolean;
 }
 
 export interface WrapResult {
@@ -87,6 +92,7 @@ export function cmdWrap(cwd: string, opts: WrapOptions = {}): WrapResult {
     quiet,
     emitGate: false,
     audit: false,
+    sign: opts.sign,
   });
 
   let tldr = capture.tldr;

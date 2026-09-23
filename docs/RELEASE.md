@@ -36,7 +36,7 @@ gh auth refresh -h github.com -s workflow
 
 Fine-grained PAT: **Actions: Read and write**. GitHub App: **Workflows**.
 A token whose `gh auth status` scopes are only `gist`, `read:org`, `repo`
-cannot push `.github/workflows/*`. v1.0.6 through v1.0.17 left
+cannot push `.github/workflows/*`. v1.0.6 through v1.0.18 left
 `.github/workflows/ci.yml` unchanged for that reason; the docs mirror has
 the `share --json` smoke, `prove --json`, `last --json`, a `prune --dry-run`
 check, a `docs/gate.schema.json` required-key check on `wrap.json`,
@@ -44,8 +44,9 @@ fail-closed `doctor --strict` (fails unset policy and unset retention on a
 small outDir; passes after `init --org` and `init --retention`), `doctor --json`,
 `audit --event wrap`, `audit --agent ci --failed`, and `history --agent ci` /
 `history --uncommitted` / `history --failed`, plus a 1.0.16 `keygen` /
-`sign` / `prove --json` signature smoke and a 1.0.17 `verify --require-sig`
-check (exit 0 signed, exit 2 unsigned). The drop-in PR gate
+`sign` / `prove --json` signature smoke, a 1.0.17 `verify --require-sig`
+check (exit 0 signed, exit 2 unsigned), and a 1.0.18 fingerprint trust-store
+smoke (matching fingerprint exits 0; a different fingerprint exits 2). The drop-in PR gate
 (`examples/github/pr-gate.yml`, `examples/github/action.yml`) is an example
 to copy, not this repo's live workflow.
 

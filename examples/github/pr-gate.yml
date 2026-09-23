@@ -4,26 +4,31 @@
 # Also reusable:
 #   jobs:
 #     receipt:
-#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.17
+#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.18
 #       with:
 #         base: main
 #         fail-on: high
 #         command: wrap
 #         prove: true
 #         require-sig: true
+#         trusted-keys: ""
 #
 # Install pin: npm install -g github:pramodreddyboddu/agent-receipt
-# Or, once the tag exists: github:pramodreddyboddu/agent-receipt#v1.0.17
+# Or, once the tag exists: github:pramodreddyboddu/agent-receipt#v1.0.18
 # Always pass --fail-on (this job does; default high) so a missing
 # .agent-receipt.yml cannot silently weaken the gate.
 # After a successful wrap or share, trailingIgnored is a boolean when set.
 # prove (default true) runs `agent-receipt prove --json` after a green
 # gate and fails unless ok, verified, and exitCode 0. Share-only runs
 # still prove the latest receipt.
-# require-sig (default false, v1.0.17) temp-keygens in the job (no org
+# require-sig (default false, since v1.0.17) temp-keygens in the job (no org
 # secret), signs the receipt, then requires prove signature.ok and
 # verify --require-sig. That key is not a CA. Restore your own keys
 # before the step if the fingerprint must stay stable.
+# trusted-keys (v1.0.18, default empty) is a file path or comma-separated
+# fingerprints copied to .agent-receipt/trusted-keys.txt before the signed
+# prove. Empty leaves the allowlist inactive. Not a CA. The signing
+# fingerprint must be listed when this input is set.
 # A green gate uploads actions/upload-artifact@v4 (name agent-receipt-gate):
 # receipt-gate.json, plus the Markdown at the gate JSON `path` when that
 # file is still there. A missing receipt does not fail the job.
@@ -61,6 +66,11 @@ on:
         required: false
         type: boolean
         default: false
+      trusted-keys:
+        description: Optional known-keys allowlist used when require-sig is true. File path or comma-separated 64-hex fingerprints. Empty leaves the allowlist inactive. Not a CA.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -82,7 +92,7 @@ jobs:
           set -eu
           if ! command -v agent-receipt >/dev/null 2>&1; then
             # Pin the GitHub install. Use a tag once it exists, for example:
-            #   npm install -g github:pramodreddyboddu/agent-receipt#v1.0.17
+            #   npm install -g github:pramodreddyboddu/agent-receipt#v1.0.18
             npm install -g github:pramodreddyboddu/agent-receipt
           fi
 
@@ -139,9 +149,20 @@ jobs:
 
       - name: Sign and require signature
         if: steps.gate.outcome == 'success' && inputs.require-sig == true
+        env:
+          TRUSTED_KEYS: ${{ inputs.trusted-keys }}
         run: |
           set -eu
           # Temp keypair for this job. No org secret. Not a CA.
+          if [ -n "$TRUSTED_KEYS" ]; then
+            mkdir -p .agent-receipt
+            if [ -f "$TRUSTED_KEYS" ]; then
+              cp "$TRUSTED_KEYS" .agent-receipt/trusted-keys.txt
+            else
+              printf '%s\n' "$TRUSTED_KEYS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' > .agent-receipt/trusted-keys.txt
+            fi
+            echo "installed .agent-receipt/trusted-keys.txt"
+          fi
           # keygen leaves an existing pair unchanged. Restore keys first
           # when the fingerprint must be stable, then this step signs.
           agent-receipt keygen

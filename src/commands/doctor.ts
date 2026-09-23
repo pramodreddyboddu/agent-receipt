@@ -21,6 +21,7 @@ import { color } from '../lib/color.js';
 import { auditLogPath, verifyAuditChain } from '../lib/audit.js';
 import { retentionCheck } from '../lib/retention.js';
 import { loadKeys, privateKeyPath, publicKeyPath } from '../lib/sign.js';
+import { inspectTrustForDoctor } from '../lib/trust.js';
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'info';
 
@@ -103,6 +104,31 @@ function orgPolicyUnset(cfg: AgentReceiptConfig): boolean {
 function retentionLimitsUnset(cfg: AgentReceiptConfig): boolean {
   if (cfg.retentionInvalid?.length) return false;
   return cfg.maxCount == null && cfg.maxAgeDays == null;
+}
+
+/**
+ * Known-keys allowlist is opt-in. Missing stays INFO and does not fail
+ * default doctor or `--strict`. A configured-but-empty store is WARN.
+ * Invalid lines are WARN, and FAIL under `--strict`.
+ */
+function trustStoreCheck(cwd: string, strict: boolean): DoctorCheck {
+  const view = inspectTrustForDoctor(cwd);
+  if (view.kind === 'absent') {
+    return { name: 'trust', status: 'info', detail: view.detail };
+  }
+  if (view.kind === 'ok') {
+    return { name: 'trust', status: 'pass', detail: view.detail };
+  }
+  if (view.kind === 'empty') {
+    return { name: 'trust', status: 'warn', detail: view.detail };
+  }
+  return {
+    name: 'trust',
+    status: strict ? 'fail' : 'warn',
+    detail: strict
+      ? `${view.detail}. Strict: an invalid trust store fails doctor.`
+      : view.detail,
+  };
 }
 
 /**
@@ -435,6 +461,7 @@ export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCh
   }
 
   checks.push(signingKeysCheck(cwd));
+  checks.push(trustStoreCheck(cwd, opts.strict === true));
 
   checks.push(retentionCheck(cwd, cfgNow));
 
@@ -524,6 +551,7 @@ const PROD_CHECKS = [
   'policy',
   'audit',
   'keys',
+  'trust',
   'retention',
   'git-clean',
   'cursor',

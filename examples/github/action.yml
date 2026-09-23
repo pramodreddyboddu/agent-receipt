@@ -14,9 +14,10 @@
 #       fail-on: high
 #       base: origin/main
 #       install: true
-#       from: github:pramodreddyboddu/agent-receipt#v1.0.17
+#       from: github:pramodreddyboddu/agent-receipt#v1.0.18
 #       prove: true
 #       require-sig: false
+#       trusted-keys: ""
 #
 # `install` defaults to false. When true, the step runs
 # `npm install -g <from>` (default from:
@@ -27,10 +28,16 @@
 # exit 0) it runs `prove --json` and fails the step unless prove is ok
 # (verified true, exitCode 0). The prove JSON is printed.
 #
-# `require-sig` defaults to false (v1.0.17). After a green gate it runs
+# `require-sig` defaults to false (since v1.0.17). After a green gate it runs
 # `verify --require-sig --json` on the gate receipt path and fails unless
 # signature.ok is true. CI must `keygen` + `sign` (or restore keys) before
 # this input. The action does not create keys. Unsigned receipts exit 2.
+#
+# `trusted-keys` (v1.0.18) is optional. A file path is copied to
+# `.agent-receipt/trusted-keys.txt`. Anything else is written as
+# comma-separated fingerprints, one per line. Empty leaves the allowlist
+# inactive (any valid sidecar passes). Not a CA. The signing fingerprint
+# must be in that list when require-sig or prove sees a sidecar.
 #
 # Outputs (empty string when the field is missing): ok, exit-code, sha256,
 # path, gate-json (absolute path of the gate JSON file).
@@ -60,7 +67,7 @@ inputs:
     required: false
     default: "false"
   from:
-    description: npm spec used when install is true. Pin with #v1.0.17 once the tag exists.
+    description: npm spec used when install is true. Pin with #v1.0.18 once the tag exists.
     required: false
     default: github:pramodreddyboddu/agent-receipt
   prove:
@@ -71,6 +78,10 @@ inputs:
     description: After a green gate, run verify --require-sig on the receipt path. CI must keygen + sign (or restore keys) first. Default false. Unsigned receipts exit 2.
     required: false
     default: "false"
+  trusted-keys:
+    description: Optional known-keys allowlist. A file path is copied to .agent-receipt/trusted-keys.txt; otherwise comma-separated 64-hex fingerprints. Empty leaves the allowlist inactive. Not a CA.
+    required: false
+    default: ""
 
 outputs:
   ok:
@@ -103,6 +114,7 @@ runs:
         FROM_SPEC: ${{ inputs.from }}
         PROVE: ${{ inputs.prove }}
         REQUIRE_SIG: ${{ inputs.require-sig }}
+        TRUSTED_KEYS: ${{ inputs.trusted-keys }}
       run: |
         set -eu
         if [ "$INSTALL" = "true" ]; then
@@ -172,6 +184,15 @@ runs:
         if [ "$gate_ok" -ne 0 ]; then
           exit "$gate_ok"
         fi
+        if [ -n "$TRUSTED_KEYS" ]; then
+          mkdir -p .agent-receipt
+          if [ -f "$TRUSTED_KEYS" ]; then
+            cp "$TRUSTED_KEYS" .agent-receipt/trusted-keys.txt
+          else
+            printf '%s\n' "$TRUSTED_KEYS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' > .agent-receipt/trusted-keys.txt
+          fi
+          echo "installed .agent-receipt/trusted-keys.txt"
+        fi
         if [ "$PROVE" = "true" ]; then
           prove_out="${RUNNER_TEMP:-/tmp}/receipt-prove.json"
           set +e
@@ -190,9 +211,10 @@ runs:
         NODE
         fi
         if [ "$REQUIRE_SIG" = "true" ]; then
-          # v1.0.17. The job must already have signed this receipt
+          # Since v1.0.17. The job must already have signed this receipt
           # (agent-receipt keygen && agent-receipt sign, or restored keys).
-          # This step does not create keys.
+          # This step does not create keys. v1.0.18 trusted-keys, when set,
+          # was installed above and verify --require-sig honors it.
           sig_out="${RUNNER_TEMP:-/tmp}/receipt-require-sig.json"
           receipt_path=$(node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (typeof g.path!=="string" || !g.path) { console.error("gate path missing"); process.exit(1); } process.stdout.write(g.path);' "$out")
           set +e

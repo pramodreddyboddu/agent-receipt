@@ -15,6 +15,7 @@ import {
   type GateReport,
 } from '../lib/gate.js';
 import { inspectReceiptSignature, type SignatureStatus } from '../lib/sign.js';
+import { applyTrust, loadTrustedFingerprints } from '../lib/trust.js';
 
 export interface VerifyCommandOptions {
   /** Suppress human stdout (JSON gate commands, or a caller that prints its own summary). */
@@ -31,6 +32,11 @@ export interface VerifyCommandOptions {
    * receipt. Default verify stays hash-only.
    */
   requireSig?: boolean;
+  /**
+   * Extra known-key fingerprints for this invocation (`--trusted-key`).
+   * Union with the file and config. Used only when `requireSig` is set.
+   */
+  trustedKeys?: string[];
 }
 
 export interface VerifyCommandResult {
@@ -112,6 +118,7 @@ export function cmdVerify(
         alg: null,
         fingerprint: null,
         reason: 'signature required: signature absent',
+        trusted: null,
       };
     } else if (inspected.ok !== true) {
       signature = {
@@ -120,18 +127,21 @@ export function cmdVerify(
         alg: inspected.alg,
         fingerprint: inspected.fingerprint,
         reason: inspected.reason || 'signature invalid',
+        trusted: null,
       };
     } else {
-      signature = inspected;
+      const store = loadTrustedFingerprints(cwd, { extra: opts.trustedKeys });
+      signature = applyTrust(inspected, store);
     }
   }
   const sigFailed = Boolean(signature && signature.ok !== true);
 
   if (!quiet && signature) {
     if (signature.ok === true) {
+      const trustedBit = signature.trusted === true ? ' (trusted)' : '';
       console.log(
         color.green('✓') +
-          ` signature ${signature.alg ?? 'ed25519'} ${signature.fingerprint ?? ''}`.trimEnd(),
+          ` signature ${signature.alg ?? 'ed25519'} ${signature.fingerprint ?? ''}${trustedBit}`.trimEnd(),
       );
     } else if (signature.reason) {
       console.error(color.red('✗') + ` ${signature.reason}`);

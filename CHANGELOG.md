@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.18] — 2026-09-22
+
+### Added
+
+- Fingerprint trust store / known-keys allowlist. Not a CA. `.agent-receipt/trusted-keys.txt` holds one lowercase 64-hex fingerprint per line (`#` comments and blank lines ignored; trailing whitespace stripped). An invalid line fails closed when the store is loaded for a gate. Config key `trustedFingerprints` (YAML list) unions with the file. Either source alone is enough. Empty or missing both leaves the allowlist inactive: `verify --require-sig` still accepts any cryptographically valid sidecar (1.0.17 behavior). The default path stays under gitignored `.agent-receipt/` so local lists stay private. Teams may commit a copy under `examples/` or `docs/` and copy it in.
+- `verify --require-sig` checks the sidecar fingerprint after the hash matches and the signature verifies, when the allowlist is non-empty. A missing fingerprint exits 2 with `fingerprint not trusted` and the fingerprint. `--trusted-key <fp>` (repeatable or comma-separated) unions with the file and config for that invocation only. `verify --json` signature gains additive `trusted` (`true`, `false`, or `null`). Required gate keys are unchanged.
+- `prove` uses the same allowlist when a sidecar is present and cryptographically valid. A fingerprint that is not listed sets `signature.ok` false, `signature.trusted` false, and exits 2. The reason mentions the trust store. When the store is inactive, `signature.trusted` is null and prove stays as in 1.0.17 (a missing sidecar still does not fail).
+- `doctor` adds a `trust` row: INFO when no store is configured, PASS with the fingerprint count when the store is readable, WARN when the store is present but empty or unreadable or has an invalid line. A missing store does not fail default `doctor` or `doctor --strict`. Invalid lines FAIL under `--strict`.
+- `trust list`, `trust add <fp>`, and `trust rm <fp>` edit `trusted-keys.txt` (`--json` prints one object).
+- `capture --sign` and `wrap --sign` are opt-in. After a successful write, local keys produce `*.sig.json` (the same sidecar as `sign`). Missing keys print a tip and leave the receipt unsigned. That does not exit 2. The flags are off by default. Share still re-signs published Markdown when keys exist.
+
+### Changed
+
+- Package version bumped to `1.0.18`.
+- CI examples (live [`.github/workflows/*`](.github/workflows) was not edited). Pin comments are `v1.0.18`. [`examples/github/action.yml`](examples/github/action.yml) and [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) accept optional `trusted-keys` (a file path or comma-separated fingerprints) installed as `.agent-receipt/trusted-keys.txt` before prove / `verify --require-sig`. Empty leaves the allowlist inactive.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) keeps the 1.0.17 `verify --require-sig` smoke and adds a trust-store smoke: a matching fingerprint exits 0, a non-matching fingerprint exits 2 on verify and prove. Version-range comments include 1.0.18. Live [`.github/workflows/*`](.github/workflows) was not edited.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm.
+- Still not a CA. No key escrow. The private key stays under `.agent-receipt/keys/`. The thin known-keys allowlist landed; full PKI/CA is still deferred.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture, SSO / IdP, Cloud Agents, a background deleter, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.17] — 2026-09-22
 
 ### Added

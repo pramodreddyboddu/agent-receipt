@@ -1,6 +1,6 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.17 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.18 for teams: install once, capture every session, fail CI
 on high-severity findings, share only redacted HTML, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
@@ -129,7 +129,7 @@ is the artifact, not the gate. The gate object itself is
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -233,7 +233,7 @@ Copy one of:
 | Example | What to do with it |
 |---------|--------------------|
 | [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. After a green gate it runs `prove --json` (`prove` defaults to true) and uploads `receipt-gate.json` plus the receipt Markdown (`actions/upload-artifact@v4`, name `agent-receipt-gate`). |
-| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.17`), `prove`, and `require-sig` (default false; CI must `keygen` + `sign` first). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.18`), `prove`, `require-sig` (default false; CI must `keygen` + `sign` first), and `trusted-keys` (file path or comma-separated fingerprints). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
 
 ### Drop-in
 
@@ -252,7 +252,7 @@ true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
 - uses: ./.github/actions/agent-receipt
   with:
     install: true
-    from: github:pramodreddyboddu/agent-receipt#v1.0.17
+    from: github:pramodreddyboddu/agent-receipt#v1.0.18
     prove: true
     fail-on: high
     base: origin/main
@@ -368,8 +368,9 @@ file aside and let the next command start a new one (`prev: null`).
 `prove` is the one-screen check that a receipt still matches its hash and
 that the local audit log still links it. It also reports a local Ed25519
 sidecar when `sign` wrote one. Default `verify` stays hash-only.
-`verify --require-sig` requires a valid sidecar. This is not a CA.
-The private key never leaves `.agent-receipt/keys/`.
+`verify --require-sig` requires a valid sidecar. When a known-keys
+allowlist is configured, the sidecar fingerprint must be listed. This is
+not a CA. The private key never leaves `.agent-receipt/keys/`.
 
 ```bash
 agent-receipt keygen
@@ -387,7 +388,8 @@ without `--force` leaves the pair unchanged. `sign` hash-checks the receipt
 first (exit 2, no sidecar, when the hash fails), then signs the sha256 hex
 string as UTF-8 bytes. `foo.md` gets `foo.sig.json` with `alg`, `version`,
 `sha256`, `fingerprint`, `signature`, and `publicKey`. Capture and wrap do
-not call `sign`. `share` and Markdown `export` copy a valid sidecar when
+not call `sign` unless you pass `--sign` (missing keys leave the receipt
+unsigned). `share` and Markdown `export` copy a valid sidecar when
 the published sha256 matches, and re-sign the published Markdown when the
 body was rewritten and local keys exist. A rewritten file with no keys is
 left unsigned (no stale sidecar). HTML is unsigned. Peers verify and sign
@@ -397,7 +399,10 @@ the Markdown. `verify --require-sig` is how a peer requires that sidecar.
 `exitCode`, `verified`, `trailingIgnored`, `failedOn`, `failOn`, `redacted`,
 `uncommitted`, `path`, `sha256`, `tldr`, `agent`, `risk`, `audit`
 (`present`, `chainOk`, `events`, `matched`, `reason`), `signature`
-(`present`, `ok`, `alg`, `fingerprint`, `reason`), and `reason`.
+(`present`, `ok`, `alg`, `fingerprint`, `reason`, `trusted`), and `reason`.
+`trusted` is true when the known-keys allowlist lists the fingerprint,
+false when an active allowlist rejects it, and null when the allowlist is
+inactive.
 `ok` is true only when `exitCode` is 0.
 
 `signature.ok` is null when no sidecar is present, and that alone does not
@@ -518,15 +523,20 @@ listing (`[]` with `--json`). An empty receipt store still errors, same as
 
 ### Deferred
 
-`verify --require-sig` and the portable Markdown sidecar handoff landed in
-1.0.17. Share and export copy a valid sidecar when the published sha256
-matches, and re-sign a rewritten Markdown file when local keys exist.
-`doctor --strict` now fails unset retention on any `outDir`. Default
-`doctor` stays pressure-gated. Thin local Ed25519 attest landed in 1.0.16
+A thin known-keys allowlist landed in 1.0.18 (`.agent-receipt/trusted-keys.txt`,
+config `trustedFingerprints`, `verify --require-sig` and `prove` when the
+store is non-empty, `doctor` trust row, `trust list|add|rm`, and opt-in
+`capture --sign` / `wrap --sign`). Empty or missing means the allowlist is
+inactive. It is not a CA. `verify --require-sig` and the portable Markdown
+sidecar handoff landed in 1.0.17. Share and export copy a valid sidecar when
+the published sha256 matches, and re-sign a rewritten Markdown file when
+local keys exist. `doctor --strict` fails unset retention on any `outDir`.
+Default `doctor` stays pressure-gated. A missing trust store does not fail
+`doctor` or `doctor --strict`. Thin local Ed25519 attest landed in 1.0.16
 (`keygen`, `sign`, prove `signature`, `docs/signature.schema.json`). It
 signs the receipt sha256 with a key that stays under `.agent-receipt/keys/`.
-It is not a CA. Full PKI/CA, a fingerprint trust store, minisign, GPG, and
-auto-sign on capture are still deferred. Drop-in CI/PR
+Full PKI/CA is still deferred. Minisign, GPG/OpenPGP, and default auto-sign
+on capture are still deferred. Drop-in CI/PR
 gate polish landed in 1.0.15 (composite action with `install` / `prove` /
 step outputs, `pr-gate.yml` prove + artifact upload, and
 `docs/gate.schema.json`). Trusted retention landed as `init --retention`
@@ -548,7 +558,7 @@ are checklist and listing tools; they do not sign the audit log.
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.17 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.18 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:
