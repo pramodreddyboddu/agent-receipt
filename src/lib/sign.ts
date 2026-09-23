@@ -67,6 +67,12 @@ export interface SignatureStatus {
   alg: string | null;
   fingerprint: string | null;
   reason: string | null;
+  /**
+   * True when a non-empty trust store lists this fingerprint.
+   * False when an active allowlist rejected it.
+   * Null when the allowlist is inactive, or trust was not evaluated.
+   */
+  trusted: boolean | null;
 }
 
 export const ABSENT_SIGNATURE: SignatureStatus = {
@@ -75,6 +81,7 @@ export const ABSENT_SIGNATURE: SignatureStatus = {
   alg: null,
   fingerprint: null,
   reason: null,
+  trusted: null,
 };
 
 export function keyDir(cwd: string): string {
@@ -318,6 +325,7 @@ export function inspectReceiptSignature(
       alg: null,
       fingerprint: null,
       reason: `unreadable signature sidecar (${detail})`,
+      trusted: null,
     };
   }
   let parsed: unknown;
@@ -330,6 +338,7 @@ export function inspectReceiptSignature(
       alg: null,
       fingerprint: null,
       reason: 'malformed signature JSON',
+      trusted: null,
     };
   }
   const rec = asRecord(parsed);
@@ -340,7 +349,40 @@ export function inspectReceiptSignature(
     alg: rec && typeof rec.alg === 'string' ? rec.alg : null,
     fingerprint: rec && typeof rec.fingerprint === 'string' ? rec.fingerprint : null,
     reason: result.reason,
+    trusted: null,
   };
+}
+
+const SIGN_IF_KEYS_TIP =
+  'left unsigned (no local Ed25519 keys). Run `agent-receipt keygen` then `agent-receipt sign`.';
+
+/**
+ * Opt-in attest after a successful capture or wrap (`--sign` only).
+ * Missing keys leave the receipt unsigned and return a tip. That tip is
+ * not an exit-2 failure. Does not run unless the caller passes the flag.
+ */
+export function signIfKeys(
+  cwd: string,
+  receiptPath: string,
+  sha256Hex: string,
+): {
+  signed: boolean;
+  sigPath: string | null;
+  fingerprint: string | null;
+  tip: string | null;
+} {
+  if (!HEX64.test(sha256Hex)) {
+    return { signed: false, sigPath: null, fingerprint: null, tip: null };
+  }
+  let keys: LoadedKeys;
+  try {
+    keys = loadKeys(cwd);
+  } catch {
+    return { signed: false, sigPath: null, fingerprint: null, tip: SIGN_IF_KEYS_TIP };
+  }
+  const doc = createSignatureDocument(sha256Hex, keys);
+  const sigPath = writeSignatureSidecar(receiptPath, doc);
+  return { signed: true, sigPath, fingerprint: keys.fingerprint, tip: null };
 }
 
 export interface SignatureHandoff {

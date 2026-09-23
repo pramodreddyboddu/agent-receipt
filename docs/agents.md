@@ -132,6 +132,7 @@ Inside Aider:
 | Full Markdown dump | `agent-receipt show` |
 | Integrity check | `agent-receipt verify` (hash-only unless `--require-sig`) |
 | Require a sidecar | `agent-receipt verify --require-sig` |
+| Known-keys allowlist | `agent-receipt trust add <fingerprint>` (not a CA) |
 | Prove this run | `agent-receipt prove` (hash + audit link + signature status) |
 | Local Ed25519 attest | `agent-receipt keygen` then `agent-receipt sign` (not a CA) |
 | Newest receipt JSON | `agent-receipt last --json` |
@@ -141,6 +142,9 @@ Inside Aider:
 | Scripting cwd | `agent-receipt capture --cwd /path/to/repo …` |
 
 Receipts are **tamper-evident**. `verify` is the hash check. `sign` can add a
-local Ed25519 attest of that hash; it is not a CA. Treat high-severity risk
+local Ed25519 attest of that hash; it is not a CA. A thin known-keys
+allowlist (`.agent-receipt/trusted-keys.txt` or `trustedFingerprints`) can
+require that fingerprint under `verify --require-sig`. Full PKI/CA is still
+deferred. Treat high-severity risk
 hints (secrets, `.env`, private keys, lockfile/CI deletions) as a review
 checklist, not a security boundary.

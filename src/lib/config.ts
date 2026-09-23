@@ -35,7 +35,17 @@ export interface AgentReceiptConfig {
   maxAgeDays?: number;
   /** Set when maxCount / maxAgeDays were present but not integers >= 1. */
   retentionInvalid?: string[];
+  /**
+   * Known-key allowlist (lowercase 64-hex fingerprints). Union with
+   * `.agent-receipt/trusted-keys.txt`. Undefined when the key is absent.
+   * An empty array means the key was set but listed nothing (allowlist inactive).
+   */
+  trustedFingerprints?: string[];
+  /** Set when `trustedFingerprints` was present but an entry was not 64 hex. */
+  trustedFingerprintsInvalid?: string;
 }
+
+const FP64 = /^[0-9a-f]{64}$/;
 
 const DEFAULTS: AgentReceiptConfig = {
   outDir: '.agent-receipt/receipts',
@@ -182,6 +192,31 @@ export function loadConfig(cwd: string): AgentReceiptConfig {
   const retentionInvalid: string[] = [];
   const maxCount = parseRetentionInt(parsed.maxCount, 'maxCount', retentionInvalid);
   const maxAgeDays = parseRetentionInt(parsed.maxAgeDays, 'maxAgeDays', retentionInvalid);
+  let trustedFingerprints: string[] | undefined;
+  let trustedFingerprintsInvalid: string | undefined;
+  if (parsed.trustedFingerprints !== undefined) {
+    const raw = parsed.trustedFingerprints;
+    let items: string[] = [];
+    if (Array.isArray(raw)) items = raw.map(String);
+    else if (typeof raw === 'string') {
+      items = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    } else {
+      trustedFingerprintsInvalid =
+        'trustedFingerprints must be a list of 64-hex fingerprints';
+    }
+    if (!trustedFingerprintsInvalid) {
+      const good: string[] = [];
+      for (const item of items) {
+        const fp = item.trim().toLowerCase();
+        if (!FP64.test(fp)) {
+          trustedFingerprintsInvalid = `invalid trustedFingerprints entry: expected 64 hex chars (${item})`;
+          break;
+        }
+        good.push(fp);
+      }
+      if (!trustedFingerprintsInvalid) trustedFingerprints = good;
+    }
+  }
   return {
     outDir: String(parsed.outDir ?? DEFAULTS.outDir),
     defaultAgent: String(parsed.defaultAgent ?? DEFAULTS.defaultAgent),
@@ -199,6 +234,8 @@ export function loadConfig(cwd: string): AgentReceiptConfig {
     maxCount,
     maxAgeDays,
     retentionInvalid: retentionInvalid.length ? retentionInvalid : undefined,
+    trustedFingerprints,
+    trustedFingerprintsInvalid,
   };
 }
 
@@ -299,6 +336,15 @@ riskAllowlist: []
 # is broken. \`prune --force\` deletes anyway. Capture / wrap / watch do not prune.
 # maxCount: 100
 # maxAgeDays: 30
+
+# Fingerprint trust store (known-keys allowlist). Opt-in. Not a CA.
+# Union with .agent-receipt/trusted-keys.txt (one lowercase 64-hex
+# fingerprint per line; # comments and blank lines ignored).
+# Empty or omitted = allowlist inactive: verify --require-sig accepts
+# any cryptographically valid sidecar. Copy a committed example in
+# from examples/ or docs/ when the list should stay out of this
+# gitignored directory.
+# trustedFingerprints: []
 `;
   writeFileSync(configFile, yaml, 'utf8');
 

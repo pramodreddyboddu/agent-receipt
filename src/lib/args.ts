@@ -12,6 +12,16 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const flags: Record<string, string | boolean> = {};
   // Flags that never take a value, so a following receipt path stays positional.
   const valueless = new Set(['require-sig', 'require-signature']);
+  // Repeatable flags are joined with commas (`--trusted-key a --trusted-key b`).
+  const repeatable = new Set(['trusted-key']);
+
+  const assignFlag = (key: string, value: string | boolean): void => {
+    if (typeof value === 'string' && repeatable.has(key) && typeof flags[key] === 'string') {
+      flags[key] = `${flags[key]},${value}`;
+      return;
+    }
+    flags[key] = value;
+  };
 
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -22,29 +32,29 @@ export function parseArgs(argv: string[]): ParsedArgs {
     if (a.startsWith('--')) {
       const eq = a.indexOf('=');
       if (eq > 0) {
-        flags[a.slice(2, eq)] = a.slice(eq + 1);
+        assignFlag(a.slice(2, eq), a.slice(eq + 1));
       } else {
         const key = a.slice(2);
         if (valueless.has(key)) {
-          flags[key] = true;
+          assignFlag(key, true);
           continue;
         }
         const next = rest[i + 1];
         if (next && !next.startsWith('-')) {
-          flags[key] = next;
+          assignFlag(key, next);
           i++;
         } else {
-          flags[key] = true;
+          assignFlag(key, true);
         }
       }
     } else if (a.startsWith('-') && a.length === 2) {
       const key = a.slice(1);
       const next = rest[i + 1];
       if (next && !next.startsWith('-')) {
-        flags[key] = next;
+        assignFlag(key, next);
         i++;
       } else {
-        flags[key] = true;
+        assignFlag(key, true);
       }
     } else {
       positional.push(a);

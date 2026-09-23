@@ -23,6 +23,7 @@ export { cmdVerify } from './commands/verify.js';
 export { cmdProve } from './commands/prove.js';
 export { cmdKeygen } from './commands/keygen.js';
 export { cmdSign } from './commands/sign.js';
+export { cmdTrust } from './commands/trust.js';
 export { cmdInstallHooks, cmdUninstallHooks } from './commands/hooks.js';
 export { cmdDoctor, runDoctorChecks } from './commands/doctor.js';
 export {
@@ -48,7 +49,15 @@ export {
   isLocalKeyMaterialPath,
   createSignatureDocument,
   handoffMarkdownSignature,
+  signIfKeys,
 } from './lib/sign.js';
+export {
+  loadTrustedFingerprints,
+  isFingerprintTrusted,
+  checkTrusted,
+  applyTrust,
+  TRUSTED_KEYS_REL,
+} from './lib/trust.js';
 export {
   analyzeRisks,
   summarizeRisks,

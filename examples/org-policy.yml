@@ -34,6 +34,10 @@
 # Local Ed25519 attest (not a CA). Private key stays in .agent-receipt/keys/:
 #   agent-receipt keygen
 #   agent-receipt sign
+# Known-keys allowlist (opt-in, not a CA). Empty = inactive.
+# One lowercase 64-hex fingerprint per line in .agent-receipt/trusted-keys.txt
+# and/or the list below. Union. verify --require-sig then requires a match.
+# trustedFingerprints: []
 # Newest receipt as one JSON object (wins over --path):
 #   agent-receipt last --json
 # doctor --strict always fails unset org policy (redact + failOn), including
@@ -57,7 +61,7 @@
 # Gate JSON schema: docs/gate.schema.json (next to docs/receipt.schema.json)
 # Signature sidecar: docs/signature.schema.json
 # Drop-in CI: examples/github/action.yml and examples/github/pr-gate.yml
-#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.17
+#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.18
 #   prove after a green gate; upload receipt-gate.json
 
 outDir: .agent-receipt/receipts

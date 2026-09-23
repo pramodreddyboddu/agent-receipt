@@ -23,7 +23,7 @@ import {
 } from '../lib/risk.js';
 import { loadConfig, ensureOutDir } from '../lib/config.js';
 import { filterIgnored } from '../lib/ignore.js';
-import { isLocalKeyMaterialPath } from '../lib/sign.js';
+import { isLocalKeyMaterialPath, signIfKeys } from '../lib/sign.js';
 import {
   formatMarkdown,
   formatJson,
@@ -80,6 +80,11 @@ export interface CaptureOptions {
    * user-facing command (one line, not a second capture line).
    */
   audit?: false | 'capture' | 'watch';
+  /**
+   * Opt-in. After a successful write, sign the receipt when local keys
+   * exist. Missing keys print a tip and leave the file unsigned.
+   */
+  sign?: boolean;
 }
 
 export interface CaptureResult {
@@ -323,6 +328,15 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
 
   const sha256 = extractEmbeddedHash(markdown);
   const verified = verifyMarkdown(markdown).ok;
+  if (opts.sign && sha256) {
+    const signed = signIfKeys(cwd, outPath, sha256);
+    if (signed.signed) {
+      say(color.green('✓') + ` signed ${signed.fingerprint ?? ''}`);
+      if (signed.sigPath) say(color.dim(`  sig: ${signed.sigPath}`));
+    } else if (signed.tip) {
+      say(color.dim(`  ${signed.tip}`));
+    }
+  }
   if (opts.audit !== false) {
     const exitCode = failedOn ? 2 : 0;
     recordAuditEvent(cwd, {

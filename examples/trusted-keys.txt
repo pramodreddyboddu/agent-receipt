@@ -1,0 +1,11 @@
+# Example known-keys allowlist. Not a CA.
+# Copy to <repo>/.agent-receipt/trusted-keys.txt (that directory is gitignored,
+# so the default path stays private). One lowercase 64-hex fingerprint per
+# non-empty line. '#' comments and blank lines are ignored. Trailing
+# whitespace is stripped. An invalid line fails closed when verify --require-sig
+# or prove loads the store.
+#
+# You can also set trustedFingerprints in .agent-receipt.yml. The two sources
+# are a union. Empty or missing both leaves the allowlist inactive.
+#
+# aa11bb22cc33dd44ee55ff6677889900aa11bb22cc33dd44ee55ff6677889900

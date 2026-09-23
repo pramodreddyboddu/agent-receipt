@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.17: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.18: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -71,7 +71,7 @@ jobs:
           node -e 'const fs=require("fs"); const schema=JSON.parse(fs.readFileSync("docs/gate.schema.json","utf8")); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const req=schema.required||[]; if(!req.length){console.error("schema required empty"); process.exit(1)} for (const k of req) { if(!Object.prototype.hasOwnProperty.call(g,k)) { console.error("missing "+k); process.exit(1);} }' "$tmp/wrap.json"
           # prove-this-run: hash ok, trailing content evaluated, audit linked.
           node bin/agent-receipt.js prove --json --cwd "$tmp" > "$tmp/prove.json"
-          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="prove"||g.verified!==true||g.trailingIgnored!==false||g.exitCode!==0||!g.audit||g.audit.present!==true||g.audit.chainOk!==true||g.audit.matched!==true||typeof g.audit.events!=="number"||typeof g.sha256!=="string"||!g.signature||g.signature.present!==false||g.signature.ok!==null){console.error(g); process.exit(1)}' "$tmp/prove.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="prove"||g.verified!==true||g.trailingIgnored!==false||g.exitCode!==0||!g.audit||g.audit.present!==true||g.audit.chainOk!==true||g.audit.matched!==true||typeof g.audit.events!=="number"||typeof g.sha256!=="string"||!g.signature||g.signature.present!==false||g.signature.ok!==null||g.signature.trusted!==null){console.error(g); process.exit(1)}' "$tmp/prove.json"
           # v1.0.16: local Ed25519 attest of the receipt sha256. Unsigned prove
           # above stays exit 0. keygen, sign, then prove reports signature.ok.
           node bin/agent-receipt.js keygen --json --cwd "$tmp" > "$tmp/keygen.json"
@@ -79,7 +79,7 @@ jobs:
           node bin/agent-receipt.js sign --json --cwd "$tmp" > "$tmp/sign.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="sign"||g.exitCode!==0||g.verified!==true||typeof g.sha256!=="string"||g.sha256.length!==64||typeof g.fingerprint!=="string"||typeof g.sigPath!=="string"){console.error(g); process.exit(1)}' "$tmp/sign.json"
           node bin/agent-receipt.js prove --json --cwd "$tmp" > "$tmp/prove-signed.json"
-          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const k=JSON.parse(fs.readFileSync(process.argv[2],"utf8")); if(!g.ok||g.verified!==true||g.exitCode!==0||!g.signature||g.signature.present!==true||g.signature.ok!==true||g.signature.alg!=="ed25519"||g.signature.fingerprint!==k.fingerprint){console.error(g); process.exit(1)}' "$tmp/prove-signed.json" "$tmp/keygen.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const k=JSON.parse(fs.readFileSync(process.argv[2],"utf8")); if(!g.ok||g.verified!==true||g.exitCode!==0||!g.signature||g.signature.present!==true||g.signature.ok!==true||g.signature.alg!=="ed25519"||g.signature.fingerprint!==k.fingerprint||g.signature.trusted!==null){console.error(g); process.exit(1)}' "$tmp/prove-signed.json" "$tmp/keygen.json"
           # v1.0.17: verify --require-sig on the signed receipt (exit 0) and
           # on an unsigned copy (exit 2). Default verify stays hash-only.
           node bin/agent-receipt.js verify --require-sig --json --cwd "$tmp" > "$tmp/verify-sig.json"
@@ -92,6 +92,29 @@ jobs:
           set -e
           test "$nosig" = 2
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==false||g.exitCode!==2||!g.signature||g.signature.present!==false||g.signature.ok!==false||typeof g.reason!=="string"||g.reason.indexOf("signature absent")===-1){console.error(g); process.exit(1)}' "$tmp/verify-nosig.json"
+          # v1.0.18: fingerprint trust store. Matching fingerprint passes
+          # verify --require-sig. A different fingerprint exits 2 on verify
+          # and prove. Removing the file leaves the allowlist inactive.
+          fp=$(node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(g.signature.fingerprint);' "$tmp/verify-sig.json")
+          printf '%s\n' "$fp" > "$tmp/.agent-receipt/trusted-keys.txt"
+          node bin/agent-receipt.js verify --require-sig --json --cwd "$tmp" > "$tmp/verify-trust.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.exitCode!==0||!g.signature||g.signature.ok!==true||g.signature.trusted!==true){console.error(g); process.exit(1)}' "$tmp/verify-trust.json"
+          node bin/agent-receipt.js prove --json --cwd "$tmp" > "$tmp/prove-trust.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.exitCode!==0||!g.signature||g.signature.ok!==true||g.signature.trusted!==true){console.error(g); process.exit(1)}' "$tmp/prove-trust.json"
+          printf '%s\n' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' > "$tmp/.agent-receipt/trusted-keys.txt"
+          set +e
+          node bin/agent-receipt.js verify --require-sig --json --cwd "$tmp" > "$tmp/verify-untrusted.json"
+          untrusted=$?
+          set -e
+          test "$untrusted" = 2
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==false||g.exitCode!==2||!g.signature||g.signature.ok!==false||g.signature.trusted!==false||typeof g.reason!=="string"||g.reason.indexOf("fingerprint not trusted")===-1){console.error(g); process.exit(1)}' "$tmp/verify-untrusted.json"
+          set +e
+          node bin/agent-receipt.js prove --json --cwd "$tmp" > "$tmp/prove-untrusted.json"
+          puntrusted=$?
+          set -e
+          test "$puntrusted" = 2
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==false||g.exitCode!==2||!g.signature||g.signature.ok!==false||g.signature.trusted!==false||typeof g.reason!=="string"||g.reason.indexOf("trust store")===-1){console.error(g); process.exit(1)}' "$tmp/prove-untrusted.json"
+          rm -f "$tmp/.agent-receipt/trusted-keys.txt"
           node bin/agent-receipt.js last --json --cwd "$tmp" > "$tmp/last.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="last"||typeof g.path!=="string"||typeof g.sha256!=="string"||g.sha256.length!==64){console.error(g); process.exit(1)}' "$tmp/last.json"
           # history --agent is an exact match. The wrap above used --agent ci.
@@ -122,7 +145,7 @@ jobs:
           # rows INFO). init --org fixes policy only. init --retention
           # fixes retention. Both are required before --strict exits 0.
           node bin/agent-receipt.js doctor --json --cwd "$tmp" > "$tmp/doctor.json"
-          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const ids=new Set((g.checks||[]).map(c=>c.id)); const need=["node","git","repo","outDir","cli","policy","retention"]; const policy=(g.checks||[]).find(c=>c.id==="policy"); const retention=(g.checks||[]).find(c=>c.id==="retention"); if(g.ok!==true||g.command!=="doctor"||g.exitCode!==0||g.strict!==false||typeof g.version!=="string"||!need.every(id=>ids.has(id))||g.checks.some(c=>!["pass","fail","warn","info"].includes(c.status)||typeof c.detail!=="string")||!policy||policy.status!=="info"||!retention||retention.status!=="info"){console.error(g); process.exit(1)}' "$tmp/doctor.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const ids=new Set((g.checks||[]).map(c=>c.id)); const need=["node","git","repo","outDir","cli","policy","retention","trust"]; const policy=(g.checks||[]).find(c=>c.id==="policy"); const retention=(g.checks||[]).find(c=>c.id==="retention"); const trust=(g.checks||[]).find(c=>c.id==="trust"); if(g.ok!==true||g.command!=="doctor"||g.exitCode!==0||g.strict!==false||typeof g.version!=="string"||!need.every(id=>ids.has(id))||g.checks.some(c=>!["pass","fail","warn","info"].includes(c.status)||typeof c.detail!=="string")||!policy||policy.status!=="info"||!retention||retention.status!=="info"||!trust||trust.status!=="info"){console.error(g); process.exit(1)}' "$tmp/doctor.json"
           set +e
           node bin/agent-receipt.js doctor --strict --json --cwd "$tmp" > "$tmp/doctor-strict-unset.json"
           strict_unset=$?

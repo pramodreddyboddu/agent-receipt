@@ -121,7 +121,7 @@
     },
     "signature": {
       "type": ["object", "null"],
-      "description": "Optional. verify --json includes this only when --require-sig was passed and the hash check passed. Omitted when the signature was not required. Same fields as prove signature.",
+      "description": "Optional. verify --json includes this only when --require-sig was passed and the hash check passed. Omitted when the signature was not required. Same fields as prove signature. trusted is additive (1.0.18): true, false, or null. Required signature keys are unchanged.",
       "additionalProperties": false,
       "required": ["present", "ok", "alg", "fingerprint", "reason"],
       "properties": {
@@ -129,7 +129,11 @@
         "ok": { "type": ["boolean", "null"] },
         "alg": { "type": ["string", "null"] },
         "fingerprint": { "type": ["string", "null"] },
-        "reason": { "type": ["string", "null"] }
+        "reason": { "type": ["string", "null"] },
+        "trusted": {
+          "type": ["boolean", "null"],
+          "description": "True when a non-empty known-keys allowlist lists this fingerprint. False when that allowlist rejects it or the store failed to load after a valid signature. Null when the allowlist is inactive or trust was not evaluated."
+        }
       }
     },
     "sigPath": {

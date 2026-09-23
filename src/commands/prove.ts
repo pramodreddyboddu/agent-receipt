@@ -19,6 +19,7 @@ import {
   inspectReceiptSignature,
   type SignatureStatus,
 } from '../lib/sign.js';
+import { applyTrust, loadTrustedFingerprints } from '../lib/trust.js';
 import type { FailOnThreshold } from '../lib/risk.js';
 
 export interface ProveOptions {
@@ -29,6 +30,8 @@ export interface ProveOptions {
    * Prove stays an integrity check unless this flag is passed.
    */
   failOn?: FailOnThreshold;
+  /** Extra known-key fingerprints for this invocation (`--trusted-key`). */
+  trustedKeys?: string[];
 }
 
 export interface ProveAudit {
@@ -193,7 +196,9 @@ function formatAudit(audit: ProveAudit): string {
 
 function formatSignature(signature: SignatureStatus): string {
   if (!signature.present) return 'absent';
-  if (signature.ok) return `ok ${signature.fingerprint ?? ''}`.trim();
+  const trust =
+    signature.trusted === true ? ' trusted' : signature.trusted === false ? ' untrusted' : '';
+  if (signature.ok) return `ok ${signature.fingerprint ?? ''}${trust}`.trim();
   return signature.reason ? `FAIL ${signature.reason}` : 'FAIL';
 }
 
@@ -263,7 +268,9 @@ export function printProveError(reason: string): void {
  * `verify --require-sig` is the opt-in that fails when the sidecar is missing.
  * Exit 0 when the hash matches, the audit log is absent or intact, and any
  * sidecar is valid. Exit 2 when verify fails, the chain is broken, a present
- * sidecar is invalid, or `--fail-on` trips. A missing sidecar does not fail.
+ * sidecar is invalid, an active trust store rejects the fingerprint, or
+ * `--fail-on` trips. A missing sidecar does not fail. An empty or absent
+ * trust store leaves that rule unchanged.
  */
 export function cmdProve(
   cwd: string,
@@ -277,7 +284,14 @@ export function cmdProve(
   const failedOn = failOnTripped ? true : memory.failedOn;
   const audit = readAudit(cwd, verified.path);
   const auditBroken = audit.present && audit.chainOk === false;
-  const signature = inspectReceiptSignature(verified.path, verified.sha256);
+  const inspected = inspectReceiptSignature(verified.path, verified.sha256);
+  const signature =
+    inspected.present && inspected.ok === true
+      ? applyTrust(
+          inspected,
+          loadTrustedFingerprints(cwd, { extra: opts.trustedKeys }),
+        )
+      : inspected;
   const signatureBad = signature.present && signature.ok === false;
 
   const reasons: string[] = [];

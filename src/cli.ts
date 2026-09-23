@@ -24,6 +24,7 @@ import { cmdExport, cmdHtml } from './commands/export.js';
 import { cmdShare } from './commands/share.js';
 import { cmdAudit } from './commands/audit.js';
 import { cmdPrune } from './commands/prune.js';
+import { cmdTrust } from './commands/trust.js';
 
 const JSON_GATE_COMMANDS = new Set(['capture', 'wrap', 'share', 'verify']);
 
@@ -146,7 +147,30 @@ function flagHistoryUncommitted(flags: Record<string, string | boolean>): boolea
   );
 }
 
-const PROVE_FLAGS = new Set(['cwd', 'json', 'fail-on']);
+const PROVE_FLAGS = new Set(['cwd', 'json', 'fail-on', 'trusted-key']);
+const TRUST_FLAGS = new Set(['cwd', 'json']);
+
+const FP64 = /^[0-9a-f]{64}$/;
+
+/** `--trusted-key <fp>` is repeatable and comma-separated. Invalid values are usage errors. */
+function flagTrustedKeys(flags: Record<string, string | boolean>): string[] | undefined {
+  const v = flags['trusted-key'];
+  if (v === undefined) return undefined;
+  if (typeof v !== 'string' || !v.trim()) {
+    throw new Error('--trusted-key requires a 64-hex fingerprint');
+  }
+  const parts = v
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (!parts.length) throw new Error('--trusted-key requires a 64-hex fingerprint');
+  for (const fp of parts) {
+    if (!FP64.test(fp)) {
+      throw new Error('--trusted-key must be 64 hex chars');
+    }
+  }
+  return parts;
+}
 const KEYGEN_FLAGS = new Set(['cwd', 'json', 'force']);
 const SIGN_FLAGS = new Set(['cwd', 'json']);
 
@@ -172,7 +196,7 @@ function assertKnownProveFlags(flags: Record<string, string | boolean>): void {
   for (const key of Object.keys(flags)) {
     if (!PROVE_FLAGS.has(key)) {
       throw new Error(
-        `Unknown flag: --${key}. prove accepts --json, --fail-on [high|medium|low], and --cwd.`,
+        `Unknown flag: --${key}. prove accepts --json, --fail-on [high|medium|low], --trusted-key <fp>, and --cwd.`,
       );
     }
   }
@@ -251,6 +275,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           failOn,
           uncommitted: flagBool(flags, 'uncommitted'),
           redact: resolveRedact(cwd, flags),
+          sign: flagBool(flags, 'sign'),
         });
         return result.failedOn ? 2 : 0;
       }
@@ -265,6 +290,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           json: flagBool(flags, 'json'),
           full: flagBool(flags, 'full'),
           uncommitted: flagBool(flags, 'uncommitted'),
+          sign: flagBool(flags, 'sign'),
         });
         if (result.failedOn) return 2;
         return result.verified ? 0 : 2;
@@ -334,6 +360,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           json: flagBool(flags, 'json'),
           failOn,
           requireSig: flagBool(flags, 'require-sig', 'require-signature'),
+          trustedKeys: flagTrustedKeys(flags),
         });
         return result.exitCode;
       }
@@ -359,6 +386,18 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         const result = cmdProve(cwd, positional[0], {
           json: flagBool(flags, 'json'),
           failOn,
+          trustedKeys: flagTrustedKeys(flags),
+        });
+        return result.exitCode;
+      }
+      case 'trust': {
+        for (const key of Object.keys(flags)) {
+          if (!TRUST_FLAGS.has(key)) {
+            throw new Error(`Unknown flag: --${key}. trust accepts --json and --cwd.`);
+          }
+        }
+        const result = cmdTrust(cwd, positional[0], positional[1], {
+          json: flagBool(flags, 'json'),
         });
         return result.exitCode;
       }
