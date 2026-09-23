@@ -81,8 +81,9 @@ export interface CaptureOptions {
    */
   audit?: false | 'capture' | 'watch';
   /**
-   * Opt-in. After a successful write, sign the receipt when local keys
-   * exist. Missing keys print a tip and leave the file unsigned.
+   * After a successful write, sign the receipt when local keys exist.
+   * Set by CLI `--sign` or config `sign: true` (`--no-sign` forces this off).
+   * Missing keys print a tip and leave the file unsigned. That does not exit 2.
    */
   sign?: boolean;
 }

@@ -22,8 +22,13 @@ Existing file: merge in place. Every active \`redact\` / \`failOn\` line is set
 to those values. A commented \`# redact:\` or \`# failOn:\` line is uncommented
 only when that key has no active line. A missing key is appended.
 \`ignore\`, \`riskAllowlist\`, \`outDir\`, retention keys (\`maxCount\`,
-\`maxAgeDays\`), and other comments stay. Re-running when both keys are
+\`maxAgeDays\`), \`sign\`, and other comments stay. Re-running when both keys are
 already set exits 0 and does not rewrite them.
+
+\`init --org\` does not set \`sign\`. Keys may be absent. After
+\`agent-receipt keygen\` and \`agent-receipt trust add --self\`, add
+\`sign: true\` so capture, wrap, and watch sign. CLI \`--no-sign\` overrides.
+Missing keys print a tip and leave the receipt unsigned (not exit 2).
 
 Prints the config path and whether each key was set or unchanged, then
 suggests \`doctor --strict\`. See examples/org-policy.yml for the full
@@ -81,16 +86,22 @@ Options:
                          Exit 2 after writing if max severity meets threshold.
                          Bare --fail-on means high. Overrides config failOn.
                          Exit codes: 0 pass, 2 policy failure, 1 usage error.
-  --sign                 Opt-in. After a successful write, if local Ed25519
-                         keys exist, write *.sig.json beside the receipt
-                         (same sidecar as \`sign\`). Missing keys print a tip
-                         and leave the file unsigned. That does not exit 2.
-                         Off by default. Not a CA. CI sign: true fails closed
+  --sign                 After a successful write, if local Ed25519 keys
+                         exist, write *.sig.json beside the receipt
+                         (same sidecar as \`sign\`). Also on when config
+                         \`sign: true\`. Missing keys print a tip and leave
+                         the file unsigned. That does not exit 2.
+                         Not a CA. CI composite sign: true fails closed
                          without keys (docs/ci-signed-gate.md).
+  --no-sign              Force signing off (overrides config sign: true)
   --cwd <path>           Run as if started in this directory
 
-Config \`.agent-receipt.yml\` may set \`redact: true\` and \`failOn: high\`
-(see examples/org-policy.yml). Those apply when the flags above are omitted.
+Config \`.agent-receipt.yml\` may set \`redact: true\`, \`failOn: high\`, and
+\`sign: true\` (see examples/org-policy.yml). Those apply when the flags
+above are omitted. \`sign: true\` covers capture, wrap, and watch only.
+\`init --org\` does not set \`sign\` (keys may be absent). After \`keygen\`
+and \`trust add --self\`, add \`sign: true\`. \`--no-sign\` overrides.
+Missing keys tip and leave the receipt unsigned (not exit 2).
 
 Each capture under outDir updates .agent-receipt/index.json (stable receipt index).
 Captures with --out outside outDir are not indexed (so they do not become newest).
@@ -129,12 +140,19 @@ Options:
   --json                 Companion .json plus one CI gate object on stdout
                          (human progress on stderr). Exit codes stay 0 / 2 / 1.
   --full                 Include full diffs
-  --sign                 Opt-in. After capture, write *.sig.json when local
-                         keys exist (same as \`sign\`). Missing keys print a
-                         tip and leave the receipt unsigned. Not exit 2.
-                         Off by default. Not a CA. CI sign: true fails closed
-                         without keys (docs/ci-signed-gate.md).
+  --sign                 After capture, write *.sig.json when local keys
+                         exist (same as \`sign\`). Also on when config
+                         \`sign: true\`. Missing keys print a tip and leave
+                         the receipt unsigned. Not exit 2. Not a CA.
+                         CI composite sign: true fails closed without keys
+                         (docs/ci-signed-gate.md).
+  --no-sign              Force signing off (overrides config sign: true)
   --cwd <path>           Run as if started in this directory
+
+\`sign: true\` in \`.agent-receipt.yml\` signs this command when neither
+flag is passed. \`init --org\` does not set \`sign\` (keys may be absent).
+Add it after \`keygen\` and \`trust add --self\`. \`--no-sign\` overrides.
+share, export, prove, and verify do not read config \`sign\`.
 
 Exit codes: 0 OK, 2 fail-on threshold or verify failure, 1 usage/runtime error.
 \`--json\` does not change those codes. Both failures still exit 2; the gate
@@ -342,7 +360,7 @@ Examples:
   watch: `agent-receipt watch — poll git and auto-capture on commits or dirty tree
 
 Usage:
-  agent-receipt watch [--interval <sec>] [--once] [--commits-only] [--agent <name>] [--message <text>] [--fail-on …]
+  agent-receipt watch [--interval <sec>] [--once] [--commits-only] [--agent <name>] [--message <text>] [--fail-on …] [--sign] [--no-sign]
 
 Defaults: poll every 5 seconds; watch **commits + dirty tree** until Ctrl+C.
 Dirty-tree captures are labeled **uncommitted**.
@@ -359,7 +377,15 @@ Options:
                          After capture, exit 2 when --once if threshold met
   --json                 Also write companion .json on each capture
                          (human stdout stays; CI gates use capture/wrap/share/verify --json)
+  --sign                 Sign each capture when local keys exist (also on
+                         when config sign: true). Missing keys tip and leave
+                         the receipt unsigned. Not exit 2. Not a CA.
+  --no-sign              Force signing off (overrides config sign: true)
   --cwd <path>           Run as if started in this directory
+
+Config \`sign: true\` is passed through to each capture. \`init --org\` does
+not set \`sign\`. \`--no-sign\` overrides. share, export, prove, and verify
+do not read this key.
 
 When HEAD moves A → B, capture uses --since A so all commits in the interval are included.
 When the working tree changes (and HEAD did not), capture uses --uncommitted.
@@ -500,11 +526,13 @@ signature (base64 raw 64-byte signature), publicKey (SPKI PEM). The
 public key is embedded so a peer can verify without the local keys
 directory. The private key is never written.
 
-capture and wrap do not sign unless you pass \`--sign\` (opt-in; missing
-keys leave the receipt unsigned and do not exit 2). share and export do
-not sign the source receipt. When they write published Markdown they may
-copy a valid sidecar or re-sign that file (see \`help share\`). Default
-verify stays hash-only. \`verify --require-sig\` opts in and, when a
+capture, wrap, and watch sign when you pass \`--sign\` or when config
+\`sign: true\` (missing keys leave the receipt unsigned and do not exit 2).
+\`--no-sign\` overrides that config. \`init --org\` does not set \`sign\`.
+share, export, prove, and verify do not read config \`sign\`. share and
+export do not sign the source receipt. When they write published Markdown
+they may copy a valid sidecar or re-sign that file (see \`help share\`).
+Default verify stays hash-only. \`verify --require-sig\` opts in and, when a
 known-keys allowlist is configured, requires that fingerprint. prove
 reports the sidecar when it is present.
 
@@ -817,6 +845,12 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
                 is missing while the public key is present, or the files
                 are unreadable. Missing keys do not fail doctor or
                 doctor --strict.
+  sign          Config sign (optional). INFO when unset or false.
+                PASS when sign: true and the local keypair loads.
+                WARN when sign: true but keys are missing (names keygen).
+                That warning does not fail doctor or doctor --strict.
+                init --org does not set sign. CLI --no-sign overrides
+                at capture time. Not a CA.
   trust         Fingerprint trust store / known-keys (optional allowlist).
                 INFO when no store is configured (allowlist inactive).
                 PASS when the file or trustedFingerprints lists N

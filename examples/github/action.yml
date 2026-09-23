@@ -14,7 +14,7 @@
 #       fail-on: high
 #       base: origin/main
 #       install: true
-#       from: github:pramodreddyboddu/agent-receipt#v1.0.21
+#       from: github:pramodreddyboddu/agent-receipt#v1.0.22
 #       prove: true
 #       sign: true
 #       require-sig: true
@@ -28,6 +28,11 @@
 # step. `sign: true` fails closed when those keys are missing and names
 # `keygen`. CLI `wrap --sign` only prints a tip and can leave the receipt
 # unsigned; this input does not.
+# This input is independent of config `sign: true` (v1.0.22). When this
+# input is false, wrap does not pass `--sign` or `--no-sign`, so repo
+# config applies and missing keys only tip. When this input is true, the
+# step passes `--sign` and fails closed (unchanged). prove --page (v1.0.21)
+# is a separate human page and is not signed.
 #
 # `install` defaults to false. When true, the step runs
 # `npm install -g <from>` (default from:
@@ -91,7 +96,7 @@ inputs:
     required: false
     default: "false"
   from:
-    description: npm spec used when install is true. Pin with #v1.0.21 once the tag exists.
+    description: npm spec used when install is true. Pin with #v1.0.22 once the tag exists.
     required: false
     default: github:pramodreddyboddu/agent-receipt
   prove:

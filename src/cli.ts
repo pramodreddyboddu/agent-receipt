@@ -53,6 +53,16 @@ function resolveRedact(cwd: string, flags: Record<string, string | boolean>): bo
   return loadConfig(cwd).redact === true;
 }
 
+/**
+ * `--no-sign` wins, then `--sign`, then config `sign: true`.
+ * capture / wrap / watch only. Missing keys still tip and stay unsigned.
+ */
+function resolveSign(cwd: string, flags: Record<string, string | boolean>): boolean {
+  if (flagBool(flags, 'no-sign')) return false;
+  if (flagBool(flags, 'sign')) return true;
+  return loadConfig(cwd).sign === true;
+}
+
 function flagPositiveInt(
   flags: Record<string, string | boolean>,
   name: string,
@@ -294,7 +304,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           failOn,
           uncommitted: flagBool(flags, 'uncommitted'),
           redact: resolveRedact(cwd, flags),
-          sign: flagBool(flags, 'sign'),
+          sign: resolveSign(cwd, flags),
         });
         return result.failedOn ? 2 : 0;
       }
@@ -309,7 +319,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           json: flagBool(flags, 'json'),
           full: flagBool(flags, 'full'),
           uncommitted: flagBool(flags, 'uncommitted'),
-          sign: flagBool(flags, 'sign'),
+          sign: resolveSign(cwd, flags),
         });
         if (result.failedOn) return 2;
         return result.verified ? 0 : 2;
@@ -370,6 +380,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           json: flagBool(flags, 'json'),
           commitsOnly: flagBool(flags, 'commits-only'),
           redact: resolveRedact(cwd, flags),
+          sign: resolveSign(cwd, flags),
         });
       }
       case 'verify': {

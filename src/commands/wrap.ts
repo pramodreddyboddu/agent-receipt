@@ -24,7 +24,8 @@ export interface WrapOptions {
   /** Force uncommitted even if also passing base (rejected by capture). */
   uncommitted?: boolean;
   /**
-   * Opt-in. After capture, write `*.sig.json` when local keys exist.
+   * After capture, write `*.sig.json` when local keys exist.
+   * Set by CLI `--sign` or config `sign: true` (`--no-sign` forces this off).
    * Missing keys print a tip and do not fail the wrap.
    */
   sign?: boolean;

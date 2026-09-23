@@ -315,6 +315,7 @@ export function cmdInit(cwd: string, opts: InitOptions = {}): void {
   if (opts.org) {
     console.log('  agent-receipt doctor --strict   # policy row should pass');
     console.log('  tip: examples/org-policy.yml (init --org does not replace local ignore)');
+    console.log('  tip: init --org does not set sign (keys may be absent; add sign: true after keygen)');
   }
   if (opts.retention) {
     console.log('  agent-receipt prune --dry-run   # preview trusted retention');

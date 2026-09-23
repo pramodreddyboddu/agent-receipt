@@ -21,6 +21,11 @@ export interface WatchOptions {
   /** Honor config / `--redact` on each auto-capture. */
   redact?: boolean;
   /**
+   * Honor config `sign: true` / `--sign` / `--no-sign` on each auto-capture.
+   * Missing keys tip inside capture and do not exit 2.
+   */
+  sign?: boolean;
+  /**
    * Only watch HEAD commits (v0.4 behavior). Default watches dirty tree
    * (staged/unstaged/untracked) as well as new commits.
    */
@@ -130,6 +135,7 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
           failOn: opts.failOn,
           json: opts.json,
           redact: opts.redact,
+          sign: opts.sign,
           audit: 'watch',
         };
         if (baseline !== '(no commits)') {
@@ -184,6 +190,7 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
         failOn: opts.failOn,
         json: opts.json,
         redact: opts.redact,
+        sign: opts.sign,
         audit: 'watch',
       };
 

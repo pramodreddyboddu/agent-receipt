@@ -21,6 +21,16 @@ export interface AgentReceiptConfig {
   /** Set when `redact:` is present but not a boolean. */
   redactInvalid?: boolean;
   /**
+   * When true, capture / wrap / watch sign after a successful write when
+   * local Ed25519 keys exist. Absent or false keeps signing opt-in.
+   * CLI `--no-sign` wins, then `--sign`. Missing keys print a tip and
+   * leave the receipt unsigned (that does not exit 2). share, export,
+   * prove, and verify ignore this key. `init --org` does not set it.
+   */
+  sign?: boolean;
+  /** Set when `sign:` is present but not a boolean. */
+  signInvalid?: boolean;
+  /**
    * Default `--fail-on` for capture / wrap / watch / share.
    * `verify` ignores this unless `--fail-on` is passed explicitly.
    * Invalid values are kept so `doctor` / `validateConfig` can report them.
@@ -55,6 +65,7 @@ const DEFAULTS: AgentReceiptConfig = {
   ignore: ['node_modules/**', 'dist/**', 'coverage/**'],
   riskAllowlist: [],
   redact: false,
+  sign: false,
 };
 
 const CONFIG_NAME = '.agent-receipt.yml';
@@ -181,6 +192,12 @@ export function loadConfig(cwd: string): AgentReceiptConfig {
     if (typeof parsed.redact === 'boolean') redact = parsed.redact;
     else redactInvalid = true;
   }
+  let sign = DEFAULTS.sign;
+  let signInvalid = false;
+  if (parsed.sign !== undefined) {
+    if (typeof parsed.sign === 'boolean') sign = parsed.sign;
+    else signInvalid = true;
+  }
   let failOn: string | undefined;
   if (parsed.failOn === undefined || parsed.failOn === false || parsed.failOn === '') {
     failOn = undefined;
@@ -230,6 +247,8 @@ export function loadConfig(cwd: string): AgentReceiptConfig {
     riskAllowlist: asStringList(parsed.riskAllowlist, DEFAULTS.riskAllowlist),
     redact,
     redactInvalid: redactInvalid || undefined,
+    sign,
+    signInvalid: signInvalid || undefined,
     failOn,
     maxCount,
     maxAgeDays,
@@ -273,6 +292,9 @@ export function validateConfig(cfg: AgentReceiptConfig): string[] {
   }
   if (typeof cfg.redact !== 'boolean' || cfg.redactInvalid) {
     problems.push('redact must be true or false');
+  }
+  if (cfg.signInvalid || (cfg.sign !== undefined && typeof cfg.sign !== 'boolean')) {
+    problems.push('sign must be true or false');
   }
   if (
     cfg.failOn !== undefined &&
@@ -328,6 +350,14 @@ riskAllowlist: []
 # and docs/business.md. share still redacts unless you pass --no-redact.
 # redact: true
 # failOn: high
+#
+# Optional signing default for capture / wrap / watch. init --org does
+# not set this (keys may be absent). After \`keygen\` and \`trust add --self\`,
+# uncomment the next line. CLI --no-sign overrides. Missing keys print a
+# tip and leave the receipt unsigned (not exit 2). Not a CA. share,
+# export, prove, and verify ignore this key. CI composite sign: true
+# stays fail-closed and is independent of this key.
+# sign: true  # after keygen; CLI --no-sign overrides
 
 # Retention is opt-in. Nothing is deleted until you set one of these
 # and run \`agent-receipt prune\` (preview with \`--dry-run\`).
@@ -391,6 +421,8 @@ riskAllowlist: []
 8. Health check (includes a short prod-ready checklist): \`agent-receipt doctor\`
    \`agent-receipt doctor --strict\` fails when org policy is unset, even on a small outDir.
    \`agent-receipt init --org\` sets \`redact: true\` and \`failOn: high\`.
+   It does not set \`sign\` (keys may be absent). After \`keygen\` and
+   \`trust add --self\`, add \`sign: true\`. CLI \`--no-sign\` overrides.
 
 9. CI / hooks that should fail on secrets. Exit 0 pass, 2 policy or verify
    failure, 1 usage error. \`--json\` on capture/wrap/share/verify prints one

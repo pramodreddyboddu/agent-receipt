@@ -1,6 +1,6 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.21 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.22 for teams: install once, capture every session, fail CI
 on high-severity findings, share only redacted HTML, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
@@ -77,10 +77,12 @@ you want the commented example as a starting file:
 ```yaml
 redact: true    # capture / wrap / watch / share, unless --no-redact
 failOn: high    # those commands exit 2 at high (or medium / low)
+# sign: true    # after keygen; capture / wrap / watch. CLI --no-sign overrides.
 ```
 
 - CLI `--fail-on` overrides config. Bare `--fail-on` means `high`.
 - CLI `--redact` / `--no-redact` override config `redact`.
+- **`sign: true`** signs `capture`, `wrap`, and `watch` after a successful write when a local Ed25519 keypair loads. `--sign` forces it on. `--no-sign` forces it off. Absent or `sign: false` leaves signing opt-in. Missing keys print a tip and leave the receipt unsigned. That does not exit 2. `init --org` does **not** set `sign` (a laptop may not have keys yet). Add the line after `keygen` and `trust add --self`. `share`, `export`, `prove`, and `verify` do not read this key. The CI composite input `sign: true` stays fail-closed and is independent of config. Not a CA.
 - **`share` redacts unless `--no-redact`**, even when config `redact` is false.
 - **`verify` ignores config `failOn`.** It stays an integrity check unless you
   pass `--fail-on`. Existing hooks that only run `verify` keep exit 0 on a
@@ -129,7 +131,7 @@ is the artifact, not the gate. The gate object itself is
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -233,7 +235,7 @@ Copy one of:
 | Example | What to do with it |
 |---------|--------------------|
 | [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. After a green gate it runs `prove --json` (`prove` defaults to true) and uploads `receipt-gate.json` plus the receipt Markdown (`actions/upload-artifact@v4`, name `agent-receipt-gate`). |
-| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.21`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.22`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
 
 ### Drop-in
 
@@ -252,7 +254,7 @@ true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
 - uses: ./.github/actions/agent-receipt
   with:
     install: true
-    from: github:pramodreddyboddu/agent-receipt#v1.0.21
+    from: github:pramodreddyboddu/agent-receipt#v1.0.22
     prove: true
     fail-on: high
     base: origin/main
@@ -261,8 +263,10 @@ true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
 ### Signed CI gate
 
 Not a CA. Run `keygen` (or restore `.agent-receipt/keys`) before a job that
-sets `sign: true`. CLI `wrap --sign` with missing keys only prints a tip.
-The action input fails the step.
+sets the action input `sign: true`. CLI `wrap --sign`, and config
+`sign: true`, with missing keys only print a tip. `--no-sign` overrides
+config for that run. The action input fails the step and does not read
+config `sign`.
 
 ```bash
 agent-receipt keygen
@@ -410,9 +414,10 @@ fingerprint is the lowercase hex SHA-256 of the DER SPKI bytes. Re-running
 without `--force` leaves the pair unchanged. `sign` hash-checks the receipt
 first (exit 2, no sidecar, when the hash fails), then signs the sha256 hex
 string as UTF-8 bytes. `foo.md` gets `foo.sig.json` with `alg`, `version`,
-`sha256`, `fingerprint`, `signature`, and `publicKey`. Capture and wrap do
-not call `sign` unless you pass `--sign` (missing keys leave the receipt
-unsigned). `share` and Markdown `export` copy a valid sidecar when
+`sha256`, `fingerprint`, `signature`, and `publicKey`. Capture, wrap, and
+watch call `sign` when you pass `--sign` or when config `sign: true`
+(missing keys leave the receipt unsigned; `--no-sign` overrides;
+`init --org` does not set `sign`). `share` and Markdown `export` copy a valid sidecar when
 the published sha256 matches, and re-sign the published Markdown when the
 body was rewritten and local keys exist. A rewritten file with no keys is
 left unsigned (no stale sidecar). HTML is unsigned. Peers verify and sign
@@ -564,7 +569,11 @@ A signed CI drop-in landed in 1.0.19 (`sign` on the composite action and
 and `trusted-keys` is empty, and [`ci-signed-gate.md`](ci-signed-gate.md)).
 `trust add --self` landed in 1.0.20: it loads the local keygen fingerprint
 into `.agent-receipt/trusted-keys.txt`. The pr-gate auto-trust path uses that
-command. It is not a CA. Config `sign: true` is still deferred.
+command. It is not a CA. Config `sign: true` and CLI `--no-sign` landed in
+1.0.22: capture, wrap, and watch sign after a successful write when local
+keys exist. Missing keys tip and leave the receipt unsigned (not exit 2).
+`init --org` does not set `sign`. share, export, prove, and verify do not
+read the key. The CI composite input `sign: true` stays fail-closed.
 `prove --page` landed in 1.0.21: a plain-English one-pager (`foo.prove.md`)
 a human can open without the full receipt. The page is not signed.
 A thin known-keys allowlist landed in 1.0.18 (`.agent-receipt/trusted-keys.txt`,
@@ -580,9 +589,11 @@ Default `doctor` stays pressure-gated. A missing trust store does not fail
 (`keygen`, `sign`, prove `signature`, `docs/signature.schema.json`). It
 signs the receipt sha256 with a key that stays under `.agent-receipt/keys/`.
 Full PKI/CA is still deferred. Minisign, GPG/OpenPGP, default auto-sign
-on capture, config `sign: true` / `--no-sign`, `trust show`, an HTML/share
-signed package (and a signed one-pager), a background deleter, and
-multi-agent receipt linking are still deferred. The prove-for-humans
+on capture without config (signing stays opt-in via config `sign: true` or
+`--sign`), `trust show`, an HTML/share signed package (and a signed
+one-pager), unsigned HTML prove export (`--html`), a background deleter,
+and multi-agent receipt linking are still deferred. Config `sign: true` /
+`--no-sign` landed in 1.0.22. The prove-for-humans
 one-pager landed in 1.0.21. Drop-in CI/PR
 gate polish landed in 1.0.15 (composite action with `install` / `prove` /
 step outputs, `pr-gate.yml` prove + artifact upload, and
@@ -605,7 +616,7 @@ are checklist and listing tools; they do not sign the audit log.
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.21 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.22 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

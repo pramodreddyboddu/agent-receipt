@@ -61,9 +61,10 @@
 # Gate JSON schema: docs/gate.schema.json (next to docs/receipt.schema.json)
 # Signature sidecar: docs/signature.schema.json
 # Drop-in CI: examples/github/action.yml and examples/github/pr-gate.yml
-#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.21
+#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.22
 #   local allowlist (since v1.0.20): agent-receipt keygen && agent-receipt trust add --self
-#   prove after a green gate; prove --page writes foo.prove.md; upload receipt-gate.json
+#   prove after a green gate; prove --page (v1.0.21) writes foo.prove.md; upload receipt-gate.json
+# init --org does not set sign (keys may be absent). After keygen, uncomment:
 
 outDir: .agent-receipt/receipts
 defaultAgent: agent
@@ -76,6 +77,8 @@ redact: true
 # capture / wrap / watch / share exit 2 when max severity is at least high.
 # Plain `verify` stays integrity-only unless you pass --fail-on explicitly.
 failOn: high
+
+# sign: true  # after keygen; CLI --no-sign overrides
 
 ignore:
   - node_modules/**
