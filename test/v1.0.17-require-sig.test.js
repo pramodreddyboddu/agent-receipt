@@ -302,10 +302,10 @@ describe('v1.0.17 docs', () => {
     assert.match(changelog, /auto-sign on capture/);
     assert.match(changelog, /not\*\* updated|was not edited/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.23');
+    assert.equal(pkg.version, '1.0.24');
     assert.equal(pkg.dependencies, undefined);
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.23/);
+    assert.match(versionTs, /1\.0\.24/);
     const helpVerify = cli(root, ['help', 'verify']);
     assert.match(helpVerify, /--require-sig/);
     assert.match(helpVerify, /hash-only/);

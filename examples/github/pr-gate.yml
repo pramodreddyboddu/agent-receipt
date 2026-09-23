@@ -4,7 +4,7 @@
 # Also reusable:
 #   jobs:
 #     receipt:
-#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.23
+#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.24
 #       with:
 #         base: main
 #         fail-on: high
@@ -15,7 +15,7 @@
 #         trusted-keys: ""
 #
 # Install pin: npm install -g github:pramodreddyboddu/agent-receipt
-# Or, once the tag exists: github:pramodreddyboddu/agent-receipt#v1.0.23
+# Or, once the tag exists: github:pramodreddyboddu/agent-receipt#v1.0.24
 # Always pass --fail-on (this job does; default high) so a missing
 # .agent-receipt.yml cannot silently weaken the gate.
 # After a successful wrap or share, trailingIgnored is a boolean when set.
@@ -28,7 +28,9 @@
 # receipt unsigned; this job fails closed. Config `sign: true` (v1.0.22)
 # is independent: this input does not pass `--no-sign`, so a repo config
 # can still sign when this input is false. `sign: true` here stays
-# fail-closed. prove --page (v1.0.21) is unsigned. share has no --sign flag. After
+# fail-closed. prove --page (v1.0.21) is unsigned. share --package (v1.0.24)
+# ships HTML plus Markdown and an optional receipt.sig.json. HTML stays unsigned.
+# share has no --sign flag. After
 # a green share, this job runs `sign` on the gate path when the sidecar
 # is missing. share still re-signs published Markdown when keys exist.
 # require-sig (default false, since v1.0.17) temp-keygens in the job (no org
@@ -112,7 +114,7 @@ jobs:
           set -eu
           if ! command -v agent-receipt >/dev/null 2>&1; then
             # Pin the GitHub install. Use a tag once it exists, for example:
-            #   npm install -g github:pramodreddyboddu/agent-receipt#v1.0.23
+            #   npm install -g github:pramodreddyboddu/agent-receipt#v1.0.24
             npm install -g github:pramodreddyboddu/agent-receipt
           fi
 

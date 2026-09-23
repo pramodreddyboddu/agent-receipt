@@ -16,7 +16,7 @@ import {
 } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import type { AgentReceiptConfig } from './config.js';
-import { isProveOnePagerName } from './receipt.js';
+import { isInsideSharePackage, isProveOnePagerName, isSharePackageDirName } from './receipt.js';
 import {
   indexPath,
   isInsideOutDir,
@@ -164,6 +164,8 @@ function timestampFor(
 /**
  * Receipt markdown files directly under outDir (not nested).
  * Symlinks are skipped. SETUP.md / index.json / audit.jsonl are never receipts.
+ * `*.share/` packages (and `manifest.json` inside them) are not receipts.
+ * `*.prove.md` one-pagers are not receipts.
  * A file counts when it is in the index, named `receipt-*.md`, or carries a hash footer.
  */
 export function listReceiptFiles(cwd: string, index?: ReceiptIndex): ReceiptFile[] {
@@ -181,6 +183,7 @@ export function listReceiptFiles(cwd: string, index?: ReceiptIndex): ReceiptFile
 
   for (const name of names) {
     if (name.includes('/') || name.includes('\\')) continue;
+    if (isSharePackageDirName(name)) continue;
     if (!name.toLowerCase().endsWith('.md')) continue;
     if (isProveOnePagerName(name)) continue;
     if (PROTECTED_BASENAMES.has(name)) continue;
@@ -192,6 +195,7 @@ export function listReceiptFiles(cwd: string, index?: ReceiptIndex): ReceiptFile
       continue;
     }
     if (st.isSymbolicLink() || !st.isFile()) continue;
+    if (isInsideSharePackage(abs)) continue;
     if (!isInsideOutDir(cwd, abs)) continue;
     const rel = posixRel(cwd, abs);
     const named = /^receipt-.+\.md$/i.test(name);

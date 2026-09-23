@@ -21,6 +21,8 @@ import type { SignatureStatus } from './sign.js';
  * `signature` is set only by `verify --json --require-sig` after the hash
  * check passes. Other commands omit it. `sigPath` is set by `share --json`
  * (string when a Markdown sidecar was copied or re-signed, otherwise null).
+ * `packagePath` is set by `share --json` only when `--package` wrote a
+ * directory. `htmlPath`, `markdownPath`, and `sigPath` then point inside it.
  */
 export interface GateRisk {
   high: number;
@@ -64,6 +66,12 @@ export interface GateReport {
    * published Markdown, or null when none was attached. Omitted otherwise.
    */
   sigPath?: string | null;
+  /**
+   * Set by `share --json --package` when a handoff directory was written.
+   * Omitted when share did not write a package. Paths inside the package
+   * stay on `htmlPath`, `markdownPath`, and `sigPath`.
+   */
+  packagePath?: string | null;
 }
 
 export type GateFields = Omit<GateReport, 'ok' | 'version' | 'exitCode' | 'trailingIgnored'> & {
@@ -112,6 +120,7 @@ export function finalizeGate(fields: GateFields): GateReport {
     reason: fields.reason,
     ...(fields.signature !== undefined ? { signature: fields.signature } : {}),
     ...(fields.sigPath !== undefined ? { sigPath: fields.sigPath } : {}),
+    ...(fields.packagePath !== undefined ? { packagePath: fields.packagePath } : {}),
   };
 }
 

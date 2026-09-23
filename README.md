@@ -118,7 +118,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `init [--cursor] [--grok] [--org] [--retention]` | Write `.agent-receipt.yml` + notes. `--org` (alias `--policy`) sets `redact: true` and `failOn: high` without replacing local `ignore`. `--retention` sets `maxCount: 100` and `maxAgeDays: 30` the same way. `--cursor` / `--grok` drop agent rules |
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON). `--sign` writes `*.sig.json` when local keys exist |
 | `wrap` | End of session: capture (+ `--uncommitted` if dirty) → TL;DR + path → verify. `--sign` is opt-in, same as capture |
-| `share [path]` | One shot: redact → HTML (+ optional Markdown) → verify → paths + TL;DR. Markdown sidecar is copied or re-signed; HTML stays unsigned |
+| `share [path]` | One shot: redact → HTML (+ optional Markdown) → verify → paths + TL;DR. `--package` writes `foo.share/` with HTML, Markdown, optional `receipt.sig.json`, and `manifest.json`. Markdown sidecar is copied or re-signed; HTML stays unsigned |
 | `export` / `html` | Self-contained HTML receipt (or Markdown); `--out`, `--redact`. Markdown uses the same sidecar handoff. HTML stays unsigned |
 | `show [path]` | Pretty-print last / given receipt (full body) |
 | `last` | Path + glance of the most recent receipt. `--json` prints one object (`path`, `sha256`, agent, `failedOn`, `uncommitted`, TL;DR). `--json` wins over `--path` |
@@ -215,6 +215,7 @@ Flags: `--agent`, `--message`, `--fail-on`, `--base`, `--redact`, `--no-redact`,
 ```bash
 agent-receipt share
 agent-receipt share --out share.html --md share.md
+agent-receipt share --package
 agent-receipt share receipt.md --fail-on high --json
 ```
 
@@ -222,7 +223,10 @@ Verifies the source first (a tampered receipt is not rewritten), applies
 **`--redact` by default** (1.0.3 share-safety: `DATABASE_URL` / credential URLs,
 nested receipt bodies), writes HTML and optional Markdown, verifies the
 published body, and prints TL;DR plus paths. `--no-redact` opts out.
-`--md` refuses to overwrite the source receipt.
+`--md` refuses to overwrite the source receipt. `--package` (alias `--pack`)
+writes `foo.share/` with `receipt.html`, `receipt.md`, optional
+`receipt.sig.json`, and `manifest.json`. Open the HTML, then `verify` the
+Markdown. The HTML body stays unsigned.
 
 ### `export` / `html` (shareable receipt)
 
@@ -364,7 +368,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.23`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.24`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -493,16 +497,19 @@ overrides; missing keys leave the receipt unsigned and do not exit 2).
 sha256 matches the source. When redact rewrites the body, they re-sign the
 published Markdown if local keys exist, and otherwise leave it unsigned
 (no stale sidecar) with a short `keygen` / `sign` tip. HTML stays unsigned.
-Peers verify and sign the Markdown.
+Peers verify and sign the Markdown. `share --package` puts that HTML and
+the Markdown (plus optional `receipt.sig.json` and `manifest.json`) in one
+`foo.share/` directory so a peer can open the page and still verify the proof.
 
 Thin local Ed25519 attest landed in 1.0.16. `verify --require-sig` and the
 portable sidecar handoff landed in 1.0.17. A thin known-keys allowlist
 landed in 1.0.18. A signed CI drop-in (`sign`, require-sig, trust examples)
 landed in v1.0.19. `trust add --self` landed in v1.0.20. `prove --page`
 landed in v1.0.21. Config `sign: true` and `--no-sign` landed in v1.0.22.
-`trust show` landed in v1.0.23. Full PKI/CA, minisign, GPG, default
-auto-sign on capture without that config, and a signed HTML/share package
-are still deferred.
+`trust show` landed in v1.0.23. `share --package` landed in v1.0.24
+(HTML + signed Markdown in one directory; the HTML body stays unsigned).
+Full PKI/CA, minisign, GPG, default auto-sign on capture without that
+config, a signed one-pager, and `prove --html` are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
 

@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { cmdExport } from './export.js';
 import { cmdVerify, reportVerify } from './verify.js';
 import { resolveReceiptPath } from './show.js';
@@ -19,6 +19,15 @@ import {
   riskToGate,
 } from '../lib/gate.js';
 import { recordAuditEvent } from '../lib/audit.js';
+import {
+  RECEIPT_HTML_NAME,
+  RECEIPT_MD_NAME,
+  buildShareManifest,
+  fingerprintFromSidecar,
+  resolveSharePackageDir,
+  signShareManifest,
+  writeShareManifest,
+} from '../lib/share-package.js';
 
 export interface ShareOptions {
   /** HTML output path. Default: sibling `.html` next to the receipt. */
@@ -36,6 +45,12 @@ export interface ShareOptions {
   failOn?: FailOnThreshold;
   /** One CI gate object on stdout; human summary on stderr. */
   json?: boolean;
+  /**
+   * Write a portable handoff directory (`<stem>.share/` by default) with
+   * `receipt.html`, `receipt.md`, `manifest.json`, and optional sidecars.
+   * Implies Markdown. Alias: `--pack`.
+   */
+  package?: boolean;
 }
 
 export interface ShareResult {
@@ -50,10 +65,21 @@ export interface ShareResult {
   exitCode: 0 | 2;
   /** Sidecar copied or re-signed beside published Markdown. Null otherwise. */
   sigPath: string | null;
+  /** Handoff directory when `--package` wrote one. Null otherwise. */
+  packagePath: string | null;
 }
 
 function sibling(source: string, suffix: string): string {
   return source.replace(/\.md$/i, '') + suffix;
+}
+
+function peerPackageTip(markdownPath: string): string[] {
+  return [
+    'Peers: open the HTML (unsigned). Verify the Markdown proof inside the package:',
+    `  agent-receipt verify ${markdownPath}`,
+    `  agent-receipt prove ${markdownPath}`,
+    `  agent-receipt verify --require-sig ${markdownPath}`,
+  ];
 }
 
 function agentFromReceipt(markdown: string): string | null {
@@ -74,6 +100,11 @@ function agentFromReceipt(markdown: string): string | null {
  * has a valid source sidecar gets that sidecar copied. A redacted re-hash
  * is re-signed when local keys exist, and left unsigned (no stale sidecar)
  * when they do not. HTML is not signed.
+ *
+ * `--package` writes both files into `<stem>.share/` (or `--out` when that
+ * path is a directory or ends with `/`), plus `manifest.json`. The HTML
+ * body stays unsigned. The package is signed via `receipt.sig.json` and,
+ * when local keys load, `manifest.sig.json`.
  */
 export function cmdShare(
   cwd: string,
@@ -99,6 +130,7 @@ export function cmdShare(
     reason: string | null;
     trailingIgnored: boolean;
     sigPath: string | null;
+    packagePath: string | null;
   }): ShareResult => {
     const exitCode: 0 | 2 = !partial.verified || failedOn ? 2 : 0;
     if (opts.json) {
@@ -122,6 +154,7 @@ export function cmdShare(
           trailingIgnored: partial.trailingIgnored,
           reason: partial.reason,
           sigPath: partial.sigPath,
+          ...(partial.packagePath ? { packagePath: partial.packagePath } : {}),
         }),
       );
     } else if (failedOn && opts.failOn && partial.verified) {
@@ -151,6 +184,7 @@ export function cmdShare(
       sha256: partial.sha256,
       exitCode,
       sigPath: partial.sigPath,
+      packagePath: partial.packagePath,
     };
   };
 
@@ -168,24 +202,36 @@ export function cmdShare(
       reason: sourceCheck.reason,
       trailingIgnored: Boolean(sourceCheck.trailingIgnored),
       sigPath: null,
+      packagePath: null,
     });
   }
 
-  const htmlOut = opts.out ? resolve(cwd, opts.out) : sibling(source, '.html');
-  if (resolve(htmlOut) === resolve(source)) {
-    throw new Error('share --out must not overwrite the source receipt.');
-  }
-
+  const packaging = Boolean(opts.package);
+  let packageDir: string | null = null;
+  let htmlOut: string;
   let mdOut: string | undefined;
-  if (opts.md) {
-    mdOut =
-      opts.md === true
-        ? sibling(source, redact ? '.redacted.md' : '.export.md')
-        : resolve(cwd, opts.md);
-    if (resolve(mdOut) === resolve(source)) {
-      throw new Error(
-        'share --md must not overwrite the source receipt. Pick a different path.',
-      );
+  if (packaging) {
+    packageDir = resolveSharePackageDir(cwd, source, opts.out);
+    htmlOut = join(packageDir, RECEIPT_HTML_NAME);
+    mdOut = join(packageDir, RECEIPT_MD_NAME);
+    if (resolve(htmlOut) === resolve(source) || resolve(mdOut) === resolve(source)) {
+      throw new Error('share --package must not overwrite the source receipt.');
+    }
+  } else {
+    htmlOut = opts.out ? resolve(cwd, opts.out) : sibling(source, '.html');
+    if (resolve(htmlOut) === resolve(source)) {
+      throw new Error('share --out must not overwrite the source receipt.');
+    }
+    if (opts.md) {
+      mdOut =
+        opts.md === true
+          ? sibling(source, redact ? '.redacted.md' : '.export.md')
+          : resolve(cwd, opts.md);
+      if (resolve(mdOut) === resolve(source)) {
+        throw new Error(
+          'share --md must not overwrite the source receipt. Pick a different path.',
+        );
+      }
     }
   }
 
@@ -230,13 +276,31 @@ export function cmdShare(
     }
   }
 
+  if (packageDir && markdownPath && sha256) {
+    const manifestPath = writeShareManifest(
+      packageDir,
+      buildShareManifest({
+        packageDir,
+        sha256,
+        redacted: redact,
+        fingerprint: fingerprintFromSidecar(sigPath),
+      }),
+    );
+    signShareManifest(cwd, manifestPath);
+  }
+
   if (signatureTip) say(color.yellow(signatureTip));
   if (!quiet) {
     say(color.bold('TL;DR') + `  ${publishedTldr}`);
+    if (packageDir) say(color.bold('package:') + ` ${packageDir}`);
     say(color.bold('html') + `   ${html.path}`);
     if (markdownPath) say(color.bold('md') + `     ${markdownPath}`);
     if (sigPath) say(color.bold('sig') + `    ${sigPath}`);
     say(color.bold('source') + ` ${source}`);
+    if (packageDir && markdownPath) {
+      say('');
+      for (const line of peerPackageTip(markdownPath)) say(line);
+    }
     say('');
     if (markdownPath) {
       cmdVerify(cwd, markdownPath, { quiet: false });
@@ -258,5 +322,6 @@ export function cmdShare(
     reason,
     trailingIgnored,
     sigPath,
+    packagePath: packageDir,
   });
 }

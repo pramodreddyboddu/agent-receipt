@@ -43,10 +43,12 @@ trusted-keys: "<path-or-comma-fps>"
 
 `share` re-signs published Markdown when local keys exist. It has no `--sign` flag. The examples run `sign` on the gate receipt path when `sign: true` and that path has no sidecar. HTML stays unsigned.
 
-Pin comments are `v1.0.23` (`github:pramodreddyboddu/agent-receipt#v1.0.23` once the tag exists). After `keygen`, `trust add --self` allowlists that fingerprint. `trust show` reports that allowlist and whether the local key is listed. A laptop or org config may also set `sign: true` so bare `wrap` signs; CLI `--no-sign` overrides. Not a CA.
+`share --package` (alias `--pack`) ships the HTML and the Markdown together in `foo.share/` (`receipt.html`, `receipt.md`, optional `receipt.sig.json`, `manifest.json`). Peers open the HTML and run `verify` or `verify --require-sig` on `receipt.md`. Optional `manifest.sig.json` is written when local keys load. The HTML body stays unsigned.
+
+Pin comments are `v1.0.24` (`github:pramodreddyboddu/agent-receipt#v1.0.24` once the tag exists). After `keygen`, `trust add --self` allowlists that fingerprint. `trust show` reports that allowlist and whether the local key is listed. A laptop or org config may also set `sign: true` so bare `wrap` signs; CLI `--no-sign` overrides. Not a CA.
 
 ## Live workflows
 
 This repo does not install the example under [`.github/workflows/`](../.github/workflows). Pushing that tree needs the OAuth `workflow` scope. Copy the example in your own repo. The smoke that runs `wrap --sign` lives in [`docs/github-actions-ci.yml`](github-actions-ci.yml).
 
-`prove --page` landed in 1.0.21 (unsigned Markdown one-pager). Config `sign: true` / `--no-sign` landed in 1.0.22 (capture, wrap, and watch; missing keys tip and stay unsigned). `trust show` landed in 1.0.23 (read-only allowlist status, including whether the local key is listed). Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, an HTML/share signed package (and a signed one-pager), a background deleter, and multi-agent receipt linking. `trust add --self` is a local allowlist write, not a CA.
+`prove --page` landed in 1.0.21 (unsigned Markdown one-pager). Config `sign: true` / `--no-sign` landed in 1.0.22 (capture, wrap, and watch; missing keys tip and stay unsigned). `trust show` landed in 1.0.23 (read-only allowlist status, including whether the local key is listed). `share --package` landed in 1.0.24 (HTML + Markdown + optional receipt sidecar + manifest in one directory; HTML body unsigned). Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a signed one-pager, unsigned HTML prove export (`prove --html`), a background deleter, and multi-agent receipt linking. `trust add --self` is a local allowlist write, not a CA.
