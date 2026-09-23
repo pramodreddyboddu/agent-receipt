@@ -364,7 +364,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.21`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.22`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -484,9 +484,10 @@ This is a known-keys allowlist, not a certificate authority.
 `.agent-receipt/keys/`. `sign` attests the receipt sha256 hex into
 `foo.sig.json`, embedding the SPKI public key so a peer can check it
 without that directory. The private key never leaves `.agent-receipt/keys/`
-and is never written into a receipt or sidecar. Capture and wrap do not
-sign unless you pass `--sign` (missing keys leave the receipt unsigned).
-`share` and Markdown `export` copy a valid sidecar when the published
+and is never written into a receipt or sidecar. Capture, wrap, and watch
+sign when you pass `--sign` or when config `sign: true` (CLI `--no-sign`
+overrides; missing keys leave the receipt unsigned and do not exit 2).
+`init --org` does not set `sign`. `share` and Markdown `export` copy a valid sidecar when the published
 sha256 matches the source. When redact rewrites the body, they re-sign the
 published Markdown if local keys exist, and otherwise leave it unsigned
 (no stale sidecar) with a short `keygen` / `sign` tip. HTML stays unsigned.
@@ -496,8 +497,9 @@ Thin local Ed25519 attest landed in 1.0.16. `verify --require-sig` and the
 portable sidecar handoff landed in 1.0.17. A thin known-keys allowlist
 landed in 1.0.18. A signed CI drop-in (`sign`, require-sig, trust examples)
 landed in v1.0.19. `trust add --self` landed in v1.0.20. `prove --page`
-landed in v1.0.21. Full PKI/CA, minisign, GPG, default auto-sign on
-capture, and a signed HTML/share package are still deferred.
+landed in v1.0.21. Config `sign: true` and `--no-sign` landed in v1.0.22.
+Full PKI/CA, minisign, GPG, default auto-sign on capture without that
+config, and a signed HTML/share package are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
 

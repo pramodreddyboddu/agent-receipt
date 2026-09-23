@@ -132,6 +132,51 @@ function trustStoreCheck(cwd: string, strict: boolean): DoctorCheck {
 }
 
 /**
+ * Config `sign` is optional. Unset or false stays INFO. `sign: true` with
+ * a loadable local keypair is PASS. `sign: true` without keys is WARN and
+ * names `keygen`. That warning does not fail default doctor or `--strict`
+ * (same spirit as a missing keypair). Invalid `sign` is reported on the
+ * config row; this row stays INFO until the file is valid.
+ */
+function configSignCheck(cwd: string, cfg: AgentReceiptConfig): DoctorCheck {
+  if (cfg.signInvalid) {
+    return {
+      name: 'sign',
+      status: 'info',
+      detail: `sign skipped until ${CONFIG_NAME} is valid (sign must be true or false)`,
+    };
+  }
+  if (cfg.sign !== true) {
+    return {
+      name: 'sign',
+      status: 'info',
+      detail:
+        'sign unset (optional). Set sign: true in .agent-receipt.yml after keygen and trust add --self, or pass --sign. ' +
+        'CLI --no-sign overrides. init --org does not set sign. Missing keys tip and leave the receipt unsigned.',
+    };
+  }
+  try {
+    const keys = loadKeys(cwd);
+    return {
+      name: 'sign',
+      status: 'pass',
+      detail:
+        `sign: true (capture/wrap/watch; fingerprint ${keys.fingerprint}). ` +
+        'CLI --no-sign overrides. Not a CA.',
+    };
+  } catch {
+    return {
+      name: 'sign',
+      status: 'warn',
+      detail:
+        'sign: true but no local Ed25519 keys — run agent-receipt keygen. ' +
+        'Capture, wrap, and watch tip and leave the receipt unsigned (not exit 2). ' +
+        'This does not fail doctor or doctor --strict.',
+    };
+  }
+}
+
+/**
  * Local Ed25519 keys are optional. Missing keys stay INFO and do not fail
  * default doctor or `--strict`. A half pair or unreadable files are WARN.
  */
@@ -287,6 +332,7 @@ export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCh
       });
     } else {
       const redactBit = cfg.redact ? 'redact=on' : 'redact=off';
+      const signBit = cfg.sign === true ? 'sign=on' : 'sign=off';
       const failBit = cfg.failOn ? `failOn=${cfg.failOn}` : 'failOn=unset';
       const retainBit =
         cfg.maxCount != null || cfg.maxAgeDays != null
@@ -295,7 +341,7 @@ export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCh
       checks.push({
         name: 'config',
         status: 'pass',
-        detail: `${CONFIG_NAME} ok (outDir=${cfg.outDir}, ignore=${cfg.ignore.length} glob(s), ${redactBit}, ${failBit}, ${retainBit})`,
+        detail: `${CONFIG_NAME} ok (outDir=${cfg.outDir}, ignore=${cfg.ignore.length} glob(s), ${redactBit}, ${signBit}, ${failBit}, ${retainBit})`,
       });
     }
   }
@@ -461,6 +507,7 @@ export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCh
   }
 
   checks.push(signingKeysCheck(cwd));
+  checks.push(configSignCheck(cwd, cfgNow));
   checks.push(trustStoreCheck(cwd, opts.strict === true));
 
   checks.push(retentionCheck(cwd, cfgNow));
@@ -551,6 +598,7 @@ const PROD_CHECKS = [
   'policy',
   'audit',
   'keys',
+  'sign',
   'trust',
   'retention',
   'git-clean',

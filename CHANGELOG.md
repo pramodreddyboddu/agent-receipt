@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.22] — 2026-09-22
+
+### Added
+
+- Config `sign: true` and CLI `--no-sign`. When `.agent-receipt.yml` sets `sign: true`, `capture`, `wrap`, and `watch` sign after a successful write when a local Ed25519 keypair loads (the same `*.sig.json` sidecar as `sign`). Resolution matches `redact`: `--no-sign` wins, then `--sign`, then config. Bare absence of both flags uses config. Absent or `sign: false` keeps signing opt-in. An invalid non-boolean `sign` value is reported by `validateConfig` / `doctor`. Missing keys print the same tip as today's `capture --sign` / `wrap --sign` and leave the receipt unsigned. That does not exit 2. `init --org` does not set `sign` (keys may be absent). Add `sign: true` after `keygen` and `trust add --self`. `share`, `export`, `prove`, and `verify` do not read this key. The CI composite input `sign: true` stays fail-closed and is independent of config. Not a CA.
+- `doctor` adds a `sign` row: INFO when unset or false, PASS when `sign: true` and the local keypair loads, WARN when `sign: true` but keys are missing (names `keygen`). That warning does not fail default `doctor` or `doctor --strict`.
+
+### Changed
+
+- Package version bumped to `1.0.22`.
+- [`docs/business.md`](docs/business.md) documents config `sign` under org policy and the signing recipe. Config `sign: true` / `--no-sign` is landed. The lead sentence tracks 1.0.22.
+- [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md) and [`README.md`](README.md) note that local or org config can set `sign: true` and that CLI `--no-sign` overrides. Pin comments that track the current cut are `v1.0.22`.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) version-range comments include 1.0.22. With `sign: true` in a temp `.agent-receipt.yml` and keys present, bare `wrap` (no `--sign` flag) writes `*.sig.json`; `--no-sign` does not; missing keys plus `sign: true` tip and leave the receipt unsigned. Live [`.github/workflows/*`](.github/workflows) was not edited.
+- [`examples/github/action.yml`](examples/github/action.yml), [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml), and [`examples/org-policy.yml`](examples/org-policy.yml) pin comments are `v1.0.22`. No new action input. `examples/org-policy.yml` comments `# sign: true` as an optional line after keygen.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm.
+- Still not a CA. No key escrow. The private key stays under `.agent-receipt/keys/`. Config `sign` is an opt-in default, not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config (signing stays opt-in via config `sign: true` or `--sign`), `trust show`, SSO / IdP, Cloud Agents, a background deleter, an HTML/share signed package (and a signed one-pager), unsigned HTML prove export (`--html`), multi-agent receipt linking, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.21] — 2026-09-22
 
 ### Added

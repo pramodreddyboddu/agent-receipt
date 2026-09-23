@@ -357,9 +357,10 @@ const SIGN_IF_KEYS_TIP =
   'left unsigned (no local Ed25519 keys). Run `agent-receipt keygen` then `agent-receipt sign`.';
 
 /**
- * Opt-in attest after a successful capture or wrap (`--sign` only).
+ * Attest after a successful capture, wrap, or watch when the caller
+ * resolved signing on (CLI `--sign` or config `sign: true`).
  * Missing keys leave the receipt unsigned and return a tip. That tip is
- * not an exit-2 failure. Does not run unless the caller passes the flag.
+ * not an exit-2 failure. Does not run unless the caller asks to sign.
  */
 export function signIfKeys(
   cwd: string,

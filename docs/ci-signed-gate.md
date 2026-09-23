@@ -21,7 +21,7 @@ Expect `prove` `signature.ok === true`. With that allowlist, also expect `signat
 
 `trusted-keys` may be a file path or comma-separated fingerprints. Empty leaves the allowlist inactive: a valid sidecar still passes `--require-sig`, and `signature.trusted` stays null.
 
-CLI `wrap --sign` with missing keys prints a `keygen` tip and leaves the receipt unsigned. That does not exit 2. The CI input `sign: true` fails the step instead and names `keygen`. A request to sign should not ship an unsigned receipt.
+CLI `wrap --sign` with missing keys prints a `keygen` tip and leaves the receipt unsigned. That does not exit 2. The same tip applies when config `sign: true` asks capture, wrap, or watch to sign and the keys are missing. CLI `--no-sign` overrides that config for one run. `init --org` does not set `sign`. The CI input `sign: true` fails the step instead and names `keygen`. That input is independent of config `sign` and stays fail-closed. A request to sign in CI should not ship an unsigned receipt.
 
 ## Drop-in
 
@@ -40,10 +40,10 @@ trusted-keys: "<path-or-comma-fps>"
 
 `share` re-signs published Markdown when local keys exist. It has no `--sign` flag. The examples run `sign` on the gate receipt path when `sign: true` and that path has no sidecar. HTML stays unsigned.
 
-Pin comments are `v1.0.21` (`github:pramodreddyboddu/agent-receipt#v1.0.21` once the tag exists). After `keygen`, `trust add --self` allowlists that fingerprint. Not a CA.
+Pin comments are `v1.0.22` (`github:pramodreddyboddu/agent-receipt#v1.0.22` once the tag exists). After `keygen`, `trust add --self` allowlists that fingerprint. A laptop or org config may also set `sign: true` so bare `wrap` signs; CLI `--no-sign` overrides. Not a CA.
 
 ## Live workflows
 
 This repo does not install the example under [`.github/workflows/`](../.github/workflows). Pushing that tree needs the OAuth `workflow` scope. Copy the example in your own repo. The smoke that runs `wrap --sign` lives in [`docs/github-actions-ci.yml`](github-actions-ci.yml).
 
-`prove --page` landed in 1.0.21 (unsigned Markdown one-pager). Still deferred: full PKI/CA, minisign, GPG/OpenPGP, a config `sign: true` default, an HTML/share signed package (and a signed one-pager), a background deleter, `trust show`, and multi-agent receipt linking. `trust add --self` is a local allowlist write, not a CA.
+`prove --page` landed in 1.0.21 (unsigned Markdown one-pager). Config `sign: true` / `--no-sign` landed in 1.0.22 (capture, wrap, and watch; missing keys tip and stay unsigned). Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, an HTML/share signed package (and a signed one-pager), a background deleter, `trust show`, and multi-agent receipt linking. `trust add --self` is a local allowlist write, not a CA.

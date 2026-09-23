@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.21: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.22: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -146,6 +146,18 @@ jobs:
           # The one-pager is not signed. Default prove without --page writes nothing.
           node bin/agent-receipt.js prove --json --page --cwd "$tmp" > "$tmp/prove-page.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.exitCode!==0||g.verified!==true||typeof g.pagePath!=="string"||!g.pagePath.endsWith(".prove.md")||!fs.existsSync(g.pagePath)){console.error(g); process.exit(1)} const page=fs.readFileSync(g.pagePath,"utf8"); if(page.indexOf("PROVED")===-1||page.indexOf(g.sha256)===-1){console.error(page); process.exit(1)}' "$tmp/prove-page.json"
+          # v1.0.22: config sign: true. Keys are already present. Bare wrap
+          # (no --sign flag) writes *.sig.json. --no-sign does not. Missing
+          # keys tip and leave the receipt unsigned (exit is not 2).
+          printf '\nsign: true\n' >> "$tmp/.agent-receipt.yml"
+          node bin/agent-receipt.js wrap --agent ci --message config-sign --json --cwd "$tmp" > "$tmp/wrap-config-sign.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="wrap"||g.exitCode!==0||typeof g.path!=="string"){console.error(g); process.exit(1)} const sig=g.path.replace(/\.md$/i,".sig.json"); if(!fs.existsSync(sig)){console.error("missing sidecar "+sig); process.exit(1)}' "$tmp/wrap-config-sign.json"
+          node bin/agent-receipt.js wrap --no-sign --agent ci --message config-nosign --json --cwd "$tmp" > "$tmp/wrap-config-nosign.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="wrap"||g.exitCode!==0||typeof g.path!=="string"){console.error(g); process.exit(1)} const sig=g.path.replace(/\.md$/i,".sig.json"); if(fs.existsSync(sig)){console.error("unexpected sidecar "+sig); process.exit(1)}' "$tmp/wrap-config-nosign.json"
+          mv "$tmp/.agent-receipt/keys" "$tmp/.agent-receipt/keys.bak"
+          node bin/agent-receipt.js wrap --agent ci --message config-sign-nokeys --json --cwd "$tmp" > "$tmp/wrap-config-sign-nokeys.json" 2> "$tmp/wrap-config-sign-nokeys.err"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="wrap"||g.exitCode!==0||typeof g.path!=="string"){console.error(g); process.exit(1)} const sig=g.path.replace(/\.md$/i,".sig.json"); if(fs.existsSync(sig)){console.error("unexpected sidecar "+sig); process.exit(1)} const err=fs.readFileSync(process.argv[2],"utf8"); if(err.indexOf("keygen")===-1){console.error(err); process.exit(1)}' "$tmp/wrap-config-sign-nokeys.json" "$tmp/wrap-config-sign-nokeys.err"
+          mv "$tmp/.agent-receipt/keys.bak" "$tmp/.agent-receipt/keys"
           node bin/agent-receipt.js last --json --cwd "$tmp" > "$tmp/last.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="last"||typeof g.path!=="string"||typeof g.sha256!=="string"||g.sha256.length!==64){console.error(g); process.exit(1)}' "$tmp/last.json"
           # history --agent is an exact match. The wrap above used --agent ci.
