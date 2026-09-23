@@ -147,7 +147,16 @@ function flagHistoryUncommitted(flags: Record<string, string | boolean>): boolea
   );
 }
 
-const PROVE_FLAGS = new Set(['cwd', 'json', 'fail-on', 'trusted-key']);
+const PROVE_FLAGS = new Set([
+  'cwd',
+  'json',
+  'fail-on',
+  'trusted-key',
+  'page',
+  'one-pager',
+  'out',
+  'o',
+]);
 const TRUST_FLAGS = new Set(['cwd', 'json', 'self']);
 
 const FP64 = /^[0-9a-f]{64}$/;
@@ -196,10 +205,20 @@ function assertKnownProveFlags(flags: Record<string, string | boolean>): void {
   for (const key of Object.keys(flags)) {
     if (!PROVE_FLAGS.has(key)) {
       throw new Error(
-        `Unknown flag: --${key}. prove accepts --json, --fail-on [high|medium|low], --trusted-key <fp>, and --cwd.`,
+        `Unknown flag: --${key}. prove accepts --json, --page (alias --one-pager), --out <path>, --fail-on [high|medium|low], --trusted-key <fp>, and --cwd.`,
       );
     }
   }
+}
+
+/** `--out` / `-o` for the prove one-pager. A bare flag is a usage error. */
+function flagProveOut(flags: Record<string, string | boolean>): string | undefined {
+  const v = flags.out !== undefined ? flags.out : flags.o;
+  if (v === undefined) return undefined;
+  if (typeof v !== 'string' || !v.trim()) {
+    throw new Error('--out requires a path');
+  }
+  return v;
 }
 
 function flagHistoryFailed(flags: Record<string, string | boolean>): boolean {
@@ -383,10 +402,17 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         assertKnownProveFlags(flags);
         const explicitFail = flags['fail-on'] !== undefined;
         const failOn = explicitFail ? parseFailOn(flags['fail-on']) : undefined;
+        const page = flagBool(flags, 'page', 'one-pager');
+        const out = flagProveOut(flags);
+        if (out && !page) {
+          throw new Error('prove --out requires --page (or --one-pager).');
+        }
         const result = cmdProve(cwd, positional[0], {
           json: flagBool(flags, 'json'),
           failOn,
           trustedKeys: flagTrustedKeys(flags),
+          page,
+          out,
         });
         return result.exitCode;
       }

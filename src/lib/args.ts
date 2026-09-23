@@ -11,7 +11,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
   const flags: Record<string, string | boolean> = {};
   // Flags that never take a value, so a following receipt path stays positional.
-  const valueless = new Set(['require-sig', 'require-signature', 'self']);
+  // `--page` / `--one-pager` must not swallow the following receipt path.
+  const valueless = new Set(['require-sig', 'require-signature', 'self', 'page', 'one-pager']);
   // Repeatable flags are joined with commas (`--trusted-key a --trusted-key b`).
   const repeatable = new Set(['trusted-key']);
 

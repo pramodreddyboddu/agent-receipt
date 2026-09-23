@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.21] — 2026-09-22
+
+### Added
+
+- `prove --page` (alias `--one-pager`) writes a plain-English Markdown one-pager after the existing prove report. Exit codes are unchanged, including FAILED (exit 2). Default path: `foo.md` → `foo.prove.md` beside the receipt. A receipt whose name does not end in `.md` gets `<name>.prove.md` (`notes.txt` → `notes.txt.prove.md`). `--out <path>` overrides that destination (an existing directory, or a path ending in `/`, receives `<stem>.prove.md` inside; any other path is the file). The page lists verdict (PROVED or FAILED), path, sha256, verified, trailingIgnored, redacted, risk, tldr, agent, uncommitted, failedOn, audit (present / chain / events / matched), signature (present / ok / trusted / fingerprint / reason), and failOn or reason when set, plus a short tamper-evident footer. It is not itself signed. Human stdout keeps the PROVED/FAILED banner and prints one `page:` line when a file was written. `--json` stays one prove object and adds `pagePath` only when `--page` wrote a file. Without `--page`, prove stays stdout-only. The command does not append the audit log. `last`, `history`, and `prune` ignore `*.prove.md` so the page is not treated as a receipt.
+
+### Changed
+
+- Package version bumped to `1.0.21`.
+- [`docs/business.md`](docs/business.md) documents the one-pager under prove. The prove-for-humans one-pager is landed. HTML/share signed package stays deferred. The lead sentence tracks 1.0.21.
+- [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md) and [`README.md`](README.md) tip `prove --page` after prove. Pin comments that track the current cut are `v1.0.21`.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) version-range comments include 1.0.21. After wrap/sign, smoke runs `prove --json --page` and checks `pagePath`, `PROVED`, and sha256 in `*.prove.md`. Live [`.github/workflows/*`](.github/workflows) was not edited.
+- [`examples/github/action.yml`](examples/github/action.yml), [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml), and [`examples/org-policy.yml`](examples/org-policy.yml) pin comments are `v1.0.21`. No new action input.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm.
+- Still not a CA. No key escrow. The private key stays under `.agent-receipt/keys/`. The one-pager is not a signature and not access control.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture, config `sign: true` (and `--no-sign`) so org policy can default capture/wrap to sign, `trust show`, SSO / IdP, Cloud Agents, a background deleter, an HTML/share signed package (and a signed one-pager), multi-agent receipt linking, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.20] — 2026-09-22
 
 ### Added

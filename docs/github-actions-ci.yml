@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.20: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.21: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -141,6 +141,11 @@ jobs:
           node bin/agent-receipt.js trust add --self --json --cwd "$tmp" > "$tmp/trust-self-again.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.action!=="add"||g.added!==false||g.exitCode!==0){console.error(g); process.exit(1)}' "$tmp/trust-self-again.json"
           rm -f "$tmp/.agent-receipt/trusted-keys.txt"
+          # v1.0.21: prove --page writes a sibling Markdown one-pager.
+          # --json --page adds pagePath. The page contains PROVED and sha256.
+          # The one-pager is not signed. Default prove without --page writes nothing.
+          node bin/agent-receipt.js prove --json --page --cwd "$tmp" > "$tmp/prove-page.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.exitCode!==0||g.verified!==true||typeof g.pagePath!=="string"||!g.pagePath.endsWith(".prove.md")||!fs.existsSync(g.pagePath)){console.error(g); process.exit(1)} const page=fs.readFileSync(g.pagePath,"utf8"); if(page.indexOf("PROVED")===-1||page.indexOf(g.sha256)===-1){console.error(page); process.exit(1)}' "$tmp/prove-page.json"
           node bin/agent-receipt.js last --json --cwd "$tmp" > "$tmp/last.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="last"||typeof g.path!=="string"||typeof g.sha256!=="string"||g.sha256.length!==64){console.error(g); process.exit(1)}' "$tmp/last.json"
           # history --agent is an exact match. The wrap above used --agent ci.

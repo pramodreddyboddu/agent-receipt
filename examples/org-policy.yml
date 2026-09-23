@@ -61,9 +61,9 @@
 # Gate JSON schema: docs/gate.schema.json (next to docs/receipt.schema.json)
 # Signature sidecar: docs/signature.schema.json
 # Drop-in CI: examples/github/action.yml and examples/github/pr-gate.yml
-#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.20
-#   local allowlist: agent-receipt keygen && agent-receipt trust add --self
-#   prove after a green gate; upload receipt-gate.json
+#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.21
+#   local allowlist (since v1.0.20): agent-receipt keygen && agent-receipt trust add --self
+#   prove after a green gate; prove --page writes foo.prove.md; upload receipt-gate.json
 
 outDir: .agent-receipt/receipts
 defaultAgent: agent

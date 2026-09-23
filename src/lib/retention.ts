@@ -16,6 +16,7 @@ import {
 } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import type { AgentReceiptConfig } from './config.js';
+import { isProveOnePagerName } from './receipt.js';
 import {
   indexPath,
   isInsideOutDir,
@@ -181,6 +182,7 @@ export function listReceiptFiles(cwd: string, index?: ReceiptIndex): ReceiptFile
   for (const name of names) {
     if (name.includes('/') || name.includes('\\')) continue;
     if (!name.toLowerCase().endsWith('.md')) continue;
+    if (isProveOnePagerName(name)) continue;
     if (PROTECTED_BASENAMES.has(name)) continue;
     const abs = join(dir, name);
     let st;

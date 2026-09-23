@@ -75,6 +75,7 @@ agent-receipt keygen             # local Ed25519 keypair (optional)
 agent-receipt trust add --self   # allowlist that fingerprint (not a CA)
 agent-receipt sign               # attest the receipt sha256
 agent-receipt prove             # hash + audit link + signature status
+agent-receipt prove --page      # human one-pager beside the receipt (foo.prove.md)
 agent-receipt --version
 ```
 
@@ -127,7 +128,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `sign [path]` | Hash-check a receipt, then write `foo.sig.json` over the sha256 hex. Missing keys exit 1. Hash failure exits 2 and writes nothing. Capture and wrap sign only with `--sign` |
 | `trust` | Known-keys allowlist: `list`, `add <fp>`, `add --self`, `rm <fp>` on `.agent-receipt/trusted-keys.txt`. Not a CA |
 | `verify [path]` | Hash-check tamper-evident integrity. Default stays hash-only (unsigned receipts still pass). `--require-sig` requires a valid `*.sig.json` and, when a trust store is configured, a known fingerprint. `--json` includes `trailingIgnored` (boolean) |
-| `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, an audit-log link, and signature status when a sidecar is present. `--json` adds `signature` (`trusted` is null when the allowlist is inactive). Config `failOn` is not applied |
+| `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, an audit-log link, and signature status when a sidecar is present. `--json` adds `signature` (`trusted` is null when the allowlist is inactive). `--page` writes `foo.prove.md` (plain English; not itself signed). Config `failOn` is not applied |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
 | `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default). Trusted prune refuses the delete when the audit chain is broken (`--force` is break-glass) |
 | `doctor` | Health check plus a prod checklist (policy, audit, keys, trust, retention, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`), unset retention (`maxCount` / `maxAgeDays`), a broken audit chain, and an invalid trust store. A missing trust store stays INFO. Default doctor still pressure-gates unset retention. Missing signing keys stay INFO |
@@ -158,6 +159,7 @@ agent-receipt keygen
 agent-receipt trust add --self
 agent-receipt sign
 agent-receipt prove --json
+agent-receipt prove --page
 agent-receipt last --json
 agent-receipt audit --event wrap --limit 20
 agent-receipt audit --agent cursor --failed
@@ -362,7 +364,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.20`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.21`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -458,6 +460,9 @@ is valid or absent. Exit 2 when the body was edited, the audit chain is
 broken, a present `.sig.json` does not verify, or you passed `--fail-on`
 and it tripped. A missing sidecar does not fail prove. Config `failOn`
 does not apply. `prove --json` prints one object, including `signature`.
+`prove --page` writes a one-page Markdown summary next to the receipt
+(`foo.md` → `foo.prove.md`) with the verdict, hash, audit link, and
+signature status. `--json --page` adds `pagePath`. The page is not signed.
 
 `verify --require-sig` (alias `--require-signature`) opts in to that sidecar.
 The hash check still runs first. After it matches, a missing sidecar exits 2
@@ -490,8 +495,9 @@ Peers verify and sign the Markdown.
 Thin local Ed25519 attest landed in 1.0.16. `verify --require-sig` and the
 portable sidecar handoff landed in 1.0.17. A thin known-keys allowlist
 landed in 1.0.18. A signed CI drop-in (`sign`, require-sig, trust examples)
-landed in v1.0.19. `trust add --self` landed in v1.0.20. Full PKI/CA,
-minisign, GPG, and default auto-sign on capture are still deferred.
+landed in v1.0.19. `trust add --self` landed in v1.0.20. `prove --page`
+landed in v1.0.21. Full PKI/CA, minisign, GPG, default auto-sign on
+capture, and a signed HTML/share package are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
 

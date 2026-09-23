@@ -36,7 +36,7 @@ gh auth refresh -h github.com -s workflow
 
 Fine-grained PAT: **Actions: Read and write**. GitHub App: **Workflows**.
 A token whose `gh auth status` scopes are only `gist`, `read:org`, `repo`
-cannot push `.github/workflows/*`. v1.0.6 through v1.0.20 left
+cannot push `.github/workflows/*`. v1.0.6 through v1.0.21 left
 `.github/workflows/ci.yml` unchanged for that reason; the docs mirror has
 the `share --json` smoke, `prove --json`, `last --json`, a `prune --dry-run`
 check, a `docs/gate.schema.json` required-key check on `wrap.json`,
@@ -48,9 +48,11 @@ small outDir; passes after `init --org` and `init --retention`), `doctor --json`
 check (exit 0 signed, exit 2 unsigned), a 1.0.18 fingerprint trust-store
 smoke (matching fingerprint exits 0; a different fingerprint exits 2), and a
 1.0.19 `wrap --sign` smoke (`signature.ok`, then `signature.trusted` and
-`verify --require-sig` with that fingerprint allowlisted), and a 1.0.20
+`verify --require-sig` with that fingerprint allowlisted), a 1.0.20
 `trust add --self` smoke (the local keygen fingerprint is allowlisted,
-prove `signature.trusted` is true, and `verify --require-sig` exits 0).
+prove `signature.trusted` is true, and `verify --require-sig` exits 0),
+and a 1.0.21 `prove --json --page` smoke (`pagePath` points at `*.prove.md`
+containing PROVED and the receipt sha256).
 The drop-in PR gate
 (`examples/github/pr-gate.yml`, `examples/github/action.yml`) is an example
 to copy, not this repo's live workflow. See `docs/ci-signed-gate.md`.

@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { color } from '../lib/color.js';
 import { VERSION } from '../lib/version.js';
 import { extractTldr } from '../lib/receipt.js';
@@ -32,6 +32,13 @@ export interface ProveOptions {
   failOn?: FailOnThreshold;
   /** Extra known-key fingerprints for this invocation (`--trusted-key`). */
   trustedKeys?: string[];
+  /**
+   * Write a Markdown one-pager after the report is computed.
+   * Does not change exit codes. Omitted means stdout only.
+   */
+  page?: boolean;
+  /** Destination file or directory for the one-pager. Requires `page`. */
+  out?: string;
 }
 
 export interface ProveAudit {
@@ -61,6 +68,12 @@ export interface ProveReport {
   audit: ProveAudit;
   signature: SignatureStatus;
   reason: string | null;
+  /**
+   * Absolute path of the Markdown one-pager when `--page` wrote one.
+   * Omitted when `--page` was not passed, so existing prove objects keep
+   * their key set. Null is unused today: a write failure exits 1 instead.
+   */
+  pagePath?: string | null;
 }
 
 const ABSENT_AUDIT: ProveAudit = {
@@ -206,6 +219,107 @@ function yesNo(value: boolean): string {
   return value ? 'yes' : 'no';
 }
 
+function tri(value: boolean | null): string {
+  if (value === true) return 'yes';
+  if (value === false) return 'no';
+  return 'unknown';
+}
+
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Sibling file name. `foo.md` → `foo.prove.md`. A name that does not end
+ * in `.md` keeps its suffix and appends `.prove.md` (`notes.txt` →
+ * `notes.txt.prove.md`) so it does not collide with a Markdown receipt
+ * of the same stem.
+ */
+function provePageFileName(receiptPath: string): string {
+  const base = basename(receiptPath);
+  if (/\.md$/i.test(base)) return base.replace(/\.md$/i, '.prove.md');
+  return `${base}.prove.md`;
+}
+
+function defaultProvePagePath(receiptPath: string): string {
+  return join(dirname(receiptPath), provePageFileName(receiptPath));
+}
+
+/**
+ * `--out` file is used as-is. An existing directory, or a path that ends
+ * with a slash, receives `<stem>.prove.md` inside it.
+ */
+function resolveProvePageOut(cwd: string, receiptPath: string, out?: string): string {
+  if (!out) return defaultProvePagePath(receiptPath);
+  const wantsDir = /[/\\]$/.test(out);
+  const resolved = resolve(cwd, out);
+  if (wantsDir) return join(resolved, provePageFileName(receiptPath));
+  try {
+    if (statSync(resolved).isDirectory()) return join(resolved, provePageFileName(receiptPath));
+  } catch {
+    // Missing path is a file. Parent directories are created at write time.
+  }
+  return resolved;
+}
+
+function formatSignaturePage(signature: SignatureStatus): string {
+  if (!signature.present) {
+    return 'present no; ok n/a; trusted n/a; fingerprint (none); reason (none)';
+  }
+  const ok = signature.ok === true ? 'yes' : signature.ok === false ? 'no' : 'unknown';
+  const trusted =
+    signature.trusted === true ? 'yes' : signature.trusted === false ? 'no' : 'n/a';
+  const fp = signature.fingerprint ?? '(none)';
+  const reason = signature.reason ? oneLine(signature.reason) : '(none)';
+  return `present yes; ok ${ok}; trusted ${trusted}; fingerprint ${fp}; reason ${reason}`;
+}
+
+const PAGE_FOOTER =
+  'The hash and the audit link are tamper-evident, not a cryptographic signature. The signature line reports a local Ed25519 sidecar when one is present. This is not a certificate authority and not access control. This one-pager is not itself signed.';
+
+/** Plain-English one page. Not a dump of the receipt body, and not signed. */
+function renderProvePage(report: ProveReport): string {
+  const verdict = report.exitCode === 0 ? 'PROVED' : 'FAILED';
+  const line = (label: string, value: string) => `- **${label}:** ${value}`;
+  const lines = [
+    '# Agent Receipt — Prove',
+    '',
+    `**Verdict:** ${verdict}`,
+    '',
+    line('path', report.path ?? '(none)'),
+    line('sha256', report.sha256 ?? '(none)'),
+    line('verified', tri(report.verified)),
+    line('trailingIgnored', tri(report.trailingIgnored)),
+    line('redacted', yesNo(report.redacted)),
+    line('risk', formatRisk(report.risk)),
+    line('tldr', oneLine(report.tldr ?? '(none)')),
+    line('agent', oneLine(report.agent ?? '(none)')),
+    line('uncommitted', report.uncommitted === null ? 'unknown' : yesNo(report.uncommitted)),
+    line('failedOn', yesNo(report.failedOn)),
+    line('audit', formatAudit(report.audit)),
+    line('signature', formatSignaturePage(report.signature)),
+  ];
+  if (report.failOn) lines.push(line('failOn', report.failOn));
+  if (report.reason) lines.push(line('reason', oneLine(report.reason)));
+  lines.push('', '---', '', PAGE_FOOTER, '');
+  return lines.join('\n');
+}
+
+function writeProvePage(cwd: string, report: ProveReport, out?: string): string {
+  if (!report.path) {
+    throw new Error('prove --page needs a receipt path.');
+  }
+  const dest = resolveProvePageOut(cwd, report.path, out);
+  if (resolve(dest) === resolve(report.path)) {
+    throw new Error(
+      'prove --page must not overwrite the source receipt. Pass a different --out.',
+    );
+  }
+  mkdirSync(dirname(dest), { recursive: true });
+  writeFileSync(dest, renderProvePage(report), 'utf8');
+  return dest;
+}
+
 function printHuman(report: ProveReport): void {
   const banner =
     report.exitCode === 0 ? color.green('PROVED') : color.red('FAILED');
@@ -225,6 +339,7 @@ function printHuman(report: ProveReport): void {
   ];
   if (report.failOn) lines.push(`  failOn: ${report.failOn}`);
   if (report.reason) lines.push(`  reason: ${report.reason}`);
+  if (report.pagePath) lines.push(`  page: ${report.pagePath}`);
   console.log(lines.join('\n'));
   console.log('');
   console.log(
@@ -329,6 +444,10 @@ export function cmdProve(
     signature,
     reason,
   };
+
+  if (opts.page) {
+    report.pagePath = writeProvePage(cwd, report, opts.out);
+  }
 
   if (opts.json) printProve(report);
   else printHuman(report);
