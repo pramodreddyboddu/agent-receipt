@@ -73,9 +73,11 @@ function sibling(source: string, suffix: string): string {
   return source.replace(/\.md$/i, '') + suffix;
 }
 
-function peerPackageTip(markdownPath: string): string[] {
+function peerPackageTip(packageDir: string, markdownPath: string): string[] {
   return [
-    'Peers: open the HTML (unsigned). Verify the Markdown proof inside the package:',
+    'Peers: open the HTML (unsigned). Check the package, then the Markdown:',
+    `  agent-receipt verify --package ${packageDir}`,
+    `  agent-receipt import ${packageDir}`,
     `  agent-receipt verify ${markdownPath}`,
     `  agent-receipt prove ${markdownPath}`,
     `  agent-receipt verify --require-sig ${markdownPath}`,
@@ -299,7 +301,7 @@ export function cmdShare(
     say(color.bold('source') + ` ${source}`);
     if (packageDir && markdownPath) {
       say('');
-      for (const line of peerPackageTip(markdownPath)) say(line);
+      for (const line of peerPackageTip(packageDir, markdownPath)) say(line);
     }
     say('');
     if (markdownPath) {

@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.25] — 2026-09-23
+
+### Added
+
+- `verify --package` (alias `--pack`) checks a share package from `share --package` in one command. Pass the directory (`foo.share/`) or `manifest.json` (resolved to the parent). A directory whose `manifest.json` has kind `agent-receipt-share` is detected without the flag. `--package` forces package mode and exits 1 when the path is not a package. A normal `.md` path stays a plain receipt verify. Checks, fail closed: manifest shape (kind, version 1, required fields, lowercase hex) is exit 1 when malformed; every `manifest.files` byte hash must match (`signed: true` requires `receipt.sig.json`, `signed: false` rejects that sidecar); `receipt.md` is verified with the existing hash path and its canonical sha256 must equal `manifest.sha256`; a present `receipt.sig.json` is inspected (valid is reported, invalid exits 2 even without `--require-sig`; missing is fine when unsigned); `--require-sig` requires a valid sidecar and, when a known-keys allowlist is active, a trusted fingerprint; a present `manifest.sig.json` must verify over the hex SHA-256 of the current `manifest.json` bytes (absent is fine, invalid exits 2). HTML is a file hash only. The HTML body is not signed. Human stdout prints VERIFIED or FAILED, the package path, sha256, signed, fingerprint, file hashes, receipt verify, signature, manifestSig, and a tip to open `receipt.html`. `--json` keeps command `"verify"` and adds `packagePath`, `signed`, `fingerprint`, `filesOk`, `manifestOk`, `manifestSig`, and `signature`. Required gate keys are unchanged. Plain `verify --json` omits those fields. Exit 2 is integrity or signature policy. Exit 1 is usage, missing, or malformed.
+- `import <packageDir>` runs the same package check, then copies `receipt.md` and `receipt.sig.json` (when present) into the local outDir as `receipt-import-<sha256-12>.md` plus a sibling `.sig.json`. HTML and `manifest.json` are not copied. A failed verify copies nothing. `--dry-run` prints the planned paths and writes nothing. `--json` uses command `"import"` and adds `importPath`, `importSigPath`, and `dryRun` (null paths when verify failed). Import does not append the audit log and does not add an index row. It is verify plus copy, not a local capture. The copied file keeps the source integrity footer, so it is a receipt under outDir. `history` lists `index.json` when that catalog has rows, so the import does not appear there until the index is empty. `last` follows mtime and can show a fresh import.
+
+### Changed
+
+- Package version bumped to `1.0.25`.
+- [`docs/business.md`](docs/business.md) documents peer `verify --package` and `import` under share / handoff. Both are landed. The lead sentence tracks 1.0.25.
+- [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md) and [`README.md`](README.md) tip peers to run `verify --package` on `*.share/`. Pin comments that track the current cut are `v1.0.25`.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) version-range comments include 1.0.25. After `share --package`, smoke runs `verify --package --json` (exit 0) and `verify --package --require-sig` (exit 0 when keys signed the package). Live [`.github/workflows/*`](.github/workflows) was not edited.
+- [`examples/github/action.yml`](examples/github/action.yml), [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml), and [`examples/org-policy.yml`](examples/org-policy.yml) pin comments are `v1.0.25`. No new action input. A comment names `verify --package`.
+- [`docs/share-package.schema.json`](docs/share-package.schema.json) notes that peers run `verify --package`. [`docs/gate.schema.json`](docs/gate.schema.json) documents the optional package fields and command `"import"`.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm.
+- Still not a CA. No key escrow. The private key stays under `.agent-receipt/keys/`. The HTML body is unsigned. Import does not append the audit log.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config (signing stays opt-in via config `sign: true` or `--sign`), a signed one-pager, unsigned HTML prove export (`prove --html`), a background deleter, multi-agent receipt linking, SSO / IdP, Cloud Agents, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.24] — 2026-09-22
 
 ### Added

@@ -1,8 +1,8 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.24 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.25 for teams: install once, capture every session, fail CI
 on high-severity findings, share a redacted HTML + Markdown package (or HTML
-alone), and keep a local
+alone), verify that package with `verify --package`, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
 
@@ -132,7 +132,7 @@ is the artifact, not the gate. The gate object itself is
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -191,10 +191,19 @@ names an existing directory or ends with `/`. Inside it:
 | `manifest.json` | Small index: kind `agent-receipt-share`, CLI version, receipt sha256, `redacted`, per-file byte hashes, `fingerprint`, `signed`. See [`share-package.schema.json`](share-package.schema.json). |
 | `manifest.sig.json` | Optional. Same Ed25519 sidecar as `sign`, over the sha256 hex of the manifest bytes. Written when local keys load. Missing keys omit it and do not exit 2. |
 
-Peers open `receipt.html`, then run `verify`, `prove`, or
-`verify --require-sig` on `receipt.md`. `--json` adds `packagePath` and
-points `htmlPath` / `markdownPath` / `sigPath` at those files. Without
-`--package`, share is unchanged. `last`, `history`, and `prune` ignore
+Peers open `receipt.html`, then run `verify --package` (alias `--pack`) on
+the directory, or pass `manifest.json`. A directory whose manifest kind is
+`agent-receipt-share` is detected without the flag. The check covers the
+manifest, every file hash, `receipt.md`, and optional `receipt.sig.json` /
+`manifest.sig.json`. HTML stays a byte hash. It is not signed. `import <dir>`
+runs that check and, on success, copies `receipt.md` and the receipt sidecar
+into the local outDir as `receipt-import-<sha12>.md`. It does not copy HTML
+or the manifest, does not append the audit log, and does not add an index
+row. `verify`, `prove`, or `verify --require-sig` on `receipt.md` still work.
+`--json` on share adds `packagePath` and points `htmlPath` / `markdownPath` /
+`sigPath` at those files. Package verify `--json` stays command `verify` and
+adds `filesOk`, `manifestOk`, `manifestSig`, `signed`, and `fingerprint`.
+Without `--package`, share is unchanged. `last`, `history`, and `prune` ignore
 `*.share/` directories. This is not a CA.
 
 It reuses `export` / `html` / `verify` / `redact`. Share-safety from 1.0.3
@@ -256,7 +265,7 @@ Copy one of:
 | Example | What to do with it |
 |---------|--------------------|
 | [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. After a green gate it runs `prove --json` (`prove` defaults to true) and uploads `receipt-gate.json` plus the receipt Markdown (`actions/upload-artifact@v4`, name `agent-receipt-gate`). |
-| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.24`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.25`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
 
 ### Drop-in
 
@@ -275,7 +284,7 @@ true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
 - uses: ./.github/actions/agent-receipt
   with:
     install: true
-    from: github:pramodreddyboddu/agent-receipt#v1.0.24
+    from: github:pramodreddyboddu/agent-receipt#v1.0.25
     prove: true
     fail-on: high
     base: origin/main
@@ -619,8 +628,10 @@ Default `doctor` stays pressure-gated. A missing trust store does not fail
 signs the receipt sha256 with a key that stays under `.agent-receipt/keys/`.
 `share --package` landed in 1.0.24: a portable directory with redacted HTML,
 Markdown, an optional `receipt.sig.json`, `manifest.json`, and an optional
-`manifest.sig.json`. The HTML body stays unsigned. Peers verify `receipt.md`.
-This is not a CA. Full PKI/CA is still deferred. Minisign, GPG/OpenPGP, default auto-sign
+`manifest.sig.json`. The HTML body stays unsigned. `verify --package` and
+`import` landed in 1.0.25: a peer checks that directory in one command and
+can copy the proved Markdown into the local store. Import does not append
+the audit log and does not pretend to be a local capture. This is not a CA. Full PKI/CA is still deferred. Minisign, GPG/OpenPGP, default auto-sign
 on capture without config (signing stays opt-in via config `sign: true` or
 `--sign`), a signed one-pager, unsigned HTML prove export (`prove --html`), a background deleter,
 and multi-agent receipt linking are still deferred. `trust show` landed in
@@ -649,7 +660,7 @@ are checklist and listing tools; they do not sign the audit log.
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.24 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.25 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

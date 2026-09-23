@@ -107,14 +107,14 @@ describe('v1.0.22 config sign / --no-sign', () => {
     assert.match(changelog, /trust show/);
     assert.match(changelog, /HTML\/share signed package/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.24');
+    assert.equal(pkg.version, '1.0.25');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.24');
-    assert.equal(lock.packages[''].version, '1.0.24');
+    assert.equal(lock.version, '1.0.25');
+    assert.equal(lock.packages[''].version, '1.0.25');
     assert.equal(lock.packages[''].dependencies, undefined);
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.24/);
+    assert.match(versionTs, /1\.0\.25/);
 
     const business = readFileSync(join(root, 'docs', 'business.md'), 'utf8');
     assert.match(business, /sign: true/);

@@ -20,6 +20,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     'one-pager',
     'package',
     'pack',
+    'dry-run',
   ]);
   // Repeatable flags are joined with commas (`--trusted-key a --trusted-key b`).
   const repeatable = new Set(['trusted-key']);

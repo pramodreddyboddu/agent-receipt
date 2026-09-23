@@ -127,7 +127,8 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `keygen [--force]` | Create a local Ed25519 keypair under `.agent-receipt/keys/` (PKCS8 private, SPKI public). Idempotent; `--force` rotates. No network |
 | `sign [path]` | Hash-check a receipt, then write `foo.sig.json` over the sha256 hex. Missing keys exit 1. Hash failure exits 2 and writes nothing. Capture and wrap sign only with `--sign` |
 | `trust` | Known-keys allowlist: `list`, `show`, `add <fp>`, `add --self`, `rm <fp>` on `.agent-receipt/trusted-keys.txt`. `trust show` is read-only and reports whether the local key is listed. Not a CA |
-| `verify [path]` | Hash-check tamper-evident integrity. Default stays hash-only (unsigned receipts still pass). `--require-sig` requires a valid `*.sig.json` and, when a trust store is configured, a known fingerprint. `--json` includes `trailingIgnored` (boolean) |
+| `verify [path]` | Hash-check tamper-evident integrity. Default stays hash-only (unsigned receipts still pass). `--package` checks a `share --package` directory (manifest, file hashes, receipt, optional signatures). `--require-sig` requires a valid `*.sig.json` and, when a trust store is configured, a known fingerprint. `--json` includes `trailingIgnored` (boolean) |
+| `import <dir>` | Verify a share package, then copy `receipt.md` (and `receipt.sig.json` when present) into the local receipt store. `--dry-run` writes nothing. Not a local capture |
 | `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, an audit-log link, and signature status when a sidecar is present. `--json` adds `signature` (`trusted` is null when the allowlist is inactive). `--page` writes `foo.prove.md` (plain English; not itself signed). Config `failOn` is not applied |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
 | `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default). Trusted prune refuses the delete when the audit chain is broken (`--force` is break-glass) |
@@ -225,8 +226,9 @@ nested receipt bodies), writes HTML and optional Markdown, verifies the
 published body, and prints TL;DR plus paths. `--no-redact` opts out.
 `--md` refuses to overwrite the source receipt. `--package` (alias `--pack`)
 writes `foo.share/` with `receipt.html`, `receipt.md`, optional
-`receipt.sig.json`, and `manifest.json`. Open the HTML, then `verify` the
-Markdown. The HTML body stays unsigned.
+`receipt.sig.json`, and `manifest.json`. Open the HTML, then
+`verify --package` the directory (or `verify` the Markdown). The HTML body
+stays unsigned. `import` copies the proved Markdown into your receipt store.
 
 ### `export` / `html` (shareable receipt)
 
@@ -368,7 +370,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.24`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.25`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -508,8 +510,10 @@ landed in v1.0.19. `trust add --self` landed in v1.0.20. `prove --page`
 landed in v1.0.21. Config `sign: true` and `--no-sign` landed in v1.0.22.
 `trust show` landed in v1.0.23. `share --package` landed in v1.0.24
 (HTML + signed Markdown in one directory; the HTML body stays unsigned).
-Full PKI/CA, minisign, GPG, default auto-sign on capture without that
-config, a signed one-pager, and `prove --html` are still deferred.
+`verify --package` and `import` landed in v1.0.25 (peer check of that
+directory, then a copy of the proved Markdown). Full PKI/CA, minisign, GPG,
+default auto-sign on capture without that config, a signed one-pager, and
+`prove --html` are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
 

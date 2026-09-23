@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.24: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.25: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -44,6 +44,8 @@ jobs:
         run: |
           node bin/agent-receipt.js help
           node bin/agent-receipt.js help share
+          node bin/agent-receipt.js help verify
+          node bin/agent-receipt.js help import
           node bin/agent-receipt.js help audit
           node bin/agent-receipt.js help prune
           node bin/agent-receipt.js help doctor
@@ -187,6 +189,14 @@ jobs:
           pkgmd=$(cat "$tmp/share-package-md.path")
           node bin/agent-receipt.js verify --require-sig --json --cwd "$tmp" "$pkgmd" > "$tmp/verify-share-package.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="verify"||g.exitCode!==0||g.verified!==true||!g.signature||g.signature.present!==true||g.signature.ok!==true){console.error(g); process.exit(1)}' "$tmp/verify-share-package.json"
+          # v1.0.25: verify --package checks the manifest, file hashes, receipt,
+          # receipt sidecar, and manifest.sig.json. With keys, --require-sig
+          # exits 0. HTML stays unsigned. import copies receipt.md only.
+          pkgdir=$(dirname "$pkgmd")
+          node bin/agent-receipt.js verify --package --json --cwd "$tmp" "$pkgdir" > "$tmp/verify-package.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="verify"||g.exitCode!==0||g.verified!==true||g.filesOk!==true||g.manifestOk!==true||g.signed!==true||typeof g.sha256!=="string"||g.sha256.length!==64||g.packagePath!==process.argv[2]||!g.signature||g.signature.ok!==true||!g.manifestSig||g.manifestSig.present!==true||g.manifestSig.ok!==true){console.error(g); process.exit(1)}' "$tmp/verify-package.json" "$pkgdir"
+          node bin/agent-receipt.js verify --package --require-sig --json --cwd "$tmp" "$pkgdir" > "$tmp/verify-package-require.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.command!=="verify"||g.exitCode!==0||!g.signature||g.signature.present!==true||g.signature.ok!==true){console.error(g); process.exit(1)}' "$tmp/verify-package-require.json"
           node bin/agent-receipt.js audit --verify --cwd "$tmp"
           # Retention is opt-in: dry-run with no limits must delete nothing
           # and must not append audit.jsonl.
