@@ -2,13 +2,14 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../lib/config.js';
 import { extractEmbeddedHash } from '../lib/hash.js';
+import { isProveOnePagerName } from '../lib/receipt.js';
 
 export function findLatestReceipt(cwd: string): string | null {
   const cfg = loadConfig(cwd);
   const dir = join(cwd, cfg.outDir);
   if (!existsSync(dir)) return null;
   const files = readdirSync(dir)
-    .filter((f) => f.endsWith('.md'))
+    .filter((f) => f.endsWith('.md') && !isProveOnePagerName(f))
     .map((f) => join(dir, f))
     .filter((p) => {
       try {

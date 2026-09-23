@@ -562,7 +562,7 @@ Examples:
   prove: `agent-receipt prove — prove-this-run (integrity + audit link)
 
 Usage:
-  agent-receipt prove [path] [--json] [--fail-on high|medium|low] [--trusted-key <fp>]
+  agent-receipt prove [path] [--json] [--page] [--one-pager] [--out <path>] [--fail-on high|medium|low] [--trusted-key <fp>]
 
 Resolves the path the same way verify does (newest receipt when omitted).
 Recomputes the same SHA-256 as verify, then reports the path, hash,
@@ -573,6 +573,36 @@ This is tamper-evident prove-this-run. The hash and the audit link are
 not a cryptographic signature. A local Ed25519 sidecar is reported when
 present. Default verify stays hash-only. \`verify --require-sig\` requires
 a valid sidecar. There is no CA and no PKI.
+
+\`--page\` (alias \`--one-pager\`) writes a plain-English Markdown one-pager
+after that report is computed. Exit codes stay the same, including FAILED
+(exit 2). Without \`--page\`, prove stays stdout-only and writes no file.
+The one-pager is not itself signed. HTML export of this page is deferred.
+
+Default path: \`foo.md\` → \`foo.prove.md\` in the same directory. A receipt
+whose name does not end in \`.md\` gets \`<name>.prove.md\`
+(\`notes.txt\` → \`notes.txt.prove.md\`) so it does not collide with a
+Markdown receipt of the same stem.
+
+\`--out <path>\` overrides that destination and requires \`--page\`. An
+existing directory, or a path that ends with a slash, receives
+\`<stem>.prove.md\` inside it. Any other path is the file and is used
+as-is. The page is not written over the source receipt. \`*.prove.md\` is not a
+receipt: \`last\`, \`history\`, and \`prune\` ignore that name so a newer
+page does not replace the receipt it describes.
+
+The page is one screen: title "Agent Receipt — Prove", a PROVED or FAILED
+verdict (exit 0 vs non-zero), then path, sha256, verified,
+trailingIgnored, redacted, risk, tldr, agent, uncommitted, failedOn,
+audit (present / chain / events / matched), signature (present / ok /
+trusted / fingerprint / reason), and failOn or reason when those are set.
+A short footer repeats the tamper-evident tip: not a CA, not access control.
+
+Human stdout keeps the PROVED or FAILED banner. When \`--page\` wrote a
+file it also prints one \`page:\` line with that path. \`--json\` stays one
+object. When \`--page\` wrote a file it adds \`pagePath\` (string). The
+field is omitted when \`--page\` was not passed. Required prove keys are
+unchanged. \`prove --page\` does not append the audit log.
 
 Signature status (foo.md → foo.sig.json, written by \`sign\`):
   - No sidecar: present false, ok null. Exit rules are unchanged for that alone.
@@ -616,6 +646,7 @@ true and the exit is 2 even if the hash matches.
   signature { present, ok, alg, fingerprint, reason, trusted },
   reason
   ok is true only when exitCode is 0.
+  --page adds pagePath (string) when the one-pager was written.
 
 Exit codes:
   0  verified, audit log absent or intact, and signature absent or valid
@@ -627,7 +658,9 @@ Exit codes:
 
 Examples:
   agent-receipt prove
-  agent-receipt prove --json
+  agent-receipt prove --page
+  agent-receipt prove --json --page
+  agent-receipt prove receipt.md --one-pager --out ./pages/
   agent-receipt prove receipt.md --fail-on high --json
 `,
 
@@ -934,7 +967,7 @@ Commands:
   sign [path]            Attest the receipt sha256 into a .sig.json sidecar
   trust                  Known-keys allowlist: list, add <fp>, add --self, rm <fp>
   verify [path]          Hash-check integrity (hash-only; --require-sig opts in)
-  prove [path]           Prove-this-run: verify + audit link + signature status
+  prove [path]           Prove-this-run: verify + audit link + signature status (--page writes foo.prove.md)
   audit                  List the compliance log (--event, --agent, --failed filter the listing)
   log                    Alias for audit
   prune                  Delete old receipts under outDir (opt-in; trusted prune; --dry-run, --force)
@@ -992,6 +1025,7 @@ Examples:
   agent-receipt verify --require-sig
   agent-receipt trust list
   agent-receipt prove
+  agent-receipt prove --page
   agent-receipt prove --json
   agent-receipt audit
   agent-receipt audit --event wrap

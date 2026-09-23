@@ -3,6 +3,15 @@ import type { FileStat } from './git.js';
 import { summarizeRisks, sortRisks, type RiskHint } from './risk.js';
 import { summarizeNotableChanges, formatDiffStatTable } from './summary.js';
 
+/**
+ * Prove one-pagers (`foo.prove.md`) sit beside receipts and are not receipts.
+ * Receipt scanners skip them so a newer page does not become `last` or a prune target.
+ */
+export function isProveOnePagerName(filename: string): boolean {
+  const base = filename.split(/[/\\]/).pop() ?? filename;
+  return /\.prove\.md$/i.test(base);
+}
+
 export interface ReceiptData {
   version: string;
   timestamp: string;

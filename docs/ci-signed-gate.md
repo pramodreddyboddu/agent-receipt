@@ -11,10 +11,13 @@ agent-receipt trust add --self
 
 agent-receipt wrap --sign --fail-on high --json
 agent-receipt prove --json
+agent-receipt prove --page
 agent-receipt verify --require-sig
 ```
 
 Expect `prove` `signature.ok === true`. With that allowlist, also expect `signature.trusted === true`, and `verify --require-sig` exit 0.
+
+`prove --page` writes a plain-English one-pager next to the receipt (`foo.md` → `foo.prove.md`) so a human can read the verdict without the full receipt or the JSON. It does not change the exit code. The page is not signed.
 
 `trusted-keys` may be a file path or comma-separated fingerprints. Empty leaves the allowlist inactive: a valid sidecar still passes `--require-sig`, and `signature.trusted` stays null.
 
@@ -37,10 +40,10 @@ trusted-keys: "<path-or-comma-fps>"
 
 `share` re-signs published Markdown when local keys exist. It has no `--sign` flag. The examples run `sign` on the gate receipt path when `sign: true` and that path has no sidecar. HTML stays unsigned.
 
-Pin comments are `v1.0.20` (`github:pramodreddyboddu/agent-receipt#v1.0.20` once the tag exists). After `keygen`, `trust add --self` allowlists that fingerprint. Not a CA.
+Pin comments are `v1.0.21` (`github:pramodreddyboddu/agent-receipt#v1.0.21` once the tag exists). After `keygen`, `trust add --self` allowlists that fingerprint. Not a CA.
 
 ## Live workflows
 
 This repo does not install the example under [`.github/workflows/`](../.github/workflows). Pushing that tree needs the OAuth `workflow` scope. Copy the example in your own repo. The smoke that runs `wrap --sign` lives in [`docs/github-actions-ci.yml`](github-actions-ci.yml).
 
-Still deferred: full PKI/CA, minisign, GPG/OpenPGP, a config `sign: true` default, an HTML/share signed package, a background deleter, a prove-for-humans one-pager, and multi-agent receipt linking. `trust add --self` is a local allowlist write, not a CA.
+`prove --page` landed in 1.0.21 (unsigned Markdown one-pager). Still deferred: full PKI/CA, minisign, GPG/OpenPGP, a config `sign: true` default, an HTML/share signed package (and a signed one-pager), a background deleter, `trust show`, and multi-agent receipt linking. `trust add --self` is a local allowlist write, not a CA.
