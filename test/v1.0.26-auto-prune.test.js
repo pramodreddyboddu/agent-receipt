@@ -112,14 +112,14 @@ describe('v1.0.26 auto-prune', () => {
     assert.match(changelog, /daemon/);
     assert.match(changelog, /not a daemon|Not a daemon/i);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.26');
+    assert.equal(pkg.version, '1.0.27');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.26');
-    assert.equal(lock.packages[''].version, '1.0.26');
+    assert.equal(lock.version, '1.0.27');
+    assert.equal(lock.packages[''].version, '1.0.27');
     assert.equal(lock.packages[''].dependencies, undefined);
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.26/);
+    assert.match(versionTs, /1\.0\.27/);
     const business = readFileSync(join(root, 'docs', 'business.md'), 'utf8');
     assert.match(business, /autoPrune/);
     assert.match(business, /1\.0\.26/);

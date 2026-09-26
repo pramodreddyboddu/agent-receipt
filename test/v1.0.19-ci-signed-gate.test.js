@@ -66,14 +66,14 @@ describe('v1.0.19 CI signed gate', () => {
     assert.match(changelog, /full PKI\/CA/);
     assert.match(changelog, /was not edited|not\*\* updated/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.26');
+    assert.equal(pkg.version, '1.0.27');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.26');
-    assert.equal(lock.packages[''].version, '1.0.26');
+    assert.equal(lock.version, '1.0.27');
+    assert.equal(lock.packages[''].version, '1.0.27');
     assert.equal(lock.packages[''].dependencies, undefined);
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.26/);
+    assert.match(versionTs, /1\.0\.27/);
 
     const action = readFileSync(join(root, 'examples', 'github', 'action.yml'), 'utf8');
     assert.match(action, /sign:/);

@@ -755,7 +755,7 @@ Examples:
   prove: `agent-receipt prove — prove-this-run (integrity + audit link)
 
 Usage:
-  agent-receipt prove [path] [--json] [--page] [--one-pager] [--out <path>] [--fail-on high|medium|low] [--trusted-key <fp>]
+  agent-receipt prove [path] [--json] [--page] [--one-pager] [--html] [--out <path>] [--fail-on high|medium|low] [--trusted-key <fp>]
 
 Resolves the path the same way verify does (newest receipt when omitted).
 Recomputes the same SHA-256 as verify, then reports the path, hash,
@@ -770,14 +770,15 @@ a valid sidecar. There is no CA and no PKI.
 \`--page\` (alias \`--one-pager\`) writes a plain-English Markdown one-pager
 after that report is computed. Exit codes stay the same, including FAILED
 (exit 2). Without \`--page\`, prove stays stdout-only and writes no file.
-The one-pager is not itself signed. HTML export of this page is deferred.
+The one-pager is not itself signed.
 
 Default path: \`foo.md\` → \`foo.prove.md\` in the same directory. A receipt
 whose name does not end in \`.md\` gets \`<name>.prove.md\`
 (\`notes.txt\` → \`notes.txt.prove.md\`) so it does not collide with a
 Markdown receipt of the same stem.
 
-\`--out <path>\` overrides that destination and requires \`--page\`. An
+\`--out <path>\` overrides that destination and requires \`--page\` or
+\`--html\`. An
 existing directory, or a path that ends with a slash, receives
 \`<stem>.prove.md\` inside it. Any other path is the file and is used
 as-is. The page is not written over the source receipt. \`*.prove.md\` is not a
@@ -796,6 +797,26 @@ file it also prints one \`page:\` line with that path. \`--json\` stays one
 object. When \`--page\` wrote a file it adds \`pagePath\` (string). The
 field is omitted when \`--page\` was not passed. Required prove keys are
 unchanged. \`prove --page\` does not append the audit log.
+
+\`--html\` (1.0.27) writes one self-contained, offline HTML verification
+report: \`foo.md\` → \`foo.prove.html\` (same \`--out\` rules as \`--page\`).
+It opens with a PASS or FAIL banner (PASS = exit 0, same as PROVED), then
+the hash check, SHA-256, audit chain (present / intact / matched), Ed25519
+signature and trust status, redaction, a receipt summary (agent, time,
+branch, HEAD, message, TL;DR, files, lines, risk) and the risk findings.
+The report is written on FAIL too; exit codes stay the same.
+
+Redaction is always on for the HTML: every receipt-derived string goes
+through the same secret rules as \`share\`, secret-bearing risk details
+are masked, and everything is HTML-escaped. URLs in receipt text are
+defanged (\`https[:]//\`). Inline CSS only: no scripts, no links, no
+images, no fonts, no network, with a \`default-src 'none'\` CSP. The HTML
+report is not itself signed. \`*.prove.html\` is not a receipt.
+
+\`--html\` and \`--page\` can be combined; both files are written. With
+both, \`--out\` must be a directory (end it with \`/\`). Human stdout adds
+one \`html:\` line; \`--json\` adds \`htmlPath\` (string), omitted when
+\`--html\` was not passed. \`prove --html\` does not append the audit log.
 
 Signature status (foo.md → foo.sig.json, written by \`sign\`):
   - No sidecar: present false, ok null. Exit rules are unchanged for that alone.
@@ -840,6 +861,7 @@ true and the exit is 2 even if the hash matches.
   reason
   ok is true only when exitCode is 0.
   --page adds pagePath (string) when the one-pager was written.
+  --html adds htmlPath (string) when the HTML report was written.
 
 Exit codes:
   0  verified, audit log absent or intact, and signature absent or valid
@@ -854,6 +876,9 @@ Examples:
   agent-receipt prove --page
   agent-receipt prove --json --page
   agent-receipt prove receipt.md --one-pager --out ./pages/
+  agent-receipt prove --html
+  agent-receipt prove --json --html --out ./reports/
+  agent-receipt prove --page --html --out ./reports/
   agent-receipt prove receipt.md --fail-on high --json
 `,
 
@@ -1180,7 +1205,7 @@ Commands:
   trust                  Known-keys allowlist: list, show, add <fp>, add --self, rm <fp>
   verify [path]          Hash-check integrity (hash-only; --package checks a share dir; --require-sig opts in)
   import <dir>           Verify a share package, then copy receipt.md into outDir
-  prove [path]           Prove-this-run: verify + audit link + signature status (--page writes foo.prove.md)
+  prove [path]           Prove-this-run: verify + audit link + signature status (--page writes foo.prove.md, --html writes foo.prove.html)
   audit                  List the compliance log (--event, --agent, --failed filter the listing)
   log                    Alias for audit
   prune                  Delete old receipts under outDir (opt-in; trusted prune; --dry-run, --force). autoPrune runs this after capture/wrap/watch
@@ -1244,6 +1269,7 @@ Examples:
   agent-receipt trust show
   agent-receipt prove
   agent-receipt prove --page
+  agent-receipt prove --html
   agent-receipt prove --json
   agent-receipt audit
   agent-receipt audit --event wrap

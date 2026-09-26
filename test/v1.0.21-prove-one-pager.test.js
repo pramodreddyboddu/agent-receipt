@@ -114,14 +114,14 @@ describe('v1.0.21 prove human one-pager', () => {
     assert.match(changelog, /not a CA/i);
     assert.match(changelog, /HTML\/share signed package/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.26');
+    assert.equal(pkg.version, '1.0.27');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.26');
-    assert.equal(lock.packages[''].version, '1.0.26');
+    assert.equal(lock.version, '1.0.27');
+    assert.equal(lock.packages[''].version, '1.0.27');
     assert.equal(lock.packages[''].dependencies, undefined);
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.26/);
+    assert.match(versionTs, /1\.0\.27/);
 
     const help = cli(root, ['help', 'prove']);
     assert.match(help, /prove --page/);
@@ -170,7 +170,7 @@ describe('v1.0.21 prove human one-pager', () => {
     assert.equal(plain.out.trim().split('\n').length, 1);
     const before = parseJson(plain.out);
     assert.equal(before.ok, true);
-    assert.equal(before.version, '1.0.26');
+    assert.equal(before.version, '1.0.27');
     assert.equal('pagePath' in before, false);
     assert.deepEqual(listProvePages(dir), []);
 
