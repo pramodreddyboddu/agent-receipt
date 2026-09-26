@@ -101,14 +101,14 @@ describe('v1.0.25 verify share package', () => {
     assert.match(changelog, /background deleter/);
     assert.match(changelog, /manifest\.sig\.json/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.25');
+    assert.equal(pkg.version, '1.0.26');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.25');
-    assert.equal(lock.packages[''].version, '1.0.25');
+    assert.equal(lock.version, '1.0.26');
+    assert.equal(lock.packages[''].version, '1.0.26');
     assert.equal(lock.packages[''].dependencies, undefined);
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.25/);
+    assert.match(versionTs, /1\.0\.26/);
 
     const help = cli(root, ['help', 'verify']);
     assert.match(help, /verify --package/);
@@ -178,7 +178,7 @@ describe('v1.0.25 verify share package', () => {
     assert.equal(gate.manifestSig.ok, null);
     assert.equal(gate.signature.present, false);
     assert.equal(Object.hasOwn(gate, 'importPath'), false);
-    assert.equal(gate.version, '1.0.25');
+    assert.equal(gate.version, '1.0.26');
 
     const packed = cliResult(dir, ['verify', '--pack', shared.packagePath, '--json']);
     assert.equal(packed.code, 0, packed.out + packed.err);

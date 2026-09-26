@@ -1,9 +1,12 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.25 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.26 for teams: install once, capture every session, fail CI
 on high-severity findings, share a redacted HTML + Markdown package (or HTML
 alone), verify that package with `verify --package`, and keep a local
-audit log of capture, watch, wrap, share, export, and prune deletes. No SSO and no hosted service — see
+audit log of capture, watch, wrap, share, export, and prune deletes. When
+`autoPrune: true` and a retention limit is set, capture, wrap, and watch
+delete old receipts with the same trusted prune (a broken audit chain skips
+the delete and does not fail the capture). No SSO and no hosted service — see
 [Enterprise (SSO-free)](#enterprise-sso-free).
 
 This is **tamper-evident**, not access control and not a secret scanner.
@@ -132,7 +135,7 @@ is the artifact, not the gate. The gate object itself is
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.25",
+  "version": "1.0.26",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -265,7 +268,7 @@ Copy one of:
 | Example | What to do with it |
 |---------|--------------------|
 | [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. After a green gate it runs `prove --json` (`prove` defaults to true) and uploads `receipt-gate.json` plus the receipt Markdown (`actions/upload-artifact@v4`, name `agent-receipt-gate`). |
-| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.25`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.26`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
 
 ### Drop-in
 
@@ -284,7 +287,7 @@ true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
 - uses: ./.github/actions/agent-receipt
   with:
     install: true
-    from: github:pramodreddyboddu/agent-receipt#v1.0.25
+    from: github:pramodreddyboddu/agent-receipt#v1.0.26
     prove: true
     fail-on: high
     base: origin/main
@@ -511,13 +514,41 @@ row for agent, failedOn, uncommitted, and sha256. No receipt exits 1. With
 | `*.share/` | Portable handoff: `receipt.html`, `receipt.md`, optional `receipt.sig.json`, `manifest.json` | The directory you send. `last`, `history`, and `prune` ignore it. HTML inside it stays unsigned. |
 
 Deletion is **opt-in**. Until you set a limit, `prune` exits 0 and deletes
-nothing. Capture, wrap, and watch never delete old receipts.
+nothing. Capture, wrap, and watch delete old receipts only when `autoPrune`
+is true (or you pass `--prune`) **and** `maxCount` and/or `maxAgeDays` is
+set. Both are required. `init --retention` sets the limits and does not
+turn `autoPrune` on.
 
 ```yaml
-# .agent-receipt.yml — both optional; set either or both
+# .agent-receipt.yml — limits optional; set either or both
 maxCount: 100      # keep the newest 100 receipts
 maxAgeDays: 30     # delete receipts strictly older than 30 days
+autoPrune: true    # after capture / wrap / watch; still needs a limit above
 ```
+
+```bash
+agent-receipt init --retention              # limits only; autoPrune stays off
+agent-receipt init --auto-prune             # autoPrune: true; limits unchanged
+agent-receipt init --retention --auto-prune
+agent-receipt wrap --no-prune               # this run does not delete
+agent-receipt wrap --prune                  # this run deletes when a limit is set
+```
+
+`--no-prune` wins, then `--prune`, then config `autoPrune`. Auto-prune calls
+the same trusted prune as `agent-receipt prune` and does not pass `--force`.
+A broken audit chain deletes nothing, warns on stderr, and does not change
+the capture, wrap, or watch exit code. The receipt just written stays.
+Manual `prune` still exits 1 on a broken chain. If prune throws (invalid
+retention, unsafe `outDir`, broken index), the capture warns and still
+exits with the capture result. share, export, verify, prove, import, and
+doctor do not auto-prune. This is not a daemon or cron.
+
+capture and wrap `--json` add `autoPrune`, `pruned`, and `pruneReason` only
+when the run attempted auto-prune. `pruneReason` is null when trusted prune
+ran, or `failed-run` (fail-on or verify failure; nothing deleted),
+`retention-off`, `chain-broken`, or `error`. The fields are omitted
+when auto-prune was off. Human stdout prints `pruned: N receipt(s)` when
+something was deleted, and a short skip line when the chain broke.
 
 ```bash
 agent-receipt prune --dry-run                  # plan only
@@ -544,7 +575,8 @@ Rules:
   are already gone.
 - `--dry-run` does not delete, does not rewrite the index, and does not append `audit.jsonl`.
 - An applied delete appends one `prune` audit line per receipt (no diff, no `--message`). `prune --json` repeats those identity fields on each `deleted` row and sets `audited` to the number of lines written (`0` on dry-run).
-- **Trusted prune.** When `.agent-receipt/audit.jsonl` exists, `prune` runs `verifyAuditChain` before it deletes anything. A broken chain exits 1, deletes nothing, and appends no audit line. Dry-run exits 1 as well: the JSON may still list candidates in `deleted`, with `ok: false`, `chainOk: false`, `auditPresent: true`, and a `reason`. It does not claim those deletes will proceed. A missing audit log is fine. `prune --force` is break-glass and deletes even when the chain is broken. `agent-receipt init --retention` sets `maxCount: 100` and `maxAgeDays: 30` without replacing `ignore` or `redact`. Retention must not paper over a broken audit chain. `doctor --strict` fails unset retention on any `outDir`. Default `doctor` still pressure-gates that row.
+- **Trusted prune.** When `.agent-receipt/audit.jsonl` exists, `prune` runs `verifyAuditChain` before it deletes anything. A broken chain exits 1, deletes nothing, and appends no audit line. Dry-run exits 1 as well: the JSON may still list candidates in `deleted`, with `ok: false`, `chainOk: false`, `auditPresent: true`, and a `reason`. It does not claim those deletes will proceed. A missing audit log is fine. `prune --force` is break-glass and deletes even when the chain is broken. `agent-receipt init --retention` sets `maxCount: 100` and `maxAgeDays: 30` without replacing `ignore` or `redact`, and does not set `autoPrune`. `init --auto-prune` sets `autoPrune: true` without replacing those keys. Retention must not paper over a broken audit chain. `doctor --strict` fails unset retention on any `outDir`. Default `doctor` still pressure-gates that row. The `autoPrune` doctor row is INFO when unset, PASS when true with a limit, and WARN when true with no limit. That WARN does not fail `doctor` or `doctor --strict`. Unset `autoPrune` does not fail `--strict`.
+- **Auto-prune.** After a successful capture, wrap, or watch write, `autoPrune: true` (or `--prune`) runs that trusted prune. It does not pass `--force`. A broken chain skips the delete and does not fail the capture. Applied deletes still append one `prune` audit line per receipt. Not a daemon.
 - `maxCount` and `maxAgeDays` must be integers `>= 1`. `0` is rejected so
   a typo cannot wipe the directory.
 - `doctor` **retention**: INFO when opt-in is off and the directory is
@@ -631,10 +663,16 @@ Markdown, an optional `receipt.sig.json`, `manifest.json`, and an optional
 `manifest.sig.json`. The HTML body stays unsigned. `verify --package` and
 `import` landed in 1.0.25: a peer checks that directory in one command and
 can copy the proved Markdown into the local store. Import does not append
-the audit log and does not pretend to be a local capture. This is not a CA. Full PKI/CA is still deferred. Minisign, GPG/OpenPGP, default auto-sign
+the audit log and does not pretend to be a local capture. Auto-prune landed
+in 1.0.26: `autoPrune: true` (or `--prune` / `init --auto-prune`) runs trusted
+prune after a successful capture, wrap, or watch when a retention limit is
+set. It does not pass `--force`. A broken audit chain skips the delete and
+does not fail the capture. `init --retention` does not turn it on. This is
+not a long-running daemon or cron. This is not a CA. Full PKI/CA is still deferred. Minisign, GPG/OpenPGP, default auto-sign
 on capture without config (signing stays opt-in via config `sign: true` or
-`--sign`), a signed one-pager, unsigned HTML prove export (`prove --html`), a background deleter,
-and multi-agent receipt linking are still deferred. `trust show` landed in
+`--sign`), a signed one-pager, unsigned HTML prove export (`prove --html`),
+and multi-agent receipt linking are still deferred. A long-running prune
+daemon or cron is still deferred. `trust show` landed in
 1.0.23: a read-only report of the allowlist and whether the local key is
 listed. It is not a CA. Config `sign: true` /
 `--no-sign` landed in 1.0.22. The prove-for-humans
@@ -648,9 +686,11 @@ org policy landed in 1.0.14 (`doctor --strict` always fails unset `redact` +
 `failOn`, including a small `outDir`; `init --org` / `init --policy` sets
 those keys). Prove-this-run UX landed in 1.0.13 (`prove`, audit link,
 `last --json`, `trailingIgnored` on the gate). Also deferred: SSO / IdP,
-Cloud Agents, a background job that deletes receipts by itself, live GitHub
+Cloud Agents, a long-running prune daemon or cron (auto-prune after capture
+is the landed first cut; it is not a background job), live GitHub
 Actions workflow sync (the checkout token has no `workflow` scope), and npm
-Trusted Publishing (this cut does not publish). `prune` stays manual.
+Trusted Publishing (this cut does not publish). Manual `prune` remains.
+Auto-prune is opt-in (`autoPrune` plus a limit) and does not pass `--force`.
 Missing signing keys do not fail `doctor` or `doctor --strict`. CI `--fail-on` is still the enforcement point for risk. A broken audit chain still fails `--strict`.
 `doctor --json`, `audit --event`, `audit --agent`, `audit --failed`,
 `history --agent`, `history --uncommitted`, `history --failed`, and `prove`
@@ -660,7 +700,7 @@ are checklist and listing tools; they do not sign the audit log.
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.25 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.26 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

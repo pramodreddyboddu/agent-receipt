@@ -8,6 +8,7 @@ import {
 import { cmdCapture, type CaptureOptions, type CaptureResult } from './capture.js';
 import { color } from '../lib/color.js';
 import type { FailOnThreshold } from '../lib/risk.js';
+import { maybeAutoPrune } from '../lib/auto-prune.js';
 
 export interface WatchOptions {
   /** Poll interval in seconds (default 5, min 1, max 3600). */
@@ -25,6 +26,14 @@ export interface WatchOptions {
    * Missing keys tip inside capture and do not exit 2.
    */
   sign?: boolean;
+  /**
+   * After each successful capture, run trusted prune when retention is
+   * enabled. The inner capture does not prune; this command calls
+   * `maybeAutoPrune` once the watch audit line is written. A broken chain
+   * warns and does not change the watch exit code. A fail-on match skips
+   * prune. Off by default.
+   */
+  autoPrune?: boolean;
   /**
    * Only watch HEAD commits (v0.4 behavior). Default watches dirty tree
    * (staged/unstaged/untracked) as well as new commits.
@@ -114,6 +123,23 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
     ),
   );
 
+  const finishCapture = (result: CaptureResult): number | undefined => {
+    if (opts.autoPrune) {
+      // Human stdout stays (watch --json only writes the companion file).
+      // A fail-on match is a failed capture: skip prune, delete nothing.
+      maybeAutoPrune(cwd, { enabled: true, json: false, failedRun: result.failedOn });
+    }
+    if (opts.once) return result.failedOn ? 2 : 0;
+    if (result.failedOn) {
+      console.log(
+        color.yellow(
+          'fail-on matched — receipt written; continuing to watch (use --once to exit).',
+        ),
+      );
+    }
+    return undefined;
+  };
+
   try {
     while (!ac.signal.aborted) {
       await sleep(interval * 1000, ac.signal);
@@ -158,14 +184,8 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
 
         baseline = head;
         if (!commitsOnly) baselineDirty = dirtyFingerprint(cwd);
-        if (opts.once) return result.failedOn ? 2 : 0;
-        if (result.failedOn) {
-          console.log(
-            color.yellow(
-              'fail-on matched — receipt written; continuing to watch (use --once to exit).',
-            ),
-          );
-        }
+        const done = finishCapture(result);
+        if (done !== undefined) return done;
         continue;
       }
 
@@ -206,14 +226,8 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
       }
 
       baselineDirty = dirtyFingerprint(cwd);
-      if (opts.once) return result.failedOn ? 2 : 0;
-      if (result.failedOn) {
-        console.log(
-          color.yellow(
-            'fail-on matched — receipt written; continuing to watch (use --once to exit).',
-          ),
-        );
-      }
+      const done = finishCapture(result);
+      if (done !== undefined) return done;
     }
     return 0;
   } finally {

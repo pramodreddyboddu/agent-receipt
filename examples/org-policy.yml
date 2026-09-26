@@ -53,15 +53,21 @@
 # --dry-run does not append.
 #
 # Retention is opt-in. Leave maxCount and maxAgeDays unset until you want
-# prune to delete. Uncomment to cap receipts, or run init --retention:
+# prune to delete. Uncomment to cap receipts, or run init --retention
+# (that does not turn autoPrune on):
 #   maxCount: 100
 #   maxAgeDays: 30
+# autoPrune: true
+# With both a limit and autoPrune, capture / wrap / watch run trusted prune
+# after a successful write (no --force). A broken audit chain skips the
+# delete and does not fail the capture. init --auto-prune sets the flag.
+# Or pass --prune / --no-prune for one run. Not a daemon.
 # Then: agent-receipt prune --dry-run
 # Docs: docs/business.md
 # Gate JSON schema: docs/gate.schema.json (next to docs/receipt.schema.json)
 # Signature sidecar: docs/signature.schema.json
 # Drop-in CI: examples/github/action.yml and examples/github/pr-gate.yml
-#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.25
+#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.26
 #   local allowlist (since v1.0.20): agent-receipt keygen && agent-receipt trust add --self
 #   status (v1.0.23, read-only): agent-receipt trust show
 #   handoff (v1.0.24): agent-receipt share --package   # HTML + Markdown; HTML unsigned

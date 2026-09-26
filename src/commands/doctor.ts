@@ -107,6 +107,49 @@ function retentionLimitsUnset(cfg: AgentReceiptConfig): boolean {
 }
 
 /**
+ * Config `autoPrune` is optional. Unset or false stays INFO and does not
+ * fail default doctor or `--strict`. `autoPrune: true` with a retention
+ * limit is PASS. `autoPrune: true` with no limit is WARN (names
+ * `init --retention`) and does not fail `--strict`. Invalid values fail
+ * the config row via `validateConfig`.
+ */
+function autoPruneCheck(cfg: AgentReceiptConfig): DoctorCheck {
+  if (cfg.autoPruneInvalid) {
+    return {
+      name: 'autoPrune',
+      status: 'info',
+      detail: `autoPrune skipped until ${CONFIG_NAME} is valid (autoPrune must be true or false)`,
+    };
+  }
+  if (cfg.autoPrune !== true) {
+    return {
+      name: 'autoPrune',
+      status: 'info',
+      detail:
+        'autoPrune unset (optional). Set autoPrune: true after init --retention, or pass --prune. ' +
+        'Capture, wrap, and watch do not delete unless both are set. --no-prune overrides. Not a daemon.',
+    };
+  }
+  if (cfg.retentionInvalid?.length || retentionLimitsUnset(cfg)) {
+    return {
+      name: 'autoPrune',
+      status: 'warn',
+      detail:
+        'autoPrune: true but retention is unset — nothing will be deleted. ' +
+        'Set maxCount and/or maxAgeDays (agent-receipt init --retention). ' +
+        'This warning does not fail doctor or doctor --strict.',
+    };
+  }
+  return {
+    name: 'autoPrune',
+    status: 'pass',
+    detail:
+      'autoPrune: true with retention enabled. capture, wrap, and watch run trusted prune after a successful write (no --force). ' +
+      'A broken audit chain skips the delete and does not fail the capture. --no-prune overrides.',
+  };
+}
+
+/**
  * Known-keys allowlist is opt-in. Missing stays INFO and does not fail
  * default doctor or `--strict`. A configured-but-empty store is WARN.
  * Invalid lines are WARN, and FAIL under `--strict`.
@@ -511,6 +554,7 @@ export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCh
   checks.push(trustStoreCheck(cwd, opts.strict === true));
 
   checks.push(retentionCheck(cwd, cfgNow));
+  checks.push(autoPruneCheck(cfgNow));
 
   if (!inRepo) {
     checks.push({
@@ -601,6 +645,7 @@ const PROD_CHECKS = [
   'sign',
   'trust',
   'retention',
+  'autoPrune',
   'git-clean',
   'cursor',
   'grok',

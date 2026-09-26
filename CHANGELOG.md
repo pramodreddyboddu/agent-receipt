@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.26] — 2026-09-23
+
+### Added
+
+- Config `autoPrune: true` and CLI `--prune` / `--no-prune`. When `autoPrune` is true **and** retention is enabled (`maxCount` and/or `maxAgeDays`), a successful `capture`, `wrap`, or `watch` write runs the same trusted prune as `agent-receipt prune` (no `--force`, no dry-run). One `prune` audit line is appended per deleted receipt. Resolution matches `sign`: `--no-prune` wins, then `--prune`, then config. Absent or `autoPrune: false` leaves capture, wrap, and watch non-deleting. `autoPrune: true` with no retention limit deletes nothing. An invalid non-boolean is reported by `validateConfig` / `doctor`. `init --retention` does not turn `autoPrune` on. `init --auto-prune` sets only `autoPrune: true` (combine with `--retention` when you want both) and does not replace `ignore`, `redact`, or the limits.
+- Audit safety on that auto path: a broken `.agent-receipt/audit.jsonl` chain deletes nothing, prints a stderr warning (and names `prune --force` / fixing the chain), and does **not** change the capture, wrap, or watch exit code. The receipt just written stays. If prune throws (invalid retention, unsafe `outDir`, broken index), the command warns on stderr and still exits with the capture result. Manual `agent-receipt prune` still exits 1 on a broken chain. share, export, verify, prove, import, doctor, and a capture that wrote nothing do not auto-prune.
+- Auto-prune runs only after a **successful** run. A `capture` or `watch` capture that matches `--fail-on` (exit 2), or a `wrap` that matches `--fail-on` or fails verify (exit 2), deletes nothing and appends no `prune` audit line. `--json` reports `autoPrune: true`, `pruned: 0`, and `pruneReason: "failed-run"`, and human output prints `pruned: skipped (failed run)`. The exit code is unchanged.
+- `doctor` adds an `autoPrune` row: INFO when unset or false, PASS when true and a retention limit is set, WARN when true but `maxCount` and `maxAgeDays` are unset (names `init --retention`). That WARN does not fail default `doctor` or `doctor --strict`. Unset `autoPrune` does not fail `--strict`.
+- capture and wrap `--json` add optional `autoPrune`, `pruned`, and `pruneReason` only when this run attempted auto-prune. `pruneReason` is null when trusted prune ran, or `failed-run`, `retention-off`, `chain-broken`, or `error`. The fields are omitted when auto-prune was off. Human stdout prints `pruned: N receipt(s)` when something was deleted, and a short skip line when the chain broke. Quiet when auto-prune is off.
+
+### Changed
+
+- Package version bumped to `1.0.26`.
+- [`docs/business.md`](docs/business.md) documents `autoPrune` under Retention. The first cut of the background deleter (auto-prune after capture) is landed. A long-running prune daemon or cron is still deferred. The lead sentence tracks 1.0.26.
+- [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md) and [`README.md`](README.md) note that `autoPrune: true` plus a retention limit deletes after capture, wrap, and watch. Pin comments that track the current cut are `v1.0.26`.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) version-range comments include 1.0.26. Smoke with retention and `autoPrune` checks that a wrap over `maxCount` deletes older receipts and appends prune audit lines, and that a broken audit chain still exits 0 and deletes nothing. Live [`.github/workflows/*`](.github/workflows) was not edited.
+- [`examples/github/action.yml`](examples/github/action.yml), [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml), and [`examples/org-policy.yml`](examples/org-policy.yml) pin comments are `v1.0.26`. No new action input. `examples/org-policy.yml` comments `# autoPrune: true` next to retention.
+- [`docs/gate.schema.json`](docs/gate.schema.json) documents optional `autoPrune`, `pruned`, and `pruneReason`. Required gate keys are unchanged.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm.
+- Still not a CA. No key escrow. No new runtime dependencies. Auto-prune is not a daemon and not cron. It reuses trusted prune and does not pass `--force`.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config (signing stays opt-in via config `sign: true` or `--sign`), a signed one-pager, unsigned HTML prove export (`prove --html`), multi-agent receipt linking, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.25] — 2026-09-23
 
 ### Added

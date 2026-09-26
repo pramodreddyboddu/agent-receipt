@@ -27,8 +27,15 @@ export interface InitOptions {
    * Set `maxCount: 100` and `maxAgeDays: 30` on `.agent-receipt.yml`.
    * Missing config is written like `init`, with those keys enabled.
    * An existing file is merged in place (ignore, redact, failOn stay).
+   * Does not set `autoPrune` (sudden deletes surprise existing users).
    */
   retention?: boolean;
+  /**
+   * Set `autoPrune: true` without replacing ignore, redact, failOn, or
+   * retention limits. Combine with `--retention` when both should be set.
+   * Does not delete anything by itself.
+   */
+  autoPrune?: boolean;
 }
 
 /** Disk-pressure tip and examples/org-policy.yml use these same numbers. */
@@ -209,6 +216,58 @@ export function applyRetention(cwd: string): RetentionResult {
   };
 }
 
+export interface AutoPruneYamlResult {
+  text: string;
+  autoPruneChanged: boolean;
+}
+
+export interface AutoPruneResult {
+  configFile: string;
+  notesFile: string;
+  created: boolean;
+  autoPruneChanged: boolean;
+}
+
+/**
+ * Enable `autoPrune: true` in YAML text. Does not rewrite `ignore`,
+ * `redact`, `failOn`, `outDir`, retention keys, or unrelated comments.
+ * An already-true key is left byte-for-byte alone.
+ */
+export function applyAutoPruneYaml(text: string): AutoPruneYamlResult {
+  const lines = text.split('\n');
+  const autoPruneChanged = setYamlScalar(lines, 'autoPrune', 'true');
+  if (!autoPruneChanged) {
+    return { text, autoPruneChanged: false };
+  }
+  let next = lines.join('\n');
+  if (!next.endsWith('\n')) next += '\n';
+  return { text: next, autoPruneChanged };
+}
+
+/**
+ * Write `autoPrune: true` onto `.agent-receipt.yml`. Creates the default
+ * config first when the file is missing. Does not replace ignore, redact,
+ * failOn, or retention limits. Does not delete receipts.
+ */
+export function applyAutoPrune(cwd: string): AutoPruneResult {
+  const configFile = configPath(cwd);
+  const created = !existsSync(configFile);
+  let notesFile = join(cwd, '.agent-receipt', 'SETUP.md');
+  if (created) {
+    const written = writeDefaultConfig(cwd);
+    notesFile = written.notesFile;
+  }
+  const before = readFileSync(configFile, 'utf8');
+  const applied = applyAutoPruneYaml(before);
+  if (applied.text !== before) writeFileSync(configFile, applied.text, 'utf8');
+  return {
+    configFile,
+    notesFile,
+    created,
+    autoPruneChanged: applied.autoPruneChanged,
+  };
+}
+
 export function writeCursorRule(cwd: string): string {
   const dest = join(cwd, CURSOR_RULE_REL);
   mkdirSync(dirname(dest), { recursive: true });
@@ -245,7 +304,8 @@ export function cmdInit(cwd: string, opts: InitOptions = {}): void {
   let notesFile = '';
   let org: OrgPolicyResult | undefined;
   let retention: RetentionResult | undefined;
-  if (!opts.org && !opts.retention) {
+  let autoPrune: AutoPruneResult | undefined;
+  if (!opts.org && !opts.retention && !opts.autoPrune) {
     const written = writeDefaultConfig(cwd);
     configFile = written.configFile;
     notesFile = written.notesFile;
@@ -260,14 +320,29 @@ export function cmdInit(cwd: string, opts: InitOptions = {}): void {
       configFile = retention.configFile;
       notesFile = retention.notesFile;
     }
+    if (opts.autoPrune) {
+      autoPrune = applyAutoPrune(cwd);
+      configFile = autoPrune.configFile;
+      notesFile = autoPrune.notesFile;
+    }
   }
-  const fresh = Boolean(org?.created || retention?.created || (!org && !retention));
-  if (!fresh && org && retention) {
+  const fresh = Boolean(
+    org?.created || retention?.created || autoPrune?.created || (!org && !retention && !autoPrune),
+  );
+  if (!fresh && org && retention && autoPrune) {
+    console.log(color.green('✓') + ' Org policy, retention, and auto-prune applied');
+  } else if (!fresh && org && retention) {
     console.log(color.green('✓') + ' Org policy and retention applied');
+  } else if (!fresh && org && autoPrune) {
+    console.log(color.green('✓') + ' Org policy and auto-prune applied');
+  } else if (!fresh && retention && autoPrune) {
+    console.log(color.green('✓') + ' Retention defaults and auto-prune applied');
   } else if (!fresh && org) {
     console.log(color.green('✓') + ' Org policy applied');
   } else if (!fresh && retention) {
     console.log(color.green('✓') + ' Retention defaults applied');
+  } else if (!fresh && autoPrune) {
+    console.log(color.green('✓') + ' Auto-prune applied');
   } else {
     console.log(color.green('✓') + ' Initialized agent-receipt');
   }
@@ -286,6 +361,9 @@ export function cmdInit(cwd: string, opts: InitOptions = {}): void {
     console.log(
       `  maxAgeDays: ${INIT_RETENTION_MAX_AGE_DAYS} (${retention.maxAgeDaysChanged ? 'set' : 'unchanged'})`,
     );
+  }
+  if (autoPrune) {
+    console.log(`  autoPrune: true (${autoPrune.autoPruneChanged ? 'set' : 'unchanged'})`);
   }
   if (opts.cursor) {
     const rule = writeCursorRule(cwd);
@@ -320,5 +398,13 @@ export function cmdInit(cwd: string, opts: InitOptions = {}): void {
   if (opts.retention) {
     console.log('  agent-receipt prune --dry-run   # preview trusted retention');
     console.log('  tip: trusted prune refuses to delete when the audit chain is broken');
+    if (!opts.autoPrune) {
+      console.log('  tip: add autoPrune: true (or init --auto-prune) to delete after capture, wrap, and watch');
+    }
+  }
+  if (opts.autoPrune) {
+    console.log('  tip: autoPrune deletes only when maxCount or maxAgeDays is set');
+    console.log('  tip: a broken audit chain skips the delete and does not fail capture, wrap, or watch');
+    console.log('  tip: --no-prune overrides for one run. Not a daemon.');
   }
 }

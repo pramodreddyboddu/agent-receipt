@@ -8,12 +8,15 @@ export {
   applyOrgPolicyYaml,
   applyRetention,
   applyRetentionYaml,
+  applyAutoPrune,
+  applyAutoPruneYaml,
 } from './commands/init.js';
 export { cmdCapture } from './commands/capture.js';
 export { cmdWrap } from './commands/wrap.js';
 export { cmdShare } from './commands/share.js';
 export { cmdAudit } from './commands/audit.js';
 export { cmdPrune } from './commands/prune.js';
+export { maybeAutoPrune, autoPruneGateFields } from './lib/auto-prune.js';
 export { cmdExport, cmdHtml } from './commands/export.js';
 export { cmdShow, resolveReceiptPath, findLatestReceipt } from './commands/show.js';
 export { cmdLast } from './commands/last.js';

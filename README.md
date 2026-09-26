@@ -115,7 +115,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 
 | Command | Purpose |
 |---------|---------|
-| `init [--cursor] [--grok] [--org] [--retention]` | Write `.agent-receipt.yml` + notes. `--org` (alias `--policy`) sets `redact: true` and `failOn: high` without replacing local `ignore`. `--retention` sets `maxCount: 100` and `maxAgeDays: 30` the same way. `--cursor` / `--grok` drop agent rules |
+| `init [--cursor] [--grok] [--org] [--retention] [--auto-prune]` | Write `.agent-receipt.yml` + notes. `--org` (alias `--policy`) sets `redact: true` and `failOn: high` without replacing local `ignore`. `--retention` sets `maxCount: 100` and `maxAgeDays: 30` the same way and does not turn `autoPrune` on. `--auto-prune` sets `autoPrune: true` without replacing ignore, redact, or the limits. `--cursor` / `--grok` drop agent rules |
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON). `--sign` writes `*.sig.json` when local keys exist |
 | `wrap` | End of session: capture (+ `--uncommitted` if dirty) → TL;DR + path → verify. `--sign` is opt-in, same as capture |
 | `share [path]` | One shot: redact → HTML (+ optional Markdown) → verify → paths + TL;DR. `--package` writes `foo.share/` with HTML, Markdown, optional `receipt.sig.json`, and `manifest.json`. Markdown sidecar is copied or re-signed; HTML stays unsigned |
@@ -131,8 +131,8 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `import <dir>` | Verify a share package, then copy `receipt.md` (and `receipt.sig.json` when present) into the local receipt store. `--dry-run` writes nothing. Not a local capture |
 | `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, an audit-log link, and signature status when a sidecar is present. `--json` adds `signature` (`trusted` is null when the allowlist is inactive). `--page` writes `foo.prove.md` (plain English; not itself signed). Config `failOn` is not applied |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
-| `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default). Trusted prune refuses the delete when the audit chain is broken (`--force` is break-glass) |
-| `doctor` | Health check plus a prod checklist (policy, audit, keys, trust, retention, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`), unset retention (`maxCount` / `maxAgeDays`), a broken audit chain, and an invalid trust store. A missing trust store stays INFO. Default doctor still pressure-gates unset retention. Missing signing keys stay INFO |
+| `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default). Trusted prune refuses the delete when the audit chain is broken (`--force` is break-glass). `autoPrune: true` or `--prune` runs that same path after capture, wrap, and watch (no `--force`; a broken chain warns and does not fail the capture) |
+| `doctor` | Health check plus a prod checklist (policy, audit, keys, trust, retention, autoPrune, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`), unset retention (`maxCount` / `maxAgeDays`), a broken audit chain, and an invalid trust store. A missing trust store stays INFO. Unset `autoPrune` stays INFO and does not fail `--strict`. Default doctor still pressure-gates unset retention. Missing signing keys stay INFO |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
 | `diff [a] [b]` | Alias for `compare` |
 | `install-hooks` | Opt-in post-commit auto-capture (`--pre-push` optional) |
@@ -370,7 +370,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.25`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.26`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -378,8 +378,13 @@ is empty, `verify --require-sig`, upload `receipt-gate.json`).
 Signed CI recipe (not a CA): [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md).
 Gate JSON:
 [`docs/gate.schema.json`](docs/gate.schema.json). `init --retention` sets
-`maxCount: 100` and `maxAgeDays: 30`. Trusted prune refuses a broken audit
-chain unless you pass `prune --force`.
+`maxCount: 100` and `maxAgeDays: 30` and does not turn `autoPrune` on.
+`autoPrune: true` (or `init --auto-prune`, or `--prune` for one run) plus
+those limits deletes older receipts after a successful capture, wrap, or
+watch. That path is the same trusted prune and does not pass `--force`.
+A broken audit chain skips the delete and does not fail the capture.
+`--no-prune` turns it off for one run. Not a daemon. Trusted prune refuses
+a broken audit chain unless you pass `prune --force` on the manual command.
 
 ## Git hooks (local / global install)
 
@@ -511,9 +516,11 @@ landed in v1.0.21. Config `sign: true` and `--no-sign` landed in v1.0.22.
 `trust show` landed in v1.0.23. `share --package` landed in v1.0.24
 (HTML + signed Markdown in one directory; the HTML body stays unsigned).
 `verify --package` and `import` landed in v1.0.25 (peer check of that
-directory, then a copy of the proved Markdown). Full PKI/CA, minisign, GPG,
-default auto-sign on capture without that config, a signed one-pager, and
-`prove --html` are still deferred.
+directory, then a copy of the proved Markdown). Auto-prune landed in v1.0.26
+(`autoPrune: true` after capture, wrap, and watch when a retention limit is
+set; a broken chain skips the delete). Full PKI/CA, minisign, GPG,
+default auto-sign on capture without that config, a signed one-pager,
+`prove --html`, and a long-running prune daemon are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
 

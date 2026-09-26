@@ -102,14 +102,14 @@ describe('v1.0.24 share package', () => {
     assert.match(changelog, /prove --html/);
     assert.match(changelog, /background deleter/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.25');
+    assert.equal(pkg.version, '1.0.26');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.25');
-    assert.equal(lock.packages[''].version, '1.0.25');
+    assert.equal(lock.version, '1.0.26');
+    assert.equal(lock.packages[''].version, '1.0.26');
     assert.equal(lock.packages[''].dependencies, undefined);
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.25/);
+    assert.match(versionTs, /1\.0\.26/);
 
     const help = cli(root, ['help', 'share']);
     assert.match(help, /share --package/);
@@ -183,7 +183,7 @@ describe('v1.0.24 share package', () => {
     const manifest = JSON.parse(readFileSync(join(gate.packagePath, 'manifest.json'), 'utf8'));
     assert.equal(manifest.kind, 'agent-receipt-share');
     assert.equal(manifest.version, 1);
-    assert.equal(manifest.cliVersion, '1.0.25');
+    assert.equal(manifest.cliVersion, '1.0.26');
     assert.equal(manifest.redacted, true);
     assert.equal(manifest.signed, false);
     assert.equal(manifest.fingerprint, null);
