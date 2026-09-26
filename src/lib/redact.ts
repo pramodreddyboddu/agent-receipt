@@ -161,6 +161,11 @@ const HIGH_SECRET_CODES = new Set([
   'secret-looking-path',
 ]);
 
+/** True when a risk finding's detail must be fully masked (secret-bearing codes). */
+export function isHighSecretRiskCode(code: string): boolean {
+  return HIGH_SECRET_CODES.has(code);
+}
+
 export function redactSecretsInText(text: string): string {
   let out = text;
   for (const { re, replacement } of SECRET_VALUE_PATTERNS) {

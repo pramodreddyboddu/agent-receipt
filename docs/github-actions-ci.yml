@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.26: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.27: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -152,6 +152,12 @@ jobs:
           # The one-pager is not signed. Default prove without --page writes nothing.
           node bin/agent-receipt.js prove --json --page --cwd "$tmp" > "$tmp/prove-page.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.exitCode!==0||g.verified!==true||typeof g.pagePath!=="string"||!g.pagePath.endsWith(".prove.md")||!fs.existsSync(g.pagePath)){console.error(g); process.exit(1)} const page=fs.readFileSync(g.pagePath,"utf8"); if(page.indexOf("PROVED")===-1||page.indexOf(g.sha256)===-1){console.error(page); process.exit(1)}' "$tmp/prove-page.json"
+          # v1.0.27: prove --html writes a self-contained offline HTML report.
+          # --json --html adds htmlPath. PASS banner, sha256, inline CSS only,
+          # no http(s) asset references, no scripts. Not itself signed.
+          node bin/agent-receipt.js prove --json --html --cwd "$tmp" > "$tmp/prove-html.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!g.ok||g.exitCode!==0||typeof g.htmlPath!=="string"||!g.htmlPath.endsWith(".prove.html")||!fs.existsSync(g.htmlPath)){console.error(g); process.exit(1)} const h=fs.readFileSync(g.htmlPath,"utf8"); if(h.indexOf("PASS")===-1||h.indexOf(g.sha256)===-1||/<script|<link|src=|href=|@import|url\(/i.test(h)){console.error(h); process.exit(1)}' "$tmp/prove-html.json"
+          if grep -Eq 'https?://' "$tmp"/.agent-receipt/receipts/*.prove.html; then echo "prove --html references http(s)"; exit 1; fi
           # v1.0.22: config sign: true. Keys are already present. Bare wrap
           # (no --sign flag) writes *.sig.json. --no-sign does not. Missing
           # keys tip and leave the receipt unsigned (exit is not 2).

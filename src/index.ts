@@ -85,6 +85,7 @@ export {
   isReceiptArtifactPath,
 } from './lib/redact.js';
 export { markdownToHtml } from './lib/html.js';
+export { renderProveHtml, defangUrls } from './lib/prove-html.js';
 export { CURSOR_RULE_MDC, CURSOR_RULE_REL } from './lib/cursor-rule.js';
 export {
   GROK_RULE_MD,

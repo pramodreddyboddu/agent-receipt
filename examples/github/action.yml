@@ -14,7 +14,7 @@
 #       fail-on: high
 #       base: origin/main
 #       install: true
-#       from: github:pramodreddyboddu/agent-receipt#v1.0.26
+#       from: github:pramodreddyboddu/agent-receipt#v1.0.27
 #       prove: true
 #       sign: true
 #       require-sig: true
@@ -102,7 +102,7 @@ inputs:
     required: false
     default: "false"
   from:
-    description: npm spec used when install is true. Pin with #v1.0.26 once the tag exists.
+    description: npm spec used when install is true. Pin with #v1.0.27 once the tag exists.
     required: false
     default: github:pramodreddyboddu/agent-receipt
   prove:

@@ -178,6 +178,7 @@ const PROVE_FLAGS = new Set([
   'trusted-key',
   'page',
   'one-pager',
+  'html',
   'out',
   'o',
 ]);
@@ -229,13 +230,13 @@ function assertKnownProveFlags(flags: Record<string, string | boolean>): void {
   for (const key of Object.keys(flags)) {
     if (!PROVE_FLAGS.has(key)) {
       throw new Error(
-        `Unknown flag: --${key}. prove accepts --json, --page (alias --one-pager), --out <path>, --fail-on [high|medium|low], --trusted-key <fp>, and --cwd.`,
+        `Unknown flag: --${key}. prove accepts --json, --page (alias --one-pager), --html, --out <path>, --fail-on [high|medium|low], --trusted-key <fp>, and --cwd.`,
       );
     }
   }
 }
 
-/** `--out` / `-o` for the prove one-pager. A bare flag is a usage error. */
+/** `--out` / `-o` for the prove one-pager / HTML report. A bare flag is a usage error. */
 function flagProveOut(flags: Record<string, string | boolean>): string | undefined {
   const v = flags.out !== undefined ? flags.out : flags.o;
   if (v === undefined) return undefined;
@@ -481,15 +482,17 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         const explicitFail = flags['fail-on'] !== undefined;
         const failOn = explicitFail ? parseFailOn(flags['fail-on']) : undefined;
         const page = flagBool(flags, 'page', 'one-pager');
+        const html = flagBool(flags, 'html');
         const out = flagProveOut(flags);
-        if (out && !page) {
-          throw new Error('prove --out requires --page (or --one-pager).');
+        if (out && !page && !html) {
+          throw new Error('prove --out requires --page (or --one-pager) or --html.');
         }
         const result = cmdProve(cwd, positional[0], {
           json: flagBool(flags, 'json'),
           failOn,
           trustedKeys: flagTrustedKeys(flags),
           page,
+          html,
           out,
         });
         return result.exitCode;

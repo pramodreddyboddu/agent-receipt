@@ -97,7 +97,7 @@ describe('v1.0.16 Ed25519 keygen and sign', () => {
     const first = parseJson(cli(dir, ['keygen', '--json']));
     assert.equal(first.ok, true);
     assert.equal(first.command, 'keygen');
-    assert.equal(first.version, '1.0.26');
+    assert.equal(first.version, '1.0.27');
     assert.equal(first.exitCode, 0);
     assert.equal(first.created, false);
     assert.equal(first.rotated, false);
@@ -162,7 +162,7 @@ describe('v1.0.16 Ed25519 keygen and sign', () => {
     const signBody = parseJson(signed.out);
     assert.equal(signBody.ok, true);
     assert.equal(signBody.command, 'sign');
-    assert.equal(signBody.version, '1.0.26');
+    assert.equal(signBody.version, '1.0.27');
     assert.equal(signBody.exitCode, 0);
     assert.equal(signBody.verified, true);
     assert.equal(signBody.fingerprint, keys.fingerprint);
@@ -322,10 +322,10 @@ describe('v1.0.16 docs', () => {
     assert.match(changelog, /auto-sign on capture/);
     assert.match(changelog, /always-fail/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.26');
+    assert.equal(pkg.version, '1.0.27');
     assert.equal(pkg.dependencies, undefined);
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.26/);
+    assert.match(versionTs, /1\.0\.27/);
     const help = cli(root, ['help']);
     assert.match(help, /\bkeygen\b/);
     assert.match(help, /\bsign\b/);
