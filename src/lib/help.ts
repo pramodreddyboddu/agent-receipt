@@ -180,7 +180,8 @@ Options:
 \`--no-prune\` wins, then \`--prune\`, then config \`autoPrune: true\`.
 \`--json\` adds \`autoPrune\`, \`pruned\`, and \`pruneReason\` only when this
 run attempted auto-prune. Those keys are omitted when it was off.
-\`pruneReason\` is null when the trusted prune ran, or \`retention-off\`,
+\`pruneReason\` is null when the trusted prune ran, or \`failed-run\`
+(fail-on or verify failure: nothing deleted), \`retention-off\`,
 \`chain-broken\`, or \`error\`.
 
 \`sign: true\` in \`.agent-receipt.yml\` signs this command when neither

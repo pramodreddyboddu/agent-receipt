@@ -30,7 +30,8 @@ export interface WatchOptions {
    * After each successful capture, run trusted prune when retention is
    * enabled. The inner capture does not prune; this command calls
    * `maybeAutoPrune` once the watch audit line is written. A broken chain
-   * warns and does not change the watch exit code. Off by default.
+   * warns and does not change the watch exit code. A fail-on match skips
+   * prune. Off by default.
    */
   autoPrune?: boolean;
   /**
@@ -125,7 +126,8 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
   const finishCapture = (result: CaptureResult): number | undefined => {
     if (opts.autoPrune) {
       // Human stdout stays (watch --json only writes the companion file).
-      maybeAutoPrune(cwd, { enabled: true, json: false });
+      // A fail-on match is a failed capture: skip prune, delete nothing.
+      maybeAutoPrune(cwd, { enabled: true, json: false, failedRun: result.failedOn });
     }
     if (opts.once) return result.failedOn ? 2 : 0;
     if (result.failedOn) {

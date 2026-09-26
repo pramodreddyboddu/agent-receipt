@@ -493,4 +493,225 @@ describe('v1.0.26 auto-prune', () => {
     assert.equal(events[events.length - 1].event, 'prune');
     assert.equal(cliResult(dir, ['audit', '--verify']).code, 0);
   });
+  // --- QA blocker: auto-prune must not fire after a failed run ---
+
+  function seedTwo(dir, tag) {
+    for (const n of ['a', 'b']) {
+      const r = wrap(dir, `${tag}-seed-${n}`, ['--no-prune']);
+      assert.equal(r.code, 0, r.out + r.err);
+    }
+    assert.equal(receiptFiles(dir).length, 2);
+  }
+
+  /** A lockfile change raises a low-severity risk hint, so `--fail-on low` matches. */
+  function commitLockfile(dir, tag) {
+    pause();
+    commitChange(
+      dir,
+      'package-lock.json',
+      JSON.stringify({ name: tag, lockfileVersion: 3, packages: {} }) + '\n',
+    );
+  }
+
+  /** Wrap snapshots the dirty tree here, so leave the lockfile uncommitted. */
+  function dirtyLockfile(dir, tag) {
+    pause();
+    writeFileSync(
+      join(dir, 'package-lock.json'),
+      JSON.stringify({ name: tag, lockfileVersion: 3, packages: {} }) + '\n',
+    );
+  }
+
+  function assertFailedRunSkip(gate) {
+    assert.equal(gate.ok, false);
+    assert.equal(gate.exitCode, 2);
+    assert.equal(gate.autoPrune, true);
+    assert.equal(gate.pruned, 0);
+    assert.equal(gate.pruneReason, 'failed-run');
+    assert.equal(existsSync(gate.path), true);
+  }
+
+  async function runWatchOnce(dir, args, mutate) {
+    const child = spawn(process.execPath, [bin, 'watch', '--once', '--interval', '1', ...args], {
+      cwd: dir,
+      env: { ...process.env, NO_COLOR: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => {
+      stdout += d.toString();
+    });
+    child.stderr.on('data', (d) => {
+      stderr += d.toString();
+    });
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('watch did not start: ' + stdout + stderr)), 8000);
+      const check = () => {
+        if (/baseline:/.test(stdout)) {
+          clearTimeout(t);
+          resolve(true);
+        }
+      };
+      child.stdout.on('data', check);
+      check();
+    });
+    mutate();
+    const code = await new Promise((resolve, reject) => {
+      const t = setTimeout(() => {
+        child.kill('SIGTERM');
+        reject(new Error('watch --once did not exit: ' + stdout + stderr));
+      }, 15000);
+      child.on('close', (c) => {
+        clearTimeout(t);
+        resolve(c);
+      });
+    });
+    return { code, stdout, stderr };
+  }
+
+  it('capture --fail-on that matches exits 2 and does not prune', () => {
+    const dir = initRepo('outDir: .agent-receipt/receipts\nmaxCount: 1\nautoPrune: true\n');
+    seedTwo(dir, 'cap-fail');
+    commitLockfile(dir, 'cap-fail');
+    const r = cliResult(dir, ['capture', '--fail-on', 'low', '--json']);
+    assert.equal(r.code, 2, r.out + r.err);
+    const gate = parseJson(r.out);
+    assert.equal(gate.command, 'capture');
+    assert.equal(gate.failedOn, true);
+    assertFailedRunSkip(gate);
+    assert.equal(receiptFiles(dir).length, 3);
+    assert.equal(auditEvents(dir).some((e) => e.event === 'prune'), false);
+    assert.match(r.err, /pruned: skipped \(failed run\)/);
+    assert.doesNotMatch(r.out, /pruned:/);
+    assert.equal(cliResult(dir, ['audit', '--verify']).code, 0);
+  });
+
+  it('wrap --fail-on that matches exits 2 and does not prune', () => {
+    const dir = initRepo('outDir: .agent-receipt/receipts\nmaxCount: 1\nautoPrune: true\n');
+    seedTwo(dir, 'wrap-fail');
+    dirtyLockfile(dir, 'wrap-fail');
+    const r = cliResult(dir, ['wrap', '--agent', 'ci', '--fail-on', 'low', '--json']);
+    assert.equal(r.code, 2, r.out + r.err);
+    const gate = parseJson(r.out);
+    assert.equal(gate.command, 'wrap');
+    assert.equal(gate.failedOn, true);
+    assert.equal(gate.verified, true);
+    assertFailedRunSkip(gate);
+    assert.equal(receiptFiles(dir).length, 3);
+    assert.equal(auditEvents(dir).some((e) => e.event === 'prune'), false);
+
+    const human = initRepo('outDir: .agent-receipt/receipts\nmaxCount: 1\nautoPrune: true\n');
+    seedTwo(human, 'wrap-fail-human');
+    dirtyLockfile(human, 'wrap-fail-human');
+    const h = cliResult(human, ['wrap', '--fail-on', 'low', '--prune']);
+    assert.equal(h.code, 2, h.out + h.err);
+    assert.equal(receiptFiles(human).length, 3);
+    assert.match(h.out, /pruned: skipped \(failed run\)/);
+    assert.doesNotMatch(h.out, /pruned: \d/);
+  });
+
+  it('an unverified wrap exits 2 and does not prune', () => {
+    const dir = initRepo('outDir: .agent-receipt/receipts\nmaxCount: 1\nautoPrune: true\n');
+    seedTwo(dir, 'unverified');
+    // Force wrap's verify step to report failure: a module hook rewrites
+    // dist/commands/verify.js so cmdVerify returns ok:false for this process.
+    const hookDir = mkdtempSync(join(tmpdir(), 'agent-receipt-1026-hook-'));
+    dirs.push(hookDir);
+    const hooks = join(hookDir, 'hooks.mjs');
+    writeFileSync(
+      hooks,
+      [
+        "import { readFileSync } from 'node:fs';",
+        "import { fileURLToPath } from 'node:url';",
+        'export async function load(url, context, next) {',
+        "  if (url.startsWith('file:') && url.endsWith('/dist/commands/verify.js')) {",
+        "    let src = readFileSync(fileURLToPath(url), 'utf8');",
+        "    src = src.replace('export function cmdVerify(', 'function __origCmdVerify(');",
+        "    src += '\\nexport function cmdVerify(...a) { const r = __origCmdVerify(...a); return { ...r, ok: false, reason: \"forced unverified (test)\" }; }\\n';",
+        "    return { format: 'module', source: src, shortCircuit: true };",
+        '  }',
+        '  return next(url, context);',
+        '}',
+        '',
+      ].join('\n'),
+    );
+    const register = join(hookDir, 'register.mjs');
+    writeFileSync(
+      register,
+      "import { register } from 'node:module';\n" +
+        `register(${JSON.stringify('file://' + hooks)});\n`,
+    );
+    pause();
+    commitChange(dir, 'unverified.txt', 'unverified\n');
+    const r = spawnSync(
+      process.execPath,
+      ['--import', 'file://' + register, bin, 'wrap', '--agent', 'ci', '--json'],
+      {
+        cwd: dir,
+        encoding: 'utf8',
+        env: { ...process.env, NO_COLOR: '1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    assert.equal(r.status, 2, (r.stdout || '') + (r.stderr || ''));
+    const gate = parseJson(r.stdout);
+    assert.equal(gate.command, 'wrap');
+    assert.equal(gate.verified, false);
+    assert.equal(gate.failedOn, false);
+    assert.match(gate.reason, /forced unverified/);
+    assertFailedRunSkip(gate);
+    assert.equal(receiptFiles(dir).length, 3);
+    assert.equal(auditEvents(dir).some((e) => e.event === 'prune'), false);
+  });
+
+  it('watch --once with a matching --fail-on exits 2 and does not prune', async () => {
+    const dir = initRepo('outDir: .agent-receipt/receipts\nmaxCount: 1\nautoPrune: true\n');
+    seedTwo(dir, 'watch-fail');
+    const { code, stdout, stderr } = await runWatchOnce(
+      dir,
+      ['--agent', 'watch-bot', '--fail-on', 'low', '--commits-only'],
+      () => commitLockfile(dir, 'watch-fail'),
+    );
+    assert.equal(code, 2, stdout + stderr);
+    assert.equal(receiptFiles(dir).length, 3);
+    assert.match(stdout, /pruned: skipped \(failed run\)/);
+    assert.doesNotMatch(stdout, /pruned: \d/);
+    const events = auditEvents(dir);
+    assert.equal(events.filter((e) => e.event === 'watch').length, 1);
+    assert.equal(events.filter((e) => e.event === 'prune').length, 0);
+    assert.equal(events[events.length - 1].event, 'watch');
+    assert.equal(events[events.length - 1].failedOn, true);
+  });
+
+  it('a successful capture after a failed one still prunes', () => {
+    const dir = initRepo('outDir: .agent-receipt/receipts\nmaxCount: 1\nautoPrune: true\n');
+    seedTwo(dir, 'recover');
+    commitLockfile(dir, 'recover');
+    const failed = cliResult(dir, ['capture', '--fail-on', 'low', '--json']);
+    assert.equal(failed.code, 2, failed.out + failed.err);
+    assert.equal(receiptFiles(dir).length, 3);
+
+    pause();
+    commitChange(dir, 'recover.txt', 'recover\n');
+    const ok = cliResult(dir, ['capture', '--fail-on', 'high', '--json']);
+    assert.equal(ok.code, 0, ok.out + ok.err);
+    const gate = parseJson(ok.out);
+    assert.equal(gate.ok, true);
+    assert.equal(gate.failedOn, false);
+    assert.equal(gate.autoPrune, true);
+    assert.equal(gate.pruned, 3);
+    assert.equal(gate.pruneReason, null);
+    assert.deepEqual(receiptFiles(dir), [basename(gate.path)]);
+    assert.equal(auditEvents(dir).filter((e) => e.event === 'prune').length, 3);
+    assert.equal(cliResult(dir, ['audit', '--verify']).code, 0);
+
+    pause();
+    const wrapped = wrap(dir, 'recover-wrap', ['--fail-on', 'high', '--json']);
+    assert.equal(wrapped.code, 0, wrapped.out + wrapped.err);
+    const wrapGate = parseJson(wrapped.out);
+    assert.equal(wrapGate.pruned, 1);
+    assert.equal(wrapGate.pruneReason, null);
+    assert.deepEqual(receiptFiles(dir), [basename(wrapGate.path)]);
+  });
 });

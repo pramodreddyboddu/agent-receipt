@@ -545,7 +545,8 @@ doctor do not auto-prune. This is not a daemon or cron.
 
 capture and wrap `--json` add `autoPrune`, `pruned`, and `pruneReason` only
 when the run attempted auto-prune. `pruneReason` is null when trusted prune
-ran, or `retention-off`, `chain-broken`, or `error`. The fields are omitted
+ran, or `failed-run` (fail-on or verify failure; nothing deleted),
+`retention-off`, `chain-broken`, or `error`. The fields are omitted
 when auto-prune was off. Human stdout prints `pruned: N receipt(s)` when
 something was deleted, and a short skip line when the chain broke.
 

@@ -34,7 +34,8 @@ export interface WrapOptions {
    * After the wrap audit line, run trusted prune when retention is enabled.
    * Does not pass `--force`. A broken chain warns and does not change the
    * wrap exit code. The inner capture does not prune (it records no audit
-   * line of its own). Off by default.
+   * line of its own). A failed wrap (fail-on match or verify failure, exit 2)
+   * skips prune (`pruneReason: failed-run`). Off by default.
    */
   autoPrune?: boolean;
 }
@@ -129,7 +130,12 @@ export function cmdWrap(cwd: string, opts: WrapOptions = {}): WrapResult {
   });
 
   const autoPruneResult = opts.autoPrune
-    ? maybeAutoPrune(cwd, { enabled: true, json: quiet })
+    ? maybeAutoPrune(cwd, {
+        enabled: true,
+        json: quiet,
+        // Only after a successful wrap: verified, no fail-on match, exit 0.
+        failedRun: exitCode !== 0 || !verified || capture.failedOn,
+      })
     : undefined;
 
   if (opts.json) {

@@ -92,6 +92,7 @@ export interface CaptureOptions {
    * enabled. Wrap leaves this unset and calls `maybeAutoPrune` itself after
    * the wrap audit line (this capture is invoked with `audit: false`).
    * A broken chain warns and does not change the capture exit code.
+   * A fail-on match (exit 2) skips prune (`pruneReason: failed-run`).
    * Off by default. Not a daemon.
    */
   autoPrune?: boolean;
@@ -361,7 +362,11 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
       exitCode,
     });
     if (opts.autoPrune) {
-      autoPruneResult = maybeAutoPrune(cwd, { enabled: true, json: quiet });
+      autoPruneResult = maybeAutoPrune(cwd, {
+        enabled: true,
+        json: quiet,
+        failedRun: failedOn,
+      });
     }
   }
   if (opts.emitGate) {

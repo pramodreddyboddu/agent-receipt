@@ -32,8 +32,9 @@ import type { SignatureStatus } from './sign.js';
  * `autoPrune`, `pruned`, and `pruneReason` are set by capture and wrap
  * `--json` only when this run attempted auto-prune. They are omitted when
  * auto-prune was off so existing objects stay stable. `pruneReason` is
- * null when trusted prune ran, or a short skip code (`retention-off`,
- * `chain-broken`, `error`). A chain skip does not change `exitCode`.
+ * null when trusted prune ran, or a short skip code (`failed-run`,
+ * `retention-off`, `chain-broken`, `error`). `failed-run` means the run
+ * exited 2 (fail-on or verify) so nothing was deleted. A chain skip does not change `exitCode`.
  */
 export interface GateRisk {
   high: number;
@@ -112,8 +113,8 @@ export interface GateReport {
   /** Receipts deleted by that attempt. Omitted when auto-prune was off. */
   pruned?: number;
   /**
-   * Null when trusted prune ran. Otherwise `retention-off`, `chain-broken`,
-   * or `error`. Omitted when auto-prune was off.
+   * Null when trusted prune ran. Otherwise `failed-run`, `retention-off`,
+   * `chain-broken`, or `error`. Omitted when auto-prune was off.
    */
   pruneReason?: string | null;
 }

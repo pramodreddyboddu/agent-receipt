@@ -7,10 +7,19 @@ import { cmdPrune, type PruneReport } from '../commands/prune.js';
  * (including a run that deleted zero receipts because nothing was over the limit).
  * `disabled` is not written onto the gate: callers omit the fields entirely.
  */
-export type AutoPruneReason = 'disabled' | 'retention-off' | 'chain-broken' | 'error' | null;
+export type AutoPruneReason =
+  | 'disabled'
+  | 'failed-run'
+  | 'retention-off'
+  | 'chain-broken'
+  | 'error'
+  | null;
 
 export interface AutoPruneResult {
-  /** True when this run called trusted prune. False when auto-prune was off. */
+  /**
+   * True when auto-prune was on for this run (trusted prune ran, or was
+   * skipped because the run failed). False when auto-prune was off.
+   */
   attempted: boolean;
   /** Receipts actually deleted. Zero when skipped, off, or nothing matched. */
   pruned: number;
@@ -25,6 +34,12 @@ export interface AutoPruneOptions {
    * object. Chain-break and error warnings always go to stderr.
    */
   json?: boolean;
+  /**
+   * True when this run failed its gate (fail-on matched, or wrap verify
+   * failed / exit code non-zero). Auto-prune only follows a successful run,
+   * so a failed run deletes nothing and reports `failed-run`.
+   */
+  failedRun?: boolean;
 }
 
 /** Gate fields for capture / wrap `--json`. Omitted entirely when auto-prune was off. */
@@ -45,6 +60,8 @@ export function autoPruneGateFields(result: AutoPruneResult | undefined): {
  * After a successful capture, wrap, or watch write, run the same trusted
  * prune as `agent-receipt prune` (no `--force`, no dry-run).
  * Off, or on with no retention limit: deletes nothing and stays quiet.
+ * A failed run (`failedRun`: fail-on matched, verify failed, exit code
+ * non-zero) deletes nothing and reports `failed-run`.
  * A broken audit chain deletes nothing, warns on stderr, and does not throw.
  * Throws from prune (invalid retention, unsafe outDir, broken index) are
  * caught, warned, and do not fail the caller. Manual `prune` still exits 1.
@@ -54,6 +71,10 @@ export function maybeAutoPrune(cwd: string, opts: AutoPruneOptions): AutoPruneRe
     return { attempted: false, pruned: 0, reason: 'disabled' };
   }
   const quiet = Boolean(opts.json);
+  if (opts.failedRun) {
+    emitLine(quiet, 'pruned: skipped (failed run)');
+    return { attempted: true, pruned: 0, reason: 'failed-run' };
+  }
   let report: PruneReport;
   try {
     report = cmdPrune(cwd, { silent: true, force: false, dryRun: false });
