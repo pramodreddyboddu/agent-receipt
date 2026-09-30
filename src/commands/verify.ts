@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { verifyMarkdown } from '../lib/hash.js';
+import { linkMetaTamperReason } from '../lib/link.js';
 import { resolveReceiptPath } from './show.js';
 import { color } from '../lib/color.js';
 import {
@@ -60,9 +61,12 @@ export function reportVerify(
   opts?: { quiet?: boolean },
 ): Pick<VerifyCommandResult, 'ok' | 'sha256' | 'expected' | 'reason' | 'trailingIgnored'> {
   const result = verifyMarkdown(markdown);
+  const tamper = result.ok ? linkMetaTamperReason(markdown) : null;
+  const ok = result.ok && !tamper;
+  const reason = tamper ?? result.reason;
   if (!opts?.quiet) {
     console.log(`Verifying: ${label}`);
-    if (result.ok) {
+    if (ok) {
       console.log('✓ OK — receipt integrity verified');
       console.log(`  sha256: ${result.actual}`);
       if (result.trailingIgnored) {
@@ -73,22 +77,24 @@ export function reportVerify(
         );
       }
     } else {
-      console.error('✗ FAIL — ' + result.reason);
-      if (result.expected) console.error(`  expected: ${result.expected}`);
-      console.error(`  actual:   ${result.actual}`);
-      console.error('The Markdown body no longer matches the embedded hash.');
-      if (result.trailingIgnored) {
-        console.error(
-          '  note: trailing content after ## Integrity is ignored by design and did not cause this failure.',
-        );
+      console.error('✗ FAIL — ' + reason);
+      if (!tamper) {
+        if (result.expected) console.error(`  expected: ${result.expected}`);
+        console.error(`  actual:   ${result.actual}`);
+        console.error('The Markdown body no longer matches the embedded hash.');
+        if (result.trailingIgnored) {
+          console.error(
+            '  note: trailing content after ## Integrity is ignored by design and did not cause this failure.',
+          );
+        }
       }
     }
   }
   return {
-    ok: result.ok,
+    ok,
     sha256: result.actual,
     expected: result.expected,
-    reason: result.reason,
+    reason,
     trailingIgnored: Boolean(result.trailingIgnored),
   };
 }

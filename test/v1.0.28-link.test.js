@@ -1,6 +1,7 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,7 +14,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { appendHashFooter } from '../dist/lib/hash.js';
+import { appendHashFooter, canonicalBody, sha256Hex } from '../dist/lib/hash.js';
+import { parseLinkMeta, readLocalReceipt } from '../dist/lib/link.js';
+import { CURSOR_RULE_MDC } from '../dist/lib/cursor-rule.js';
+import { GROK_WRAP_SCRIPT_REL } from '../dist/lib/grok-rule.js';
+import { postCommitBody, prePushBody } from '../dist/commands/hooks.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, 'bin', 'agent-receipt.js');
@@ -104,6 +109,9 @@ describe('v1.0.28 multi-agent receipt linking', () => {
     assert.match(changelog, /Landed on main directly after 1\.0\.26/);
     assert.match(changelog, /was not stacked on #39/);
     assert.doesNotMatch(changelog.split('## [1.0.26]')[0], /Stacked on 1\.0\.26 \(auto-prune, PR #39\)/);
+    assert.match(changelog, /### Security/);
+    assert.match(changelog, /## Session/);
+    assert.match(changelog, /free-form/);
     assert.match(changelog, /cross-host session merge/);
     assert.match(changelog, /signed session manifest/);
     assert.match(changelog, /full PKI\/CA/);
@@ -183,14 +191,15 @@ describe('v1.0.28 multi-agent receipt linking', () => {
   it('rejects invalid link values before writing', () => {
     const dir = initRepo();
     for (const [args, needle] of [
-      [['capture', '--session', 'bad/id', '--message', 'x'], /Invalid session/],
-      [['capture', '--session', 'has space', '--message', 'x'], /Invalid session/],
-      [['capture', '--session', '..', '--message', 'x'], /Invalid session/],
       [['capture', '--session'], /--session requires a value/],
-      [['capture', '--agent', 'bad/id', '--message', 'x'], /Invalid agent/],
+      [['capture', '--session', 'bad\nid', '--message', 'x'], /Invalid session/],
+      [['capture', '--session', 's'.repeat(257), '--message', 'x'], /Invalid session/],
+      [['capture', '--agent', 'bad\nagent', '--message', 'x'], /Invalid agent/],
+      [['capture', '--agent', 'a'.repeat(257), '--message', 'x'], /Invalid agent/],
       [['capture', '--parent', '../secret', '--message', 'x'], /--parent must not contain/],
       [['capture', '--host', 'bad/host', '--message', 'x'], /Invalid host/],
-      [['watch', '--once', '--session', 'bad/id'], /Invalid session/],
+      [['capture', '--message', 'hello\n- **Session**: injected'], /single line/],
+      [['watch', '--once', '--session', 'bad\nid'], /Invalid session/],
     ]) {
       const before = existsSync(join(dir, '.agent-receipt', 'receipts'))
         ? readdirSync(join(dir, '.agent-receipt', 'receipts'))
@@ -543,5 +552,439 @@ describe('v1.0.28 multi-agent receipt linking', () => {
     const hard = cliResult(dir, ['doctor', '--strict', '--json']);
     const hardBody = parseJson(hard.out);
     assert.equal(hardBody.checks.find((check) => check.id === 'link').status, 'info');
+  });
+
+  it('accepts 1.0.27 agent and session values and keeps defaultAgent consistent', () => {
+    const dir = initRepo();
+    commitFile(dir, 'legacy.txt', 'legacy\n');
+    const claude = cliResult(dir, ['capture', '--agent', 'Claude Code', '--message', 'legacy agent']);
+    assert.equal(claude.code, 0, claude.err);
+    assert.equal(field(latestReceipt(dir).md, 'Agent'), 'Claude Code');
+
+    const slashAgent = cliResult(dir, ['capture', '--agent', 'bad/id', '--message', 'slash agent']);
+    assert.equal(slashAgent.code, 0, slashAgent.err);
+    assert.equal(field(latestReceipt(dir).md, 'Agent'), 'bad/id');
+
+    const envAgent = cliResult(dir, ['capture', '--message', 'env agent'], {
+      AGENT_RECEIPT_AGENT: 'git hook',
+    });
+    assert.equal(envAgent.code, 0, envAgent.err);
+    assert.equal(field(latestReceipt(dir).md, 'Agent'), 'git hook');
+
+    for (const sessionId of ['old sess/1', 'bad/id', 'has space', '..']) {
+      const saved = cliResult(dir, ['capture', '--session', sessionId, '--message', 'legacy session']);
+      assert.equal(saved.code, 0, `${sessionId}\n${saved.err}`);
+      assert.equal(field(latestReceipt(dir).md, 'Session'), sessionId);
+      const listed = parseJson(cli(dir, ['session', sessionId, '--json']));
+      assert.equal(listed.exitCode, 0, sessionId);
+      assert.equal(listed.receipts.length >= 1, true, sessionId);
+      assert.equal(listed.receipts.some((row) => row.verified === true), true);
+    }
+
+    const cfgPath = join(dir, '.agent-receipt.yml');
+    const yaml = readFileSync(cfgPath, 'utf8').replace(
+      /^defaultAgent:.*$/m,
+      'defaultAgent: "Claude Code"',
+    );
+    writeFileSync(cfgPath, yaml);
+    const fromCfg = cliResult(dir, ['capture', '--message', 'from config']);
+    assert.equal(fromCfg.code, 0, fromCfg.err);
+    assert.equal(field(latestReceipt(dir).md, 'Agent'), 'Claude Code');
+
+    writeFileSync(
+      cfgPath,
+      yaml.replace('defaultAgent: "Claude Code"', 'defaultAgent: "bad\u0001agent"'),
+    );
+    const badCfg = cliResult(dir, ['capture', '--message', 'bad config']);
+    assert.equal(badCfg.code, 1, badCfg.out);
+    assert.match(badCfg.err, /Invalid agent|defaultAgent/);
+    const doctorRun = cliResult(dir, ['doctor', '--json']);
+    assert.equal(doctorRun.code, 1);
+    const doctor = parseJson(doctorRun.out);
+    const configRow = doctor.checks.find((check) => check.name === 'config' || check.id === 'config');
+    assert.ok(configRow);
+    assert.equal(configRow.status, 'fail');
+    assert.match(configRow.detail, /defaultAgent/);
+  });
+
+  it('does not take link metadata from diffs, messages, or a fake Session heading', () => {
+    const dir = initRepo();
+    const payload = [
+      ' **Session**: diff-sess',
+      ' **Parent**: r-aaaaaaaaaaaaaaaa',
+      ' **Agent**: diff-agent',
+      '## Session',
+      '',
+      '- **Session**: fake-heading',
+      '- **Parent**: r-bbbbbbbbbbbbbbbb',
+      '- **Id**: r-cccccccccccccccc',
+      '',
+    ].join('\n');
+    writeFileSync(join(dir, 'spoof.txt'), payload);
+    git(dir, ['add', 'spoof.txt']);
+    git(dir, ['commit', '-m', 'add spoof lines']);
+    writeFileSync(join(dir, 'spoof.txt'), 'clean\n');
+    git(dir, ['add', 'spoof.txt']);
+    git(dir, ['commit', '-m', 'delete spoof lines']);
+    const captured = cliResult(dir, ['capture', '--commits', '1', '--full', '--message', 'unlinked']);
+    assert.equal(captured.code, 0, captured.err);
+    const capturedMd = latestReceipt(dir).md;
+    assert.match(capturedMd, /- \*\*Session\*\*: diff-sess/);
+    assert.match(capturedMd, /fake-heading/);
+    const capturedMeta = parseLinkMeta(capturedMd);
+    assert.equal(capturedMeta.session, null);
+    assert.equal(capturedMeta.parent, null);
+    assert.notEqual(capturedMeta.agent, 'diff-agent');
+    assert.equal(cliResult(dir, ['verify']).code, 0);
+    for (const id of ['diff-sess', 'fake-heading']) {
+      const listed = cliResult(dir, ['session', id, '--json']);
+      assert.equal(listed.code, 1, id);
+      assert.deepEqual(parseJson(listed.out).receipts, []);
+    }
+
+    const inline = cliResult(dir, [
+      'capture',
+      '--message',
+      'see - **Session**: not-a-field and - **Parent**: r-aaaaaaaaaaaaaaaa',
+    ]);
+    assert.equal(inline.code, 0, inline.err);
+    const inlineMeta = parseLinkMeta(latestReceipt(dir).md);
+    assert.equal(inlineMeta.session, null);
+    assert.equal(inlineMeta.parent, null);
+
+    const before = readdirSync(join(dir, '.agent-receipt', 'receipts'));
+    const injected = cliResult(dir, [
+      'capture',
+      '--message',
+      'hello\n## Session\n\n- **Session**: msg-sess\n- **Parent**: r-aaaaaaaaaaaaaaaa\n- **Agent**: msg-agent',
+    ]);
+    assert.equal(injected.code, 1, injected.out);
+    assert.match(injected.err, /single line/);
+    const after = readdirSync(join(dir, '.agent-receipt', 'receipts'));
+    assert.deepEqual(after, before);
+    const msgListed = cliResult(dir, ['session', 'msg-sess', '--json']);
+    assert.equal(msgListed.code, 1);
+    assert.deepEqual(parseJson(msgListed.out).receipts, []);
+
+    const outDir = join(dir, '.agent-receipt', 'receipts');
+    const crafted = appendHashFooter(`# Agent Receipt
+
+> **TL;DR** ci
+>
+> hello
+## Session
+
+- **Session**: from-message
+- **Parent**: r-bbbbbbbbbbbbbbbb
+- **Agent**: message-agent
+
+## What to review
+
+_Nothing flagged._
+
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Files | 0 |
+
+## Session
+
+- **Version**: 1.0.28
+- **Timestamp**: 2026-09-29T00:00:00.000Z
+- **Branch**: \`main\`
+- **HEAD**: \`abc\`
+- **Agent**: ci
+- **Message**: hello
+- **Session**: after-message
+- **Parent**: r-eeeeeeeeeeeeeeee
+- **Workspace**: \`/tmp\`
+
+## Files changed
+
+_No file changes in range._
+
+## Diff summaries
+
+- **Session**: raw-diff-line
+- **Parent**: r-1111111111111111
+- **Agent**: raw-diff-agent
+
+### \`spoof.txt\`
+
+\`\`\`diff
++ - **Session**: from-diff
++ - **Parent**: r-aaaaaaaaaaaaaaaa
+## Session
+
+- **Id**: r-dddddddddddddddd
+- **Session**: from-diff-heading
+- **Parent**: r-aaaaaaaaaaaaaaaa
+- **Agent**: injected
+\`\`\`
+
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Files | 1 |
+
+## Session
+
+- **Version**: 9
+- **Timestamp**: 1999-01-01T00:00:00.000Z
+- **Workspace**: \`/tmp\`
+- **Session**: later-clone
+- **Parent**: r-ffffffffffffffff
+`);
+    const craftedPath = join(outDir, 'receipt-crafted-spoof.md');
+    writeFileSync(craftedPath, crafted);
+    const craftedMeta = parseLinkMeta(crafted);
+    assert.equal(craftedMeta.session, null);
+    assert.equal(craftedMeta.parent, null);
+    assert.equal(craftedMeta.agent, 'ci');
+    assert.equal(cliResult(dir, ['verify', craftedPath]).code, 0);
+    for (const id of ['from-message', 'after-message', 'from-diff-heading', 'later-clone', 'raw-diff-line']) {
+      const listed = cliResult(dir, ['session', id, '--json']);
+      assert.equal(listed.code, 1, id);
+      assert.deepEqual(parseJson(listed.out).receipts, []);
+    }
+  });
+
+  it('fails verify when header link values are invalid and still verifies legacy values', () => {
+    const dir = initRepo();
+    const outDir = join(dir, '.agent-receipt', 'receipts');
+    mkdirSync(outDir, { recursive: true });
+    const badPath = join(outDir, 'receipt-bad-parent.md');
+    writeFileSync(
+      badPath,
+      appendHashFooter(`## Summary
+
+| Metric | Value |
+|--------|-------|
+| Files | 0 |
+
+## Session
+
+- **Version**: 1.0.28
+- **Timestamp**: 2026-09-29T00:00:00.000Z
+- **Session**: ok-sess
+- **Parent**: not-a-parent
+- **Agent**: ci
+- **Workspace**: \`/tmp\`
+`),
+    );
+    const bad = cliResult(dir, ['verify', badPath]);
+    assert.equal(bad.code, 2);
+    assert.match(bad.out + bad.err, /tampered|Invalid link/i);
+    const badSession = cliResult(dir, ['session', 'ok-sess', '--json']);
+    assert.equal(badSession.code, 1);
+    assert.equal(parseJson(badSession.out).receipts[0].verified, false);
+
+    const legacyPath = join(outDir, 'receipt-legacy-values.md');
+    writeFileSync(
+      legacyPath,
+      appendHashFooter(`## Session
+
+- **Timestamp**: 2026-09-29T00:00:00.000Z
+- **Agent**: Claude Code
+- **Session**: old sess/1
+`),
+    );
+    assert.equal(cliResult(dir, ['verify', legacyPath]).code, 0);
+    const legacy = parseJson(cli(dir, ['session', 'old sess/1', '--json']));
+    assert.equal(legacy.exitCode, 0);
+    assert.equal(legacy.receipts[0].agent, 'Claude Code');
+    assert.equal(legacy.receipts[0].verified, true);
+  });
+
+  it('rejects a --parent path that is not a receipt file', () => {
+    const dir = initRepo();
+    commitFile(dir, 'p.txt', 'p\n');
+    writeFileSync(join(dir, 'notes.md'), '# notes\n\n## Session\n\nnot a receipt\n');
+    writeFileSync(join(dir, 'readme.md'), 'hello\n');
+    const notes = cliResult(dir, ['capture', '--parent', 'notes.md', '--message', 'x']);
+    assert.equal(notes.code, 1, notes.out);
+    assert.match(notes.err, /not a receipt/);
+    const readme = cliResult(dir, ['capture', '--parent', 'readme.md', '--message', 'x']);
+    assert.equal(readme.code, 1);
+    assert.match(readme.err, /not a receipt|not a receipt id/);
+    assert.equal(
+      cliResult(dir, ['wrap', '--link', '--session', 'parent-ok', '--agent', 'parent', '--message', 'p']).code,
+      0,
+    );
+    const parent = latestReceipt(dir);
+    commitFile(dir, 'c.txt', 'c\n');
+    const child = cliResult(dir, [
+      'capture',
+      '--session',
+      'parent-ok',
+      '--parent',
+      parent.path,
+      '--message',
+      'c',
+    ]);
+    assert.equal(child.code, 0, child.err);
+    assert.equal(field(latestReceipt(dir).md, 'Parent'), field(parent.md, 'Id'));
+  });
+
+  it('flags cross-session parents, unverified parents, and a removed Session line', () => {
+    const dir = initRepo();
+    const outDir = join(dir, '.agent-receipt', 'receipts');
+    mkdirSync(outDir, { recursive: true });
+    const seal = (body) => appendHashFooter(body.endsWith('\n') ? body : `${body}\n`);
+    writeFileSync(
+      join(outDir, 'receipt-flag-parent.md'),
+      seal(`## Session
+
+- **Id**: r-aaaaaaaaaaaaaaaa
+- **Timestamp**: 2026-09-29T00:00:00.000Z
+- **Agent**: parent
+- **Session**: sess-parent
+`),
+    );
+    writeFileSync(
+      join(outDir, 'receipt-flag-child.md'),
+      seal(`## Session
+
+- **Id**: r-bbbbbbbbbbbbbbbb
+- **Timestamp**: 2026-09-29T00:00:01.000Z
+- **Agent**: child
+- **Session**: sess-child
+- **Parent**: r-aaaaaaaaaaaaaaaa
+`),
+    );
+    const cross = parseJson(cli(dir, ['session', 'sess-child', '--json']));
+    assert.equal(cross.exitCode, 0);
+    assert.equal(cross.receipts.length, 1);
+    assert.equal(cross.receipts[0].verified, true);
+    assert.equal(cross.receipts[0].orphan, false);
+    assert.deepEqual(cross.receipts[0].warnings, ['cross-session-parent']);
+    assert.match(cli(dir, ['session', 'sess-child']), /warnings=cross-session-parent/);
+
+    writeFileSync(
+      join(outDir, 'receipt-flag-removed.md'),
+      seal(`## Session
+
+- **Id**: r-cccccccccccccccc
+- **Timestamp**: 2026-09-29T00:00:02.000Z
+- **Agent**: removed
+- **Parent**: r-aaaaaaaaaaaaaaaa
+`),
+    );
+    const missing = parseJson(cli(dir, ['session', 'sess-parent', '--json']));
+    assert.equal(missing.exitCode, 0);
+    const removed = missing.receipts.find((row) => row.agent === 'removed');
+    assert.ok(removed);
+    assert.deepEqual(removed.warnings, ['missing-session']);
+    assert.equal(removed.verified, true);
+    assert.match(cli(dir, ['session', 'sess-parent']), /warnings=missing-session/);
+
+    const parentPath = join(outDir, 'receipt-flag-parent.md');
+    writeFileSync(parentPath, readFileSync(parentPath, 'utf8').replace('parent', 'parent-x'));
+    const failed = cliResult(dir, ['session', 'sess-child', '--json']);
+    assert.equal(failed.code, 1);
+    const failedBody = parseJson(failed.out);
+    assert.equal(failedBody.ok, false);
+    assert.equal(failedBody.exitCode, 1);
+    assert.equal(failedBody.reason, 'a local parent failed verify');
+    assert.equal(failedBody.receipts[0].verified, true);
+    assert.ok(failedBody.receipts[0].warnings.includes('parent-unverified'));
+    assert.ok(failedBody.receipts[0].warnings.includes('cross-session-parent'));
+    assert.match(cliResult(dir, ['session', 'sess-child']).out, /parent-unverified/);
+  });
+
+  it('keeps a hash-less receipt addressable and ignores an empty embedded hash', () => {
+    const dir = initRepo();
+    const bare = join(dir, 'no-hash.md');
+    const text = '## Session\n\n- **Agent**: plain\n';
+    writeFileSync(bare, text);
+    const rec = readLocalReceipt(bare);
+    assert.ok(rec);
+    assert.equal(rec.id, sha256Hex(canonicalBody(text)));
+    assert.equal(rec.sha256, rec.id);
+
+    const emptyMarker = join(dir, 'empty-hash.md');
+    const marked = '## Session\n\n- **Agent**: plain\n\n<!-- agent-receipt-sha256: -->\n';
+    writeFileSync(emptyMarker, marked);
+    const markedRec = readLocalReceipt(emptyMarker);
+    assert.ok(markedRec);
+    assert.equal(markedRec.id, sha256Hex(canonicalBody(marked)));
+    assert.equal(markedRec.meta.agent, 'plain');
+  });
+
+  it('still writes receipts from the shipped grok rule, cursor rule, and git hooks', () => {
+    const dir = initRepo();
+    assert.match(CURSOR_RULE_MDC, /capture --agent cursor --message/);
+    commitFile(dir, 'cursor.txt', 'cursor\n');
+    const cursor = cliResult(dir, ['capture', '--agent', 'cursor', '--message', 'one-line summary']);
+    assert.equal(cursor.code, 0, cursor.err);
+    assert.equal(field(latestReceipt(dir).md, 'Agent'), 'cursor');
+    assert.equal(cliResult(dir, ['verify']).code, 0);
+
+    const grokCmd = cliResult(dir, [
+      'wrap',
+      '--agent',
+      'grok',
+      '--redact',
+      '--message',
+      'one-line summary of what you changed',
+    ]);
+    assert.equal(grokCmd.code, 0, grokCmd.err);
+    assert.equal(field(latestReceipt(dir).md, 'Agent'), 'grok');
+
+    cli(dir, ['init', '--grok']);
+    git(dir, ['add', '-A']);
+    git(dir, ['commit', '-m', 'grok init']);
+    writeFileSync(join(dir, 'dirty-grok.txt'), 'uncommitted\n');
+    const wrapperDir = mkdtempSync(join(tmpdir(), 'agent-receipt-bin-'));
+    dirs.push(wrapperDir);
+    const wrapper = join(wrapperDir, 'agent-receipt');
+    writeFileSync(wrapper, `#!/bin/sh\nexec ${process.execPath} ${JSON.stringify(bin)} "$@"\n`);
+    chmodSync(wrapper, 0o755);
+    const script = join(dir, GROK_WRAP_SCRIPT_REL);
+    assert.match(readFileSync(script, 'utf8'), /wrap --agent grok --redact --uncommitted/);
+    execFileSync('sh', [script], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: spawnEnv({
+        PATH: `${wrapperDir}:${process.env.PATH}`,
+        GROK_WORKSPACE_ROOT: dir,
+      }),
+    });
+    const grokMd = latestReceipt(dir).md;
+    assert.equal(field(grokMd, 'Agent'), 'grok');
+    assert.match(grokMd, /grok session \(uncommitted\)/);
+    assert.equal(cliResult(dir, ['verify']).code, 0);
+
+    assert.match(postCommitBody(), /--agent "\$\{AGENT_RECEIPT_AGENT:-git-hook\}"/);
+    assert.match(prePushBody(), /--agent "\$\{AGENT_RECEIPT_AGENT:-git-hook\}"/);
+    cli(dir, ['install-hooks', '--pre-push']);
+    writeFileSync(join(dir, 'hook.txt'), 'hook\n');
+    execFileSync('git', ['add', 'hook.txt'], { cwd: dir, env: spawnEnv() });
+    execFileSync('git', ['commit', '-m', 'hook commit'], { cwd: dir, env: spawnEnv() });
+    const hookReceipts = readdirSync(join(dir, '.agent-receipt', 'receipts')).filter((name) =>
+      name.endsWith('.md'),
+    );
+    const hookBodies = hookReceipts.map((name) =>
+      readFileSync(join(dir, '.agent-receipt', 'receipts', name), 'utf8'),
+    );
+    assert.ok(hookBodies.some((md) => field(md, 'Agent') === 'git-hook'));
+    execFileSync(join(dir, '.git', 'hooks', 'pre-push'), {
+      cwd: dir,
+      encoding: 'utf8',
+      env: spawnEnv(),
+    });
+    const afterPush = readdirSync(join(dir, '.agent-receipt', 'receipts'))
+      .filter((name) => name.endsWith('.md') && !name.endsWith('.prove.md'))
+      .map((name) => readFileSync(join(dir, '.agent-receipt', 'receipts', name), 'utf8'));
+    assert.ok(afterPush.filter((md) => field(md, 'Agent') === 'git-hook').length >= 2);
+
+    const spaced = cliResult(dir, ['capture', '--commits', '1', '--message', 'spaced hook agent'], {
+      AGENT_RECEIPT_AGENT: 'git hook',
+    });
+    assert.equal(spaced.code, 0, spaced.err);
+    assert.equal(field(latestReceipt(dir).md, 'Agent'), 'git hook');
+    assert.equal(cliResult(dir, ['verify']).code, 0);
   });
 });

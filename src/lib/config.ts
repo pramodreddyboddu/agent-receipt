@@ -287,6 +287,17 @@ export function validateConfig(cfg: AgentReceiptConfig): string[] {
   if (!cfg.outDir || typeof cfg.outDir !== 'string') {
     problems.push('outDir must be a non-empty string');
   }
+  // Same rules as --agent: free-form, one line, max 256. Spaces are allowed.
+  if (typeof cfg.defaultAgent !== 'string' || !cfg.defaultAgent.trim()) {
+    problems.push('defaultAgent must be a non-empty string');
+  } else if (
+    cfg.defaultAgent.trim().length > 256 ||
+    /[\u0000-\u001f\u007f\u2028\u2029]/.test(cfg.defaultAgent)
+  ) {
+    problems.push(
+      'defaultAgent must be a single line of at most 256 characters, with no newlines or control characters (same rules as --agent)',
+    );
+  }
   if (typeof cfg.defaultCommits !== 'number' || cfg.defaultCommits < 1) {
     problems.push('defaultCommits must be an integer >= 1');
   }

@@ -32,7 +32,7 @@
 # ships HTML plus Markdown and an optional receipt.sig.json. HTML stays unsigned.
 # verify --package (v1.0.25) checks that directory. Not a new action input.
 # autoPrune (v1.0.26) is config, not a new action input. Not a daemon.
-# prove --html (v1.0.28): `agent-receipt prove --html --out ./report/` writes an
+# prove --html (v1.0.27): `agent-receipt prove --html --out ./report/` writes an
 # offline, redacted *.prove.html reviewers can open from the artifact.
 # share has no --sign flag. After
 # a green share, this job runs `sign` on the gate path when the sidecar

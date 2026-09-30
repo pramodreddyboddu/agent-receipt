@@ -136,10 +136,26 @@ export function buildReviewItems(data: ReceiptData, limit = 8): ReviewItem[] {
   return items;
 }
 
+const CONTROL_RE = /[\u0000-\u001f\u007f\u2028\u2029]/;
+
+function rejectHeaderControl(kind: string, value: string | undefined): void {
+  if (value && CONTROL_RE.test(value)) {
+    throw new Error(
+      `${kind} must be a single line. Newlines and control characters are rejected.`,
+    );
+  }
+}
+
 export function formatMarkdown(
   data: ReceiptData,
   opts: boolean | FormatOptions = false,
 ): string {
+  rejectHeaderControl('message', data.message);
+  rejectHeaderControl('agent', data.agent);
+  rejectHeaderControl('session', data.session);
+  rejectHeaderControl('parent', data.parent);
+  rejectHeaderControl('host', data.host);
+  rejectHeaderControl('id', data.id);
   const options: FormatOptions =
     typeof opts === 'boolean' ? { full: opts } : opts ?? {};
   const full = Boolean(options.full);

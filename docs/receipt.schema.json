@@ -44,18 +44,21 @@
       },
       "additionalProperties": false
     },
-    "agent": { "type": ["string", "null"] },
+    "agent": {
+      "type": ["string", "null"],
+      "description": "Free-form agent label. Spaces allowed. No newlines or control characters. Same rules as config defaultAgent."
+    },
     "id": {
       "type": "string",
       "description": "Optional link id (r- + 16 hex). Present when this receipt records a session, parent, or host. Omitted otherwise."
     },
     "session": {
       "type": ["string", "null"],
-      "description": "Optional session id grouping related runs. Null or omitted when this receipt is not linked."
+      "description": "Optional session id grouping related runs. 1.0.27 values (spaces and slashes) are stored as a single line. Generated ids are s- plus 16 hex. Null or omitted when this receipt is not linked."
     },
     "parent": {
       "type": "string",
-      "description": "Optional parent receipt reference (link id or sha256 of the run that spawned this one)."
+      "description": "Optional parent receipt reference (r- id or sha256). A --parent path must parse as a receipt file and is stored as that receipt's id or hash."
     },
     "host": {
       "type": "string",

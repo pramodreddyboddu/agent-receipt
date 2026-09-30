@@ -33,7 +33,15 @@ import {
 import { updateIndexOnCapture } from '../lib/receipt-index.js';
 import { prepareRedactedBody } from '../lib/redact.js';
 import { appendHashFooter, extractEmbeddedHash, verifyMarkdown } from '../lib/hash.js';
-import { newLinkId } from '../lib/link.js';
+import {
+  newLinkId,
+  validateAgentLabel,
+  validateLegacySession,
+  validateLinkLabel,
+  validateMessageLine,
+  validateStoredId,
+  validateStoredParent,
+} from '../lib/link.js';
 import { recordAuditEvent } from '../lib/audit.js';
 import { VERSION } from '../lib/version.js';
 import { color } from '../lib/color.js';
@@ -126,9 +134,14 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
   }
 
   const cfg = loadConfig(cwd);
+  if (opts.message !== undefined) validateMessageLine(opts.message);
+  const agent = validateAgentLabel(opts.agent ?? cfg.defaultAgent);
+  if (opts.session) validateLegacySession(opts.session);
+  if (opts.parent) validateStoredParent(opts.parent);
+  if (opts.host) validateLinkLabel('host', opts.host);
+  if (opts.id) validateStoredId(opts.id);
   const commitsN = opts.commits ?? cfg.defaultCommits;
   const full = opts.full ?? cfg.fullDiffs;
-  const agent = opts.agent ?? cfg.defaultAgent;
   const uncommitted = Boolean(opts.uncommitted);
 
   let files: FileStat[];

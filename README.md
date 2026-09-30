@@ -217,9 +217,11 @@ Flags: `--agent`, `--message`, `--session`, `--parent`, `--host`, `--link`, `--f
 
 ## Linking multi-agent runs
 
-`capture`, `wrap`, and `watch` can record a `session` id and a `parent` receipt reference in the hashed body, plus an `agent` label. `wrap --link` (or `--session`, including `--session new`) exports `AGENT_RECEIPT_SESSION` and `AGENT_RECEIPT_PARENT` to the command after `--`, so a nested wrap links itself to this receipt. Flags win over those env vars. With no link flag and no link env, the receipt is unchanged.
+`capture`, `wrap`, and `watch` can record a `session` id and a `parent` receipt reference in the hashed `## Session` header, plus an `agent` label. Those fields are read only from that header block, not from diffs or the message. `wrap --link` (or `--session`, including `--session new`) exports `AGENT_RECEIPT_SESSION` and `AGENT_RECEIPT_PARENT` to the command after `--`, so a nested wrap links itself to this receipt. Flags win over those env vars. With no link flag and no link env, the receipt is unchanged.
 
-`agent-receipt session <id>` prints the local parent/child tree. `--json` is the machine-readable form. Exit 1 when any receipt in the session fails verify. A parent that is not in this `outDir` is flagged `orphan`. A loop inside the session is flagged `cycle`. Neither flag changes the exit code by itself.
+`--agent` is free-form (spaces allowed; no newlines or control characters), matching 1.0.27 and config `defaultAgent`. `--session` still accepts 1.0.27 values such as `old sess/1` and stores them on one line. Generated ids are `s-` plus 16 hex. `--parent` is an `r-` id, a sha256, or a path to a receipt file. `--message` is one line.
+
+`agent-receipt session <id>` prints the local parent/child tree. `--json` is the machine-readable form. Exit 1 when any receipt in the session fails verify or a local parent fails verify. A parent that is not in this `outDir` is flagged `orphan`. A loop inside the session is flagged `cycle`. A parent in another local session is `warnings=cross-session-parent`. None of those warnings change the exit code by themselves.
 
 `host` stays off unless you pass `--host` or set `AGENT_RECEIPT_HOST`. `share` keeps session, parent, and agent, and masks host unless `--include-host`. `prove` shows session, parent, and whether a local parent verifies. It does not show host, and a missing parent does not change the prove exit code.
 

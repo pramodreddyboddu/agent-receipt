@@ -24,7 +24,7 @@ import { cmdHistory } from './commands/history.js';
 import { cmdWatch } from './commands/watch.js';
 import { cmdWrap } from './commands/wrap.js';
 import { cmdSession } from './commands/session.js';
-import { resolveLink, type ResolvedLink } from './lib/link.js';
+import { resolveLink, validateMessageLine, type ResolvedLink } from './lib/link.js';
 import { cmdExport, cmdHtml } from './commands/export.js';
 import { cmdShare } from './commands/share.js';
 import { cmdAudit } from './commands/audit.js';
@@ -339,11 +339,13 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         const json = flagBool(flags, 'json');
         const failOn = resolveFailOn(cwd, flags, true);
         const link = resolveCliLink(cwd, flags, false);
+        const message = flagString(flags, 'message', 'm');
+        if (message !== undefined) validateMessageLine(message);
         const result = cmdCapture(cwd, {
           since: flagString(flags, 'since'),
           base: flagString(flags, 'base'),
           commits: flagNumber(flags, 'commits'),
-          message: flagString(flags, 'message', 'm'),
+          message,
           agent: link.agent,
           id: link.id,
           session: link.session,
@@ -366,6 +368,8 @@ export async function run(argv: string[] = process.argv): Promise<number> {
       case 'wrap': {
         const failOn = resolveFailOn(cwd, flags, true);
         const link = resolveCliLink(cwd, flags, flagBool(flags, 'link'));
+        const message = flagString(flags, 'message', 'm');
+        if (message !== undefined) validateMessageLine(message);
         const result = cmdWrap(cwd, {
           agent: link.agent,
           id: link.id,
@@ -374,7 +378,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           host: link.host,
           propagate: link.propagate,
           command: positional,
-          message: flagString(flags, 'message', 'm'),
+          message,
           failOn,
           base: flagString(flags, 'base'),
           redact: resolveRedact(cwd, flags),
@@ -442,6 +446,8 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         }
         const failOn = resolveFailOn(cwd, flags, true);
         const link = resolveCliLink(cwd, flags, false);
+        const message = flagString(flags, 'message', 'm');
+        if (message !== undefined) validateMessageLine(message);
         return await cmdWatch(cwd, {
           interval: flagNumber(flags, 'interval'),
           once: flagBool(flags, 'once'),
@@ -449,7 +455,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           session: link.session,
           parent: link.parent,
           host: link.host,
-          message: flagString(flags, 'message', 'm'),
+          message,
           failOn,
           json: flagBool(flags, 'json'),
           commitsOnly: flagBool(flags, 'commits-only'),

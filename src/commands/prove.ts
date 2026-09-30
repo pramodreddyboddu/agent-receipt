@@ -22,8 +22,7 @@ import {
 import { applyTrust, loadTrustedFingerprints } from '../lib/trust.js';
 import type { FailOnThreshold } from '../lib/risk.js';
 import { renderProveHtml, type ProveHtmlSummary } from '../lib/prove-html.js';
-import { indexLocalReceipts, parseLinkMeta } from '../lib/link.js';
-import { verifyMarkdown } from '../lib/hash.js';
+import { indexLocalReceipts, parseLinkMeta, receiptIntegrity } from '../lib/link.js';
 
 export interface ProveOptions {
   /** One JSON object on stdout. Human banner stays off. */
@@ -456,7 +455,7 @@ function lookupParentVerified(
   if (!local) return null;
   if (resolve(local.path) === resolve(receiptPath)) return selfOk;
   try {
-    return verifyMarkdown(readFileSync(local.path, 'utf8')).ok;
+    return receiptIntegrity(readFileSync(local.path, 'utf8')).ok;
   } catch {
     return null;
   }

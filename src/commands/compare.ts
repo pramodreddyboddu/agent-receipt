@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../lib/config.js';
+import { parseSessionHeader } from '../lib/link.js';
 import { isInsideSharePackage, isProveOnePagerName, isSharePackageDirName } from '../lib/receipt.js';
 import { resolveReceiptPath, findLatestReceipt } from './show.js';
 import { color } from '../lib/color.js';
@@ -59,18 +60,12 @@ export function parseReceiptGlance(path: string): ReceiptGlance {
   const text = readFileSync(path, 'utf8');
   const glance: ReceiptGlance = { path, files: [], risks: [] };
 
-  const session = (label: string): string | undefined => {
-    const re = new RegExp(`^- \\*\\*${label}\\*\\*:\\s*(.+)$`, 'm');
-    const m = text.match(re);
-    if (!m) return undefined;
-    return m[1].replace(/^`|`$/g, '').trim();
-  };
-
-  glance.timestamp = session('Timestamp');
-  glance.branch = session('Branch');
-  glance.head = session('HEAD');
-  glance.agent = session('Agent');
-  glance.message = session('Message');
+  const header = parseSessionHeader(text);
+  glance.timestamp = header.Timestamp;
+  glance.branch = header.Branch;
+  glance.head = header.HEAD;
+  glance.agent = header.Agent;
+  glance.message = header.Message;
   glance.uncommitted = /\*\*Snapshot\*\*:\s*\*\*uncommitted\*\*/.test(text);
 
   const sha = text.match(/agent-receipt-sha256:\s*([a-f0-9]{64})/);

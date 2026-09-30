@@ -82,10 +82,12 @@ Options:
   --since <ref>          Diff range start (e.g. main, HEAD~5, abc123)
   --commits <N>          Last N commits (default: config or 1)
   --uncommitted          Snapshot dirty working tree (staged+unstaged+untracked)
-  --message <text>       Human/agent session message
-  --agent <name>         Agent label (default: config or "agent")
-  --session <id>         Session id grouping related runs (1–64 of [A-Za-z0-9._:-])
-  --parent <ref>         Parent receipt: r- id, sha256, or a local receipt path
+  --message <text>       Session message (one line; newlines and control characters are rejected)
+  --agent <name>         Agent label (default: config or "agent"). Free-form;
+                         spaces allowed. No newlines or control characters.
+  --session <id>         Session id. Same values as 1.0.27, including spaces
+                         and slashes, stored as one line. \`new\` generates s- + 16 hex.
+  --parent <ref>         Parent receipt: r- id, sha256, or a path to a receipt file
   --host <label>         Host label. Omitted unless this flag or AGENT_RECEIPT_HOST
   --out <path>           Output Markdown path
   --full                 Include full diffs (no truncation)
@@ -129,13 +131,19 @@ and \`trust add --self\`, add \`sign: true\`. \`--no-sign\` overrides.
 Missing keys tip and leave the receipt unsigned (not exit 2).
 
 Link fields (session, parent, agent, host, and an r- id) are written into the
-hashed body only when a flag or env var is set. Flags win over
+\`## Session\` header block only when a flag or env var is set. Flags win over
 AGENT_RECEIPT_SESSION, AGENT_RECEIPT_PARENT, AGENT_RECEIPT_AGENT, and
-AGENT_RECEIPT_HOST. Invalid values (empty, too long, slashes, "..") fail
-before a file is written. Host is privacy-sensitive and is not recorded
-unless you pass --host or set AGENT_RECEIPT_HOST. \`share\` keeps session,
-parent, and agent, and masks host unless --include-host. A local
-\`capture --redact\` keeps an explicitly requested host.
+AGENT_RECEIPT_HOST. \`--agent\` is a free-form label (spaces allowed; no
+newlines, control characters, or more than 256 characters). Config
+\`defaultAgent\` uses the same rules. \`--session\` accepts the values 1.0.27
+stored, including spaces and slashes, as a single line of at most 256
+characters. Generated ids are \`s-\` + 16 hex. \`--host\` is 1–64 of
+[A-Za-z0-9._:-]. \`--parent\` is an r- id, a 64-hex sha256, or a path that
+parses as a receipt file (not an arbitrary file). \`--message\` must be one
+line. Invalid values fail before a file is written. Host is privacy-sensitive
+and is not recorded unless you pass --host or set AGENT_RECEIPT_HOST.
+\`share\` keeps session, parent, and agent, and masks host unless
+--include-host. A local \`capture --redact\` keeps an explicitly requested host.
 
 Each capture under outDir updates .agent-receipt/index.json (stable receipt index).
 Captures with --out outside outDir are not indexed (so they do not become newest)
@@ -163,13 +171,14 @@ otherwise captures commits (optionally vs --base). Explicit --base always uses a
 commit range even if the tree is dirty. Prints TL;DR + path, then verifies.
 
 Options:
-  --agent <name>         Agent label (default: wrap)
-  --session <id>         Session id. \`--session new\` generates one (s- + 16 hex)
-  --parent <ref>         Parent receipt: r- id, sha256, or a local receipt path
-  --host <label>         Host label. Omitted unless this flag or AGENT_RECEIPT_HOST
+  --agent <name>         Agent label (default: wrap). Free-form; spaces allowed
+  --session <id>         Session id. \`--session new\` generates s- + 16 hex.
+                         Other values may include spaces and slashes (1.0.27).
+  --parent <ref>         Parent receipt: r- id, sha256, or a path to a receipt file
+  --host <label>         Host label (strict charset). Omitted unless set
   --link                 Record a session (reuse env, or generate) and run the
                          command after -- with this receipt as its parent
-  --message <text>       Session message (default: "session wrap")
+  --message <text>       Session message, one line (default: "session wrap")
   --base <ref>           When clean, capture vs this base branch/ref
   --uncommitted          Require dirty-tree capture (error if clean)
   --redact               Mask high/secret findings in the written receipt
@@ -478,6 +487,7 @@ Options:
   --commits-only         Only watch HEAD commits (ignore dirty tree)
   --agent <name>         Agent label (default: watch)
   --session <id>         Session id recorded on each capture in this watch
+                         (1.0.27 values allowed; one line)
   --parent <ref>         Parent receipt: r- id, sha256, or a local receipt path
   --host <label>         Host label. Omitted unless this flag or AGENT_RECEIPT_HOST
   --message <text>       Session message
@@ -524,22 +534,31 @@ Examples:
 Usage:
   agent-receipt session <id> [--json] [--cwd <path>]
 
-Scans the configured outDir for receipts whose Session line equals <id>
-and prints a parent/child tree. Each line shows the receipt id, pass/fail,
-exit 0 or 2, agent label, timestamp, and verified or unverified.
+Scans the configured outDir for receipts whose Session header field equals
+<id> and prints a parent/child tree. Link fields are read only from the
+writer's \`## Session\` block, not from diffs or messages. Each line shows
+the receipt id, pass/fail, exit 0 or 2, agent label, timestamp, and
+verified or unverified.
 \`orphan\` means the parent ref is not a receipt in this outDir (it may
 live on another machine, or auto-prune deleted it). \`cycle\` means the
 parent links loop inside this session. Orphans and cycles do not by
 themselves change the exit code. A parent in a different local session
-is not an orphan.
+is not an orphan; the child is marked \`warnings=cross-session-parent\`.
+A child whose local parent fails verify is \`warnings=parent-unverified\`.
+A receipt with no Session line whose parent is in this session is listed
+with \`warnings=missing-session\`.
 
 \`--json\` prints one object: command, ok, version, exitCode, session,
 receipts[] (id, parent, agent, verified, exitCode, plus orphan, cycle,
-timestamp, status, path), and reason. Parent is the stored ref, or null.
+warnings, timestamp, status, path), and reason. Parent is the stored ref,
+or null. \`warnings\` is an array of those codes, or empty.
 
-Exit 0 when every receipt in the session verifies.
-Exit 1 when any receipt fails verify, when the session has no local
-receipts, or on usage errors (missing id, bad charset, unknown flag).
+Exit 0 when every listed receipt verifies and no local parent fails verify.
+Cross-session parents and a missing Session line do not by themselves
+change the exit code.
+Exit 1 when any receipt fails verify, when a local parent fails verify,
+when the session has no local receipts, or on usage errors (missing id,
+control characters, longer than 256 characters, unknown flag).
 A receipt's own exitCode in the tree is 0 or 2. That is separate from
 this command's exit code. Usage errors print on stderr. An empty session
 with --json still prints the object on stdout and exits 1.

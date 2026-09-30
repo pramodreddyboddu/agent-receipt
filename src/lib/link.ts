@@ -5,9 +5,18 @@
  * (`r-` + 16 hex) or the sha256 of the run that spawned this one.
  * Agent and host are short labels. Host is omitted unless the user opts in.
  *
- * These fields are written into the hashed Markdown body. Old receipts that
- * omit them verify unchanged. Nothing is written when no link flag and no
- * AGENT_RECEIPT_SESSION / PARENT / AGENT / HOST env is set.
+ * These fields are written into the hashed Markdown body, inside the
+ * `## Session` block the writer already emits. Link parsers read only that
+ * block (from the heading through the next heading), never diff or message
+ * text. Old receipts that omit the link lines verify unchanged. Nothing is
+ * written when no link flag and no AGENT_RECEIPT_SESSION / PARENT / AGENT /
+ * HOST env is set.
+ *
+ * `--agent` stays the 1.0.27 free-form label (spaces allowed). `--session`
+ * still accepts the values 1.0.27 stored, including spaces and slashes, as
+ * one line. Generated ids (`--session new`, `--link`) are `s-` + 16 hex.
+ * The strict label charset applies to `--host` and to those generated ids.
+ * `--parent` is an r- id, a sha256, or a path that parses as a receipt.
  *
  * `wrap --link` (or `--session`, including `--session new`) exports
  * AGENT_RECEIPT_SESSION and AGENT_RECEIPT_PARENT into a child process
@@ -31,9 +40,23 @@ import {
 /** 1–64 of [A-Za-z0-9._:-], must start alphanumeric, no ".." and no slashes. */
 export const LINK_LABEL_MAX = 64;
 
+/**
+ * Free-form `--agent` / config `defaultAgent` / legacy `--session`.
+ * Long enough for 1.0.27 display names. Longer values are rejected.
+ */
+export const FREEFORM_LABEL_MAX = 256;
+
 const LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const LINK_ID_RE = /^r-[0-9a-f]{16}$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
+/** Newlines, C0 controls, DEL, and Unicode line separators. */
+const CONTROL_RE = /[\u0000-\u001f\u007f\u2028\u2029]/;
+
+const LINK_FIELD_LABELS = new Set(['Id', 'Session', 'Parent', 'Agent', 'Host']);
+
+export const WARN_CROSS_SESSION = 'cross-session-parent';
+export const WARN_PARENT_UNVERIFIED = 'parent-unverified';
+export const WARN_MISSING_SESSION = 'missing-session';
 
 export interface LinkMeta {
   id: string | null;
@@ -88,6 +111,7 @@ export function newSessionId(): string {
   return `s-${randomBytes(8).toString('hex')}`;
 }
 
+/** Strict charset for new link labels (`--host`, generated `s-` session ids). */
 export function validateLinkLabel(kind: string, value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -101,6 +125,80 @@ export function validateLinkLabel(kind: string, value: string): string {
     );
   }
   return trimmed;
+}
+
+function rejectControl(kind: string, value: string): void {
+  if (CONTROL_RE.test(value)) {
+    throw new Error(
+      `Invalid ${kind}: newlines and control characters are rejected.`,
+    );
+  }
+}
+
+/**
+ * `--agent`, `AGENT_RECEIPT_AGENT`, and config `defaultAgent`.
+ * Same acceptance as 1.0.27 except control characters, newlines, and length.
+ */
+export function validateAgentLabel(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error('Invalid agent: value is empty.');
+  }
+  if (trimmed.length > FREEFORM_LABEL_MAX) {
+    throw new Error(
+      `Invalid agent: use at most ${FREEFORM_LABEL_MAX} characters.`,
+    );
+  }
+  rejectControl('agent', trimmed);
+  return trimmed;
+}
+
+/**
+ * `--session` and `AGENT_RECEIPT_SESSION`. 1.0.27 stored this string raw
+ * (spaces and slashes included). Keep that, but only as a single line so
+ * the value cannot break out of the Session header field.
+ */
+export function validateLegacySession(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error('Invalid session: value is empty.');
+  }
+  if (trimmed.length > FREEFORM_LABEL_MAX) {
+    throw new Error(
+      `Invalid session: use at most ${FREEFORM_LABEL_MAX} characters.`,
+    );
+  }
+  rejectControl('session', trimmed);
+  return trimmed;
+}
+
+/** `--message` is one physical line. Newlines would be written into the body. */
+export function validateMessageLine(value: string): string {
+  if (CONTROL_RE.test(value)) {
+    throw new Error(
+      '--message must be a single line. Newlines and control characters are rejected so a message cannot inject receipt header fields.',
+    );
+  }
+  return value;
+}
+
+export function validateStoredId(value: string): string {
+  const trimmed = value.trim();
+  if (!LINK_ID_RE.test(trimmed)) {
+    throw new Error(
+      `Invalid id ${JSON.stringify(trimmed)}: link id must be r- followed by 16 hex digits.`,
+    );
+  }
+  return trimmed;
+}
+
+/** Value stored on the Parent line after path resolution. */
+export function validateStoredParent(value: string): string {
+  const trimmed = value.trim();
+  if (LINK_ID_RE.test(trimmed) || SHA256_RE.test(trimmed)) return trimmed;
+  throw new Error(
+    `Invalid parent ${JSON.stringify(trimmed)}: stored parent must be an r- id or a 64-hex sha256.`,
+  );
 }
 
 function envValue(env: NodeJS.ProcessEnv | undefined, name: string): string | undefined {
@@ -137,14 +235,100 @@ export function listOutDirReceipts(cwd: string): string[] {
     });
 }
 
+interface HeadingAt {
+  index: number;
+  text: string;
+}
+
+function markdownLines(markdown: string): string[] {
+  return markdown.replace(/\r\n/g, '\n').split('\n');
+}
+
+/** Headings outside fenced code blocks. Diff bodies live inside fences. */
+function unfencedHeadings(lines: string[]): HeadingAt[] {
+  const headings: HeadingAt[] = [];
+  let fence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith('```')) {
+      fence = !fence;
+      continue;
+    }
+    if (fence) continue;
+    if (line.startsWith('## ')) headings.push({ index: i, text: line });
+  }
+  return headings;
+}
+
+function sectionBody(lines: string[], start: number, headings: HeadingAt[]): string[] {
+  const next = headings.find((heading) => heading.index > start);
+  const end = next ? next.index : lines.length;
+  return lines.slice(start + 1, end);
+}
+
+function hasWriterMarkers(body: string[]): boolean {
+  const has = (prefix: string) => body.some((line) => line.startsWith(prefix));
+  return has('- **Version**:') && has('- **Timestamp**:') && has('- **Workspace**:');
+}
+
+/**
+ * Lines of the writer's `## Session` block only (heading excluded, next
+ * heading excluded). Full receipts are identified by the block the writer
+ * emits: the first `## Session` that follows `## Summary` and contains
+ * Version, Timestamp, and Workspace. A `## Session` inside a message,
+ * a diff, or a later section does not match that position. Minimal
+ * fixtures that are only a `## Session` block use that first block.
+ */
+export function sessionHeaderLines(markdown: string): string[] | null {
+  const lines = markdownLines(markdown);
+  const headings = unfencedHeadings(lines);
+  const blocks = headings
+    .filter((heading) => heading.text === '## Session')
+    .map((heading) => {
+      const previous = [...headings].reverse().find((item) => item.index < heading.index);
+      return {
+        body: sectionBody(lines, heading.index, headings),
+        afterSummary: previous?.text === '## Summary',
+      };
+    });
+  const writer = blocks.find((block) => block.afterSummary && hasWriterMarkers(block.body));
+  if (writer) return writer.body;
+  if (!blocks.length) return null;
+  return blocks[0].body;
+}
+
+/**
+ * Field lines in the header block. Link fields that appear after the
+ * writer's Message or Workspace line are ignored: a multi-line message
+ * is written on that line and must not add Session or Parent.
+ */
+function headerFieldMap(body: string[]): Map<string, string> {
+  const fields = new Map<string, string>();
+  let closed = false;
+  for (const line of body) {
+    const match = line.match(/^- \*\*([A-Za-z][A-Za-z0-9 ]*)\*\*:\s*(.*)$/);
+    if (!match) continue;
+    const label = match[1];
+    if (closed && LINK_FIELD_LABELS.has(label)) continue;
+    if (!fields.has(label)) {
+      const value = match[2].replace(/^`|`$/g, '').trim();
+      if (value) fields.set(label, value);
+    }
+    if (label === 'Message' || label === 'Workspace') closed = true;
+  }
+  return fields;
+}
+
+/** Header fields keyed by their Markdown label (Branch, Agent, Message, …). */
+export function parseSessionHeader(markdown: string): Record<string, string> {
+  const body = sessionHeaderLines(markdown);
+  if (!body) return {};
+  return Object.fromEntries(headerFieldMap(body));
+}
+
 export function parseLinkMeta(markdown: string): LinkMeta {
-  const field = (label: string): string | null => {
-    const re = new RegExp(`^- \\*\\*${label}\\*\\*:\\s*(.+)$`, 'm');
-    const m = markdown.match(re);
-    if (!m) return null;
-    const value = m[1].replace(/^`|`$/g, '').trim();
-    return value || null;
-  };
+  const header = parseSessionHeader(markdown);
+  const field = (label: string): string | null => header[label] ?? null;
   return {
     id: field('Id'),
     session: field('Session'),
@@ -153,6 +337,53 @@ export function parseLinkMeta(markdown: string): LinkMeta {
     host: field('Host'),
     timestamp: field('Timestamp'),
   };
+}
+
+/**
+ * True when the markdown is an agent-receipt document, not an arbitrary file.
+ * Requires the Session header plus either the writer title or an embedded sha256.
+ */
+export function isReceiptDocument(markdown: string): boolean {
+  if (!sessionHeaderLines(markdown)) return false;
+  if (markdownLines(markdown).some((line) => line === '# Agent Receipt')) return true;
+  const embedded = extractEmbeddedHash(markdown);
+  return Boolean(embedded && SHA256_RE.test(embedded));
+}
+
+/** Host value `share` writes when it masks the label. It is not a user host. */
+const REDACTED_HOST = '[REDACTED]';
+
+/**
+ * Hash-ok receipts whose header link fields fail the same checks as input
+ * are treated as tampered. Absent fields are fine (unlinked and 1.0.27 receipts).
+ * The published share mask `[REDACTED]` is a legal stored host.
+ */
+export function linkMetaTamperReason(markdown: string): string | null {
+  const meta = parseLinkMeta(markdown);
+  try {
+    if (meta.id) validateStoredId(meta.id);
+    if (meta.session) validateLegacySession(meta.session);
+    if (meta.parent) validateStoredParent(meta.parent);
+    if (meta.agent) validateAgentLabel(meta.agent);
+    if (meta.host && meta.host !== REDACTED_HOST) validateLinkLabel('host', meta.host);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `Invalid link metadata — receipt may have been tampered with (${msg})`;
+  }
+  return null;
+}
+
+/** Hash check plus header link-field validation. */
+export function receiptIntegrity(markdown: string): {
+  ok: boolean;
+  reason: string;
+  actual: string;
+} {
+  const hash = verifyMarkdown(markdown);
+  if (!hash.ok) return { ok: false, reason: hash.reason, actual: hash.actual };
+  const tamper = linkMetaTamperReason(markdown);
+  if (tamper) return { ok: false, reason: tamper, actual: hash.actual };
+  return { ok: true, reason: hash.reason, actual: hash.actual };
 }
 
 export interface LocalReceiptRef {
@@ -173,16 +404,17 @@ export function readLocalReceipt(filePath: string): LocalReceiptRef | null {
     return null;
   }
   const meta = parseLinkMeta(text);
-  const embedded = extractEmbeddedHash(text);
-  const actual = verifyMarkdown(text).actual || null;
-  const sha256 = embedded ?? actual;
+  const verified = verifyMarkdown(text);
+  const embeddedRaw = extractEmbeddedHash(text);
+  const embedded = embeddedRaw && SHA256_RE.test(embeddedRaw) ? embeddedRaw.toLowerCase() : null;
+  // canonicalBody always hashes, so a file with no marker still has an id.
+  const sha256 = verified.actual;
   const id = meta.id && LINK_ID_RE.test(meta.id) ? meta.id : sha256;
-  if (!id) return null;
   const aliases = new Set<string>();
   aliases.add(id);
-  if (meta.id) aliases.add(meta.id);
+  if (meta.id && LINK_ID_RE.test(meta.id)) aliases.add(meta.id);
   if (embedded) aliases.add(embedded);
-  if (actual) aliases.add(actual);
+  if (SHA256_RE.test(sha256)) aliases.add(sha256);
   return { path: filePath, id, sha256, aliases: [...aliases], meta };
 }
 
@@ -214,8 +446,8 @@ export function resolveParentRef(cwd: string, raw: string): string {
   if (value.length > 4096) {
     throw new Error('--parent is too long (max 4096 characters).');
   }
-  if (value.includes('\0')) {
-    throw new Error('--parent contains a null byte.');
+  if (CONTROL_RE.test(value)) {
+    throw new Error('--parent contains a control character.');
   }
   if (value.includes('..') || value.includes('\\')) {
     throw new Error(
@@ -245,6 +477,18 @@ export function resolveParentRef(cwd: string, raw: string): string {
   if (!st.isFile()) {
     throw new Error(`--parent path is not a file: ${value}`);
   }
+  let text: string;
+  try {
+    text = readFileSync(asPath, 'utf8');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`--parent path cannot be read (${value}): ${msg}`);
+  }
+  if (!isReceiptDocument(text)) {
+    throw new Error(
+      `--parent ${JSON.stringify(value)} is not a receipt file. Pass an r- id, a 64-hex sha256, or a path to an agent-receipt Markdown file.`,
+    );
+  }
   const local = readLocalReceipt(asPath);
   if (!local) {
     throw new Error(`--parent file has no receipt id or hash: ${value}`);
@@ -269,10 +513,10 @@ export function resolveLink(cwd: string, input: ResolveLinkInput): ResolvedLink 
   if (sessionFlag === 'new') {
     session = newSessionId();
   } else if (sessionFlag !== undefined) {
-    session = validateLinkLabel('session', sessionFlag);
+    session = validateLegacySession(sessionFlag);
   } else {
     const fromEnv = envValue(env, 'AGENT_RECEIPT_SESSION');
-    if (fromEnv) session = validateLinkLabel('session', fromEnv);
+    if (fromEnv) session = validateLegacySession(fromEnv);
   }
 
   if (input.link && !session) {
@@ -289,10 +533,10 @@ export function resolveLink(cwd: string, input: ResolveLinkInput): ResolvedLink 
 
   let agent: string | undefined;
   if (agentFlag !== undefined) {
-    agent = validateLinkLabel('agent', agentFlag);
+    agent = validateAgentLabel(agentFlag);
   } else {
     const fromEnv = envValue(env, 'AGENT_RECEIPT_AGENT');
-    if (fromEnv) agent = validateLinkLabel('agent', fromEnv);
+    if (fromEnv) agent = validateAgentLabel(fromEnv);
   }
 
   let host: string | undefined;
@@ -332,6 +576,8 @@ export interface SessionNode {
   exitCode: 0 | 2;
   orphan: boolean;
   cycle: boolean;
+  /** cross-session-parent, parent-unverified, missing-session. */
+  warnings: string[];
   timestamp: string | null;
   status: 'pass' | 'fail';
   path: string;
@@ -408,6 +654,7 @@ export function buildSessionNodes(
       exitCode: verified ? 0 : 2,
       orphan,
       cycle: cycle.has(row.id),
+      warnings: [],
       timestamp: row.timestamp,
       status: verified ? 'pass' : 'fail',
       path: row.path,
@@ -460,6 +707,7 @@ export function formatSessionTree(
     ];
     if (node.orphan) bits.push('orphan');
     if (node.cycle) bits.push('cycle');
+    if (node.warnings.length) bits.push(`warnings=${node.warnings.join(',')}`);
     lines.push(`${indent}- ${bits.join('  ')}`);
     for (const child of children.get(node.id) ?? []) walk(child, `${indent}  `);
   };
