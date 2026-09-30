@@ -2,12 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/report-payload.schema.json",
   "title": "ReportPayload",
-  "description": "Canonical JSON embedded in a signed one-page HTML report (`<script type=\"application/json\" id=\"agent-receipt-report\">`) by `agent-receipt report`. The Ed25519 signature is a SignatureDocument (docs/signature.schema.json) over the UTF-8 hex SHA-256 of the canonical form of this object (sorted object keys, no whitespace, array order kept). The signature document is not inside this object. `render(payload, signature)` writes the page and inserts the signature block (`id` `agent-receipt-report-sig`, or JSON `null` when unsigned) at a fixed place. `report verify` re-renders and requires the same bytes. A single missing trailing newline is ignored. Any other difference exits 2 with \"page content does not match signed payload\". Every string the page shows is a field here: verdict, banner, pills, agent, fingerprints, trust, signature status, title, UNREDACTED state, and the narrative. Exactly one payload block and exactly one signature block must sit outside HTML comments. Zero, a duplicate, a block inside a comment, or a payload that fails this schema exits 2. A detached `<report>.html.sig.json` is written when local keys load. Receipt files are re-hashed only when their canonical sha256 or redactedSha256 matches. They are not matched by id. originalFingerprint, resignedBy, and signedBy are the manifest signer's claims when the report was built from a session package. This is not a certificate authority.",
+  "description": "Canonical JSON embedded in a signed one-page HTML report (`<script type=\"application/json\" id=\"agent-receipt-report\">`) by `agent-receipt report`. The Ed25519 signature is a SignatureDocument (docs/signature.schema.json) over the UTF-8 hex SHA-256 of the canonical form of this object (sorted object keys, no whitespace, array order kept). The signature document is not inside this object. `render(payload, signature)` writes the page and inserts the signature block (`id` `agent-receipt-report-sig`, or JSON `null` when unsigned) at a fixed place. `report verify` re-renders and requires the same bytes. A single missing trailing newline is ignored. Any other difference exits 2 with \"page content does not match signed payload\". Every string the page shows is a field here: verdict, banner, pills, agent, fingerprints, trust, signature status, title, UNREDACTED state, and the narrative. Exactly one payload block and exactly one signature block must sit outside HTML comments. Zero, a duplicate, a block inside a comment, or a payload that fails this schema exits 2. A detached `<report>.html.sig.json` is written when local keys load. renderVersion selects the HTML renderer. A receipt file whose canonical sha256 or redactedSha256 matches is checked. A same-id file that still differs after redaction fails verify. originalFingerprint, resignedBy, and signedBy are the manifest signer's claims when the report was built from a session package. This is not a certificate authority.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "kind",
     "version",
+    "renderVersion",
     "cliVersion",
     "generatedAt",
     "subject",
@@ -29,7 +30,12 @@
     },
     "version": {
       "const": 1,
-      "description": "Payload schema version. Not the CLI version."
+      "description": "Payload schema version. Not the CLI version and not renderVersion."
+    },
+    "renderVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "HTML renderer id. 1 is the v1.0.30 page. report verify selects the renderer by this integer and exits 2 for an unknown version. A later template adds a renderer and keeps this one."
     },
     "cliVersion": {
       "type": "string",
@@ -155,7 +161,7 @@
             "description": "Canonical verify hash of the file the report was built from."
           },
           "redactedSha256": {
-            "description": "Canonical hash of the default redacted body when it differs from sha256, otherwise null. report verify may match this hash. It never matches a different byte string by id.",
+            "description": "Canonical hash of the default redacted body when it differs from sha256, otherwise null. report verify treats a file with this hash as that receipt. A same-id file is also checked when publishRedactedReceipt hashes to sha256 or this value. A same-id file that matches neither fails verify.",
             "anyOf": [
               { "type": "string", "pattern": "^[0-9a-f]{64}$" },
               { "type": "null" }

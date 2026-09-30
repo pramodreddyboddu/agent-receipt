@@ -699,6 +699,8 @@ segment becomes \`<id>.report.html\`; anything else becomes
 existing directory, or a path that ends with \`/\`, receives
 \`<stem>.report.html\`. The report is never written over the source receipt.
 \`*.report.html\` is not a receipt. \`last\`, \`history\`, and \`prune\` ignore it.
+A file that contains the report payload block is already a report, including
+one renamed to \`.md\`. \`report\` on that file exits 1.
 
 The page shows a verdict banner (VERIFIED, FAILED, UNSIGNED, UNTRUSTED),
 what the agent did (summary, commands, files, risk flags, What to review),
@@ -736,20 +738,40 @@ duplicate, or a block inside a comment exits 2. A payload that is present
 but fails the schema exits 2. It then checks the signature, re-renders the
 page, and requires the same bytes. A single missing trailing newline is
 ignored. Any other difference exits 2 with
-"page content does not match signed payload". Receipt files are re-hashed when outDir or
-\`--receipts <dir>\` has the recorded sha256 or redactedSha256. A different
-file with the same id is not a match. Several HTML files are allowed; the
-exit code is the worst of them.
+"page content does not match signed payload". A CR byte exits 2 with
+"page has CRLF line endings" and names \`core.autocrlf\`. Add
+\`*.report.html -text\` to \`.gitattributes\`. Those bytes are not rewritten.
+Invalid UTF-8 exits 2. \`renderVersion\` selects the renderer. Version 1 is
+this page. An unknown renderVersion exits 2. Bidi controls in rendered
+fields, including agent names, are shown as \`\\uXXXX\`.
+
+Candidate receipts come from outDir. \`--receipts <dir>\` searches that
+directory instead of outDir. A file whose bytes match the recorded sha256
+or redactedSha256 is checked. A file with the same id whose bytes and
+redacted form both differ exits 2
+("receipt <id> on disk differs from the signed payload").
+The redacted form uses the same \`publishRedactedReceipt\`
+pipeline as share, so \`report <package>.session\` still verifies in the
+exporter's own repo. With \`--receipts\`, a referenced receipt that is
+absent exits 2 ("receipt <id> referenced by report not found in
+--receipts"). Without \`--receipts\`, an absent receipt is skipped and
+verify prints "skipped N (not found locally)" on stderr and in the output.
+Exit 0 only when nothing that was found is mismatched. Several HTML files
+are allowed; the exit code is the worst of them.
 
 Exit codes:
   0  signature valid, page matches, verdict VERIFIED
   0  no --require-sig, page matches, verdict UNSIGNED (printed UNSIGNED)
   1  missing file, unreadable file, or --receipts is not a readable directory
-  2  bad or missing blocks, schema, signature, page bytes, a found receipt,
-     verdict FAILED, verdict UNTRUSTED, or UNSIGNED with --require-sig
-A non-zero exit never prints VERIFIED. \`--require-sig\` also enforces the
-trust allowlist. originalFingerprint, resignedBy, and signedBy are the
-manifest signer's claims. This is not a certificate authority.
+  2  bad or missing blocks, schema, signature, page bytes, a found receipt
+     that differs, a missing --receipts entry, verdict FAILED, verdict
+     UNTRUSTED, or UNSIGNED with --require-sig
+A non-zero exit never prints VERIFIED. \`--require-sig\` enforces the
+trust allowlist when one is configured. With no trust store,
+\`--require-sig\` accepts any valid self-signed page and prints a one-line
+note. Use a trust allowlist (\`agent-receipt trust add --self\`) so a
+reviewer accepts only known keys. originalFingerprint, resignedBy, and
+signedBy are the manifest signer's claims. This is not a certificate authority.
 
 \`--json\` prints one object (command \`report\` or \`report-verify\`).
 The report does not append the audit log and does not add an index row.
