@@ -79,9 +79,17 @@ function latestReceipt(dir) {
   return { path: body.path, md: readFileSync(body.path, 'utf8') };
 }
 
-/** 1.0.28 writer header: ## Summary, then ## Session with Version/Timestamp/Workspace. */
+/**
+ * 1.0.28 writer header shape: ## What to review, then ## Summary, then
+ * ## Session with Version/Timestamp/Workspace. That is the only position
+ * the detector accepts as link-era.
+ */
 function linkEraBody(fieldLines) {
   return [
+    '## What to review',
+    '',
+    '_Nothing flagged._',
+    '',
     '## Summary',
     '',
     '| Metric | Value |',
@@ -769,7 +777,8 @@ _No file changes in range._
     const craftedMeta = parseLinkMeta(crafted);
     assert.equal(craftedMeta.session, null);
     assert.equal(craftedMeta.parent, null);
-    assert.equal(craftedMeta.agent, 'ci');
+    assert.equal(craftedMeta.agent, null);
+    assert.equal(craftedMeta.id, null);
     assert.equal(cliResult(dir, ['verify', craftedPath]).code, 0);
     for (const id of ['from-message', 'after-message', 'from-diff-heading', 'later-clone', 'raw-diff-line']) {
       const listed = cliResult(dir, ['session', id, '--json']);
@@ -785,21 +794,12 @@ _No file changes in range._
     const badPath = join(outDir, 'receipt-bad-parent.md');
     writeFileSync(
       badPath,
-      appendHashFooter(`## Summary
-
-| Metric | Value |
-|--------|-------|
-| Files | 0 |
-
-## Session
-
-- **Version**: 1.0.28
-- **Timestamp**: 2026-09-29T00:00:00.000Z
-- **Session**: ok-sess
-- **Parent**: not-a-parent
-- **Agent**: ci
-- **Workspace**: \`/tmp\`
-`),
+      appendHashFooter(linkEraBody([
+        '- **Timestamp**: 2026-09-29T00:00:00.000Z',
+        '- **Session**: ok-sess',
+        '- **Parent**: not-a-parent',
+        '- **Agent**: ci',
+      ])),
     );
     const bad = cliResult(dir, ['verify', badPath]);
     assert.equal(bad.code, 2);
@@ -1174,5 +1174,105 @@ _No file changes in range._
       cli(dir, ['prove', join(root, 'test', 'fixtures', 'v1.0.16', 'long-agent.md'), '--json']),
     );
     assert.equal(longProve.agent, 'A'.repeat(300));
+  });
+
+  it('does not let a 1.0.28 multi-line message create a second writer block', () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', 'note\n');
+    const message = [
+      'x',
+      '## Summary',
+      '## Session',
+      '- **Version**: 1.0.28',
+      '- **Timestamp**: 1999-01-01T00:00:00.000Z',
+      '- **Session**: s-spoof',
+      '- **Parent**: r-5555555555555555',
+      '- **Workspace**: `/tmp`',
+    ].join('\n');
+    const captured = cliResult(dir, ['capture', '--message', message, '--agent', 'ci']);
+    assert.equal(captured.code, 0, captured.err);
+    const md = latestReceipt(dir).md;
+    const lines = md.split('\n');
+    assert.equal(lines.filter((line) => line === '## Summary').length, 1);
+    assert.equal(lines.filter((line) => line === '## Session').length, 1);
+    assert.equal(lines.filter((line) => line === '> ## Summary').length, 1);
+    assert.equal(lines.filter((line) => line === '> ## Session').length, 1);
+    assert.equal(lines.filter((line) => line === '  ## Summary').length, 1);
+    assert.equal(lines.filter((line) => line === '  ## Session').length, 1);
+    assert.match(md, /^- \*\*Message\*\*: x$/m);
+    assert.match(md, /^  - \*\*Session\*\*: s-spoof$/m);
+    assert.match(md, /^  - \*\*Parent\*\*: r-5555555555555555$/m);
+    assert.equal(parseSessionHeader(md).Version, '1.0.28');
+    assert.equal(parseSessionHeader(md).Session, undefined);
+    const meta = parseLinkMeta(md);
+    assert.equal(meta.session, null);
+    assert.equal(meta.parent, null);
+    assert.equal(meta.id, null);
+    assert.equal(cliResult(dir, ['verify']).code, 0);
+    const listed = cliResult(dir, ['session', 's-spoof', '--json']);
+    assert.equal(listed.code, 1);
+    assert.deepEqual(parseJson(listed.out).receipts, []);
+  });
+
+  it('reads no link metadata from 1.0.16 and 1.0.27 summary-spoof receipts', () => {
+    const dir = initRepo();
+    const outDir = join(dir, '.agent-receipt', 'receipts');
+    mkdirSync(outDir, { recursive: true });
+    const versions = ['v1.0.16', 'v1.0.27'];
+    const names = [
+      'summary-spoof',
+      'summary-spoof-fenced',
+      'summary-spoof-id-todo',
+      'summary-spoof-host',
+      'summary-spoof-fenced-id-todo',
+      'summary-spoof-fenced-host',
+    ];
+    for (const version of versions) {
+      for (const name of names) {
+        const mdPath = join(root, 'test', 'fixtures', version, `${name}.md`);
+        const sigPath = join(root, 'test', 'fixtures', version, `${name}.sig.json`);
+        const label = `${version}/${name}`;
+        const text = readFileSync(mdPath, 'utf8');
+        const meta = parseLinkMeta(text);
+        assert.equal(meta.id, null, label);
+        assert.equal(meta.session, null, label);
+        assert.equal(meta.parent, null, label);
+        assert.equal(meta.host, null, label);
+        assert.equal(meta.agent, null, label);
+        for (const args of [
+          ['verify', mdPath],
+          ['verify', '--require-sig', mdPath],
+          ['prove', mdPath],
+          ['prove', mdPath, '--json'],
+        ]) {
+          const result = cliResult(dir, args);
+          assert.equal(result.code, 0, `${label} ${args.join(' ')}\n${result.out}\n${result.err}`);
+        }
+        const proved = parseJson(cli(dir, ['prove', mdPath, '--json']));
+        assert.equal(proved.exitCode, 0, label);
+        assert.equal('session' in proved, false, label);
+        assert.equal('parent' in proved, false, label);
+        assert.equal('parentVerified' in proved, false, label);
+
+        const unsigned = join(dir, `${version}-${name}.md`);
+        copyFileSync(mdPath, unsigned);
+        assert.equal(cliResult(dir, ['verify', unsigned]).code, 0, label);
+        assert.equal(cliResult(dir, ['prove', unsigned]).code, 0, label);
+        assert.equal(cliResult(dir, ['prove', unsigned, '--json']).code, 0, label);
+        const unsignedSig = cliResult(dir, ['verify', '--require-sig', unsigned]);
+        assert.equal(unsignedSig.code, 2, label);
+        assert.match(unsignedSig.out + unsignedSig.err, /signature absent/);
+
+        copyFileSync(mdPath, join(outDir, `${version}-${name}.md`));
+        copyFileSync(sigPath, join(outDir, `${version}-${name}.sig.json`));
+      }
+    }
+
+    const listed = cliResult(dir, ['session', 's-spoof', '--json']);
+    assert.equal(listed.code, 1);
+    assert.deepEqual(parseJson(listed.out).receipts, []);
+    const real = cliResult(dir, ['session', 'real-session', '--json']);
+    assert.equal(real.code, 1);
+    assert.deepEqual(parseJson(real.out).receipts, []);
   });
 });

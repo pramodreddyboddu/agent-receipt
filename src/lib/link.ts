@@ -6,12 +6,17 @@
  * Agent and host are short labels. Host is omitted unless the user opts in.
  *
  * These fields are written into the hashed Markdown body, inside the
- * `## Session` block the writer already emits. Link parsers read only the
- * 1.0.28+ header block directly after `## Summary` (Version, Timestamp, and
- * Workspace, through the next heading). There is no fallback block. Diffs,
- * messages, and a `## Session` anywhere else are not link metadata.
- * Pre-1.0.28 receipts have no link metadata. Nothing is written when no
- * link flag and no AGENT_RECEIPT_SESSION / PARENT / AGENT / HOST env is set.
+ * `## Session` block the writer already emits. A receipt is 1.0.28+ only
+ * when the file has exactly one unfenced writer block and that block sits
+ * where this writer puts it. A writer block is a `## Session` whose previous
+ * unfenced heading is `## Summary`, with Version, Timestamp, and Workspace
+ * in that section. The canonical position is the heading before that
+ * `## Summary` being `## What to review`. Zero blocks, two or more, or one
+ * block anywhere else are pre-1.0.28: no link metadata, and verify uses
+ * 1.0.27 rules. The 1.0.28 writer quotes every message line in the TL;DR
+ * and indents every header continuation, so a message cannot add a second
+ * block. Nothing is written when no link flag and no
+ * AGENT_RECEIPT_SESSION / PARENT / AGENT / HOST env is set.
  *
  * `--agent` stays the 1.0.27 free-form label (spaces allowed). `--session`
  * still accepts the values 1.0.27 stored, including spaces and slashes, as
@@ -262,23 +267,51 @@ function hasWriterMarkers(body: string[]): boolean {
   return has('- **Version**:') && has('- **Timestamp**:') && has('- **Workspace**:');
 }
 
+interface WriterBlock {
+  summaryIndex: number;
+  body: string[];
+}
+
 /**
- * Lines of the writer's `## Session` block only (heading excluded, next
- * heading excluded). The block is the `## Session` directly after
- * `## Summary` that contains Version, Timestamp, and Workspace. No other
- * `## Session` is a header. A message, diff, or later section cannot supply one.
+ * Every unfenced `## Summary` → `## Session` section that carries Version,
+ * Timestamp, and Workspace. Fenced lines (diffs, a closed fence) are not
+ * blocks. The scan is the whole file, not the first hit.
  */
-export function sessionHeaderLines(markdown: string): string[] | null {
-  const lines = markdownLines(markdown);
-  const headings = unfencedHeadings(lines);
+function findWriterBlocks(lines: string[], headings: HeadingAt[]): WriterBlock[] {
+  const blocks: WriterBlock[] = [];
   for (const heading of headings) {
     if (heading.text !== '## Session') continue;
     const previous = [...headings].reverse().find((item) => item.index < heading.index);
     if (previous?.text !== '## Summary') continue;
     const body = sectionBody(lines, heading.index, headings);
-    if (hasWriterMarkers(body)) return body;
+    if (!hasWriterMarkers(body)) continue;
+    blocks.push({ summaryIndex: previous.index, body });
   }
-  return null;
+  return blocks;
+}
+
+/**
+ * The 1.0.28 writer emits `## What to review`, then `## Summary`, then
+ * `## Session`. A block anywhere else was not written by that writer.
+ */
+function isCanonicalWriterBlock(headings: HeadingAt[], block: WriterBlock): boolean {
+  const before = [...headings].reverse().find((item) => item.index < block.summaryIndex);
+  return before?.text === '## What to review';
+}
+
+/**
+ * Body of the writer `## Session` block (heading excluded, next heading
+ * excluded). Returned only when the file has exactly one writer block and
+ * that block is in the 1.0.28 writer's position. Otherwise null, which
+ * callers treat as pre-1.0.28: no link metadata.
+ */
+export function sessionHeaderLines(markdown: string): string[] | null {
+  const lines = markdownLines(markdown);
+  const headings = unfencedHeadings(lines);
+  const blocks = findWriterBlocks(lines, headings);
+  if (blocks.length !== 1) return null;
+  if (!isCanonicalWriterBlock(headings, blocks[0])) return null;
+  return blocks[0].body;
 }
 
 /**
@@ -323,10 +356,10 @@ function headerFieldMap(body: string[]): Map<string, string> {
 }
 
 /**
- * Link rules apply only to receipts this release writes. The Version line is
- * emitted by the writer before any agent, session, or message text, and the
- * first value wins, so a later line cannot retarget an older receipt.
- * 1.0.28+ is `1.0.28` and any newer major.minor.patch.
+ * Link rules apply only to the single canonical writer block. Version is
+ * read from that block only. 1.0.28+ is `1.0.28` and any newer
+ * major.minor.patch. Any other shape is not link-era, even if some line
+ * says `1.0.28`.
  */
 export function isLinkEraVersion(version: string | null | undefined): boolean {
   if (!version) return false;
