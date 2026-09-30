@@ -2,7 +2,7 @@
  * `prove --html`: one self-contained, offline HTML verification report.
  *
  * - Inline CSS only. No scripts, no links, no images, no fonts, no network.
- * - A strict Content-Security-Policy meta tag (`default-src 'none'`).
+ * - A strict Content-Security-Policy meta tag (`default-src 'none'`, `img-src 'none'`).
  * - Every receipt-derived string is redacted with the same secret rules as
  *   `share` / `export --redact`, then HTML-escaped.
  * - URLs in receipt text are defanged (`https[:]//`) so nothing in the
@@ -37,6 +37,11 @@ export interface ProveHtmlReport {
   sha256: string | null;
   tldr: string | null;
   agent: string | null;
+  /** Set together when the receipt carries a session or parent link. */
+  session?: string | null;
+  parent?: string | null;
+  /** True/false when the parent receipt is local. Null when it is not local. */
+  parentVerified?: boolean | null;
   risk: GateRisk | null;
   audit: ProveHtmlAudit;
   signature: SignatureStatus;
@@ -226,6 +231,21 @@ export function renderProveHtml(
     row('Failed gate', escapeHtml(report.failedOn ? 'yes' : 'no')),
   ];
   if (report.failOn) summaryRows.push(row('--fail-on', safeText(report.failOn)));
+  if (report.session || report.parent) {
+    summaryRows.push(row('Session', safeText(report.session)));
+    summaryRows.push(
+      row('Parent', report.parent ? `<code>${safeText(report.parent)}</code>` : '(none)'),
+    );
+    const parentState =
+      report.parentVerified === true
+        ? 'yes'
+        : report.parentVerified === false
+          ? 'no'
+          : report.parent
+            ? 'not local'
+            : '(none)';
+    summaryRows.push(row('Parent verify', escapeHtml(parentState)));
+  }
 
   const verifyRows = [
     row('Verdict', statusCell(pass ? 'pass' : 'fail', verdict)),
@@ -246,7 +266,7 @@ export function renderProveHtml(
     '<html lang="en">',
     '<head>',
     '<meta charset="utf-8">',
-    `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">`,
+    `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; base-uri 'none'; form-action 'none'">`,
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     '<meta name="referrer" content="no-referrer">',
     `<meta name="generator" content="agent-receipt ${escapeHtml(report.version)}">`,

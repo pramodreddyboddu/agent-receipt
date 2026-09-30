@@ -555,6 +555,7 @@ export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCh
 
   checks.push(retentionCheck(cwd, cfgNow));
   checks.push(autoPruneCheck(cfgNow));
+  checks.push(linkCheck());
 
   if (!inRepo) {
     checks.push({
@@ -621,6 +622,21 @@ export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCh
   return applyStrictGates(cwd, checks);
 }
 
+/**
+ * Linking is opt-in. INFO on default doctor and under `--strict`.
+ * Never a failure by itself.
+ */
+function linkCheck(): DoctorCheck {
+  return {
+    name: 'link',
+    status: 'info',
+    detail:
+      'multi-agent linking is opt-in (--session, --parent, --agent, --host, wrap --link). ' +
+      'Host is omitted unless --host or AGENT_RECEIPT_HOST. share masks host unless --include-host. ' +
+      'Not a cross-host session merge.',
+  };
+}
+
 function icon(status: CheckStatus): string {
   switch (status) {
     case 'pass':
@@ -646,6 +662,7 @@ const PROD_CHECKS = [
   'trust',
   'retention',
   'autoPrune',
+  'link',
   'git-clean',
   'cursor',
   'grok',

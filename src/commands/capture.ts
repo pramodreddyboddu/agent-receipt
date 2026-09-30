@@ -33,6 +33,7 @@ import {
 import { updateIndexOnCapture } from '../lib/receipt-index.js';
 import { prepareRedactedBody } from '../lib/redact.js';
 import { appendHashFooter, extractEmbeddedHash, verifyMarkdown } from '../lib/hash.js';
+import { newLinkId } from '../lib/link.js';
 import { recordAuditEvent } from '../lib/audit.js';
 import { VERSION } from '../lib/version.js';
 import { color } from '../lib/color.js';
@@ -53,6 +54,12 @@ export interface CaptureOptions {
   message?: string;
   agent?: string;
   session?: string;
+  /** Link id (`r-` + 16 hex). Written only when linking is active. */
+  id?: string;
+  /** Parent receipt id or sha256. */
+  parent?: string;
+  /** Host label. Omitted unless the caller resolved one. */
+  host?: string;
   out?: string;
   full?: boolean;
   json?: boolean;
@@ -207,7 +214,12 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     rangeLabel,
     base,
     agent,
+    id:
+      opts.id ??
+      (opts.session || opts.parent || opts.host ? newLinkId() : undefined),
     session: opts.session,
+    parent: opts.parent,
+    host: opts.host,
     message: opts.message,
     commits,
     files,
@@ -224,7 +236,8 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
   });
   const redacted = Boolean(opts.redact);
   if (redacted) {
-    markdown = appendHashFooter(prepareRedactedBody(markdown));
+    // Keep an opted-in host on the local receipt. share / export mask it.
+    markdown = appendHashFooter(prepareRedactedBody(markdown, { maskHost: false }));
   }
   const quiet = Boolean(opts.quiet || opts.emitGate);
   const say = (line: string) => emitLine(quiet, line);
@@ -306,6 +319,15 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
   }
   if (redacted) {
     say(color.yellow('  ⚠ Receipt redacted — high/secret findings masked.'));
+  }
+  if (data.id || data.session || data.parent || data.host) {
+    const bits = [
+      data.id ? `id ${data.id}` : '',
+      data.session ? `session ${data.session}` : '',
+      data.parent ? `parent ${data.parent}` : '',
+      data.host ? `host ${data.host}` : '',
+    ].filter(Boolean);
+    say(color.dim(`  link: ${bits.join(' ')}`));
   }
   if (ignored.length) {
     say(

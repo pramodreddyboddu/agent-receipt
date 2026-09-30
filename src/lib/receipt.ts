@@ -41,7 +41,13 @@ export interface ReceiptData {
   rangeLabel: string;
   base: string;
   agent?: string;
+  /** Link id (`r-` + 16 hex). Omitted when this run is not linked. */
+  id?: string;
   session?: string;
+  /** Parent link id or sha256. Omitted when this run has no parent. */
+  parent?: string;
+  /** Host label. Omitted unless the user opted in. */
+  host?: string;
   message?: string;
   commits: string[];
   files: FileStat[];
@@ -210,8 +216,11 @@ export function formatMarkdown(
       `- **Range**: \`${data.rangeLabel}\` (\`${data.base.slice(0, 12)}\` → HEAD)`,
     );
   }
+  if (data.id) lines.push(`- **Id**: ${data.id}`);
   if (data.agent) lines.push(`- **Agent**: ${data.agent}`);
   if (data.session) lines.push(`- **Session**: ${data.session}`);
+  if (data.parent) lines.push(`- **Parent**: ${data.parent}`);
+  if (data.host) lines.push(`- **Host**: ${data.host}`);
   if (data.message) lines.push(`- **Message**: ${data.message}`);
   lines.push(`- **Workspace**: \`${data.cwd}\``);
   lines.push('');
@@ -322,6 +331,9 @@ export function formatJson(
     range: { label: data.rangeLabel, base: data.base, head: data.head },
     agent: data.agent ?? null,
     session: data.session ?? null,
+    ...(data.id ? { id: data.id } : {}),
+    ...(data.parent ? { parent: data.parent } : {}),
+    ...(data.host ? { host: data.host } : {}),
     message: data.message ?? null,
     uncommitted: Boolean(data.uncommitted),
     failedOn: Boolean(failedOn),

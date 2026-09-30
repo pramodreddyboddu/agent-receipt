@@ -180,8 +180,16 @@ export function redactSecretsInText(text: string): string {
  * - Masks high/secret risk detail cells
  * - Omits nested prior-receipt / index diff bodies (avoids re-embedding secrets)
  * - Inserts a redaction notice under Session when not already present
+ * - Masks an explicit Host label (`[REDACTED]`) unless `maskHost` is false.
+ *   Session, parent, and agent stay. Capture passes `maskHost: false` so a
+ *   local `--host` survives secret redaction. share / export mask it unless
+ *   `--include-host`.
  */
-export function redactMarkdownBody(markdown: string): string {
+export function redactMarkdownBody(
+  markdown: string,
+  opts: { maskHost?: boolean } = {},
+): string {
+  const maskHost = opts.maskHost !== false;
   const normalized = markdown.replace(/\r\n/g, '\n');
   const lines = normalized.split('\n');
   const out: string[] = [];
@@ -201,6 +209,11 @@ export function redactMarkdownBody(markdown: string): string {
 
     if (line.includes('**Redacted**:') || line.includes('Snapshot is redacted')) {
       sawRedactionNotice = true;
+    }
+
+    if (maskHost && /^- \*\*Host\*\*:/.test(line)) {
+      out.push('- **Host**: [REDACTED]');
+      continue;
     }
 
     // Track ### `path` under Diff summaries
@@ -324,6 +337,9 @@ function splitTableRow(line: string): string[] {
  * Apply redaction to a full receipt (with or without Integrity) and return
  * body ready for appendHashFooter.
  */
-export function prepareRedactedBody(markdown: string): string {
-  return redactMarkdownBody(markdown);
+export function prepareRedactedBody(
+  markdown: string,
+  opts: { maskHost?: boolean } = {},
+): string {
+  return redactMarkdownBody(markdown, opts);
 }

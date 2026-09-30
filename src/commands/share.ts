@@ -42,6 +42,11 @@ export interface ShareOptions {
    * Pass false via `--no-redact`.
    */
   redact?: boolean;
+  /**
+   * Keep the Host label in the redacted handoff. Default false.
+   * Session, parent, and agent are always kept.
+   */
+  includeHost?: boolean;
   failOn?: FailOnThreshold;
   /** One CI gate object on stdout; human summary on stderr. */
   json?: boolean;
@@ -240,6 +245,7 @@ export function cmdShare(
   const html = cmdExport(cwd, source, {
     out: htmlOut,
     redact,
+    includeHost: opts.includeHost,
     format: 'html',
     quiet: true,
     audit: false,
@@ -252,6 +258,7 @@ export function cmdShare(
     const md = cmdExport(cwd, source, {
       out: mdOut,
       redact,
+      includeHost: opts.includeHost,
       format: 'markdown',
       quiet: true,
       audit: false,

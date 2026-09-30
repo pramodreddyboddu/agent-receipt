@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.28] — 2026-09-29
+
+### Added
+
+- Optional receipt link metadata in the hashed body: `session` (a group of related runs), `parent` (the `r-` id or sha256 of the run that spawned this one), `agent`, and `host`. `capture`, `wrap`, and `watch` accept `--session`, `--parent`, and `--agent`. Flags win over `AGENT_RECEIPT_SESSION`, `AGENT_RECEIPT_PARENT`, and `AGENT_RECEIPT_AGENT`. Invalid values (empty, longer than 64 characters, slashes, or `..`) fail before a file is written. Nothing new is written when no link flag and no link env var is set. Existing receipts without these fields verify as before.
+- `wrap --link`, or an explicit `--session` (including `--session new`), writes a session id and an `r-` id, then exports `AGENT_RECEIPT_SESSION` and `AGENT_RECEIPT_PARENT` (this receipt's id) to the command after `--`. A nested wrap records the same session and that parent. The child starts in the process working directory (pass `--cwd` on the child when the parent used it). The child's exit code is printed and does not change wrap's exit code. With no `--link` and no `--session`, arguments after `--` stay ignored.
+- `host` is omitted unless `--host` or `AGENT_RECEIPT_HOST` is set. `share` and `export --redact` keep session, parent, and agent, and mask host as `[REDACTED]` unless `--include-host`. `--no-redact` skips that mask. A local `capture --redact` keeps an explicitly requested host.
+- `agent-receipt session <id>` lists receipts in that session as a parent/child tree (pass/fail, exit, agent, timestamp, verified). `--json` prints `session` and `receipts[]` with `id`, `parent`, `agent`, `verified`, and `exitCode`, and flags orphans and cycles. Exit 1 when any receipt fails verify or the session is empty locally. Orphans and cycles do not by themselves change the exit code. Receipts written outside `outDir` are not listed.
+- `prove` and `prove --html` show session, parent, and whether a local parent verifies. Those JSON keys are omitted when the receipt is unlinked. Parent verify does not change the prove exit code. Host is not shown.
+- `doctor` adds an INFO `link` row. It does not fail default `doctor` or `doctor --strict`.
+
+### Changed
+
+- Package version bumped to `1.0.28`.
+- [`README.md`](README.md) and [`docs/business.md`](docs/business.md) document linking multi-agent runs. Pin comments that track the current cut are `v1.0.28`.
+- [`docs/receipt.schema.json`](docs/receipt.schema.json) documents optional `id`, `parent`, and `host`. The CI gate schema is unchanged (link fields are not on the gate).
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) version-range comments include 1.0.28. A smoke runs a nested `wrap --link` and checks `session --json`. Live [`.github/workflows/*`](.github/workflows) was not edited.
+
+### Fixed
+
+- `escapeHtml` also escapes `'` as `&#39;`, so a quote in receipt data cannot break out of an attribute in `prove --html`.
+- The `prove --html` Content-Security-Policy meta tag adds `img-src 'none'` and keeps `default-src 'none'` and `style-src 'unsafe-inline'`.
+- The `[1.0.27]` note that said the cut was stacked on #39. 1.0.27 landed on main directly after 1.0.26 (auto-prune, PR #39).
+
+### Notes
+
+- Live workflow files were not edited. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm. No new runtime dependencies.
+- Still deferred: cross-host session merge and import of whole session trees, a signed session manifest, a signed HTML report / signed one-pager, full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.27] — 2026-09-26
 
 ### Added
@@ -26,7 +56,7 @@ All notable changes to this project will be documented in this file.
 - Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - This cut does not publish to npm.
 - The HTML report is not itself signed. Still not a CA. No new runtime dependencies. `prove --html` is a rendering of the prove result; re-run `prove` or `verify --require-sig` on the receipt to re-check.
-- Stacked on 1.0.26 (auto-prune, PR #39).
+- Landed on main directly after 1.0.26 (auto-prune, PR #39). It was not stacked on #39.
 - Still deferred: a signed HTML report / signed one-pager, full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, multi-agent receipt linking, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
 
 ## [1.0.26] — 2026-09-23

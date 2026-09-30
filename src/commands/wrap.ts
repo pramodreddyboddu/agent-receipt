@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { cmdCapture } from './capture.js';
 import { cmdVerify } from './verify.js';
 import { isDirty, isGitRepo } from '../lib/git.js';
@@ -15,6 +16,19 @@ import { autoPruneGateFields, maybeAutoPrune } from '../lib/auto-prune.js';
 
 export interface WrapOptions {
   agent?: string;
+  /** Link id to write. Set by the CLI when linking is active. */
+  id?: string;
+  session?: string;
+  parent?: string;
+  host?: string;
+  /**
+   * After the receipt is written, export AGENT_RECEIPT_SESSION and
+   * AGENT_RECEIPT_PARENT into `command` when that argv is non-empty.
+   * The child exit code is printed and does not change this command's exit.
+   */
+  propagate?: boolean;
+  /** Argv after `--`. Run only when `propagate` is set. */
+  command?: string[];
   message?: string;
   failOn?: FailOnThreshold;
   /** Prefer commits vs this base when tree is clean. */
@@ -94,6 +108,10 @@ export function cmdWrap(cwd: string, opts: WrapOptions = {}): WrapResult {
     uncommitted: useUncommitted,
     base: useUncommitted ? undefined : opts.base,
     agent: opts.agent ?? 'wrap',
+    id: opts.id,
+    session: opts.session,
+    parent: opts.parent,
+    host: opts.host,
     message: opts.message ?? 'session wrap',
     failOn: opts.failOn,
     redact: opts.redact,
@@ -118,6 +136,27 @@ export function cmdWrap(cwd: string, opts: WrapOptions = {}): WrapResult {
   const verified = verifiedReport.ok;
 
   const exitCode = !verified || capture.failedOn ? 2 : 0;
+
+  if (opts.propagate && opts.session && opts.id) {
+    process.env.AGENT_RECEIPT_SESSION = opts.session;
+    process.env.AGENT_RECEIPT_PARENT = opts.id;
+    const child = opts.command?.filter((part) => part.length > 0) ?? [];
+    if (child.length) {
+      say(color.dim(`link: session ${opts.session} parent ${opts.id}`));
+      const spawned = spawnSync(child[0], child.slice(1), {
+        cwd: process.cwd(),
+        env: process.env,
+        stdio: 'inherit',
+      });
+      const childExit = spawned.status === null ? 1 : spawned.status;
+      say(
+        childExit === 0
+          ? color.dim(`link: child exit ${childExit}`)
+          : color.yellow(`link: child exit ${childExit} (wrap exit is unchanged)`),
+      );
+    }
+  }
+
   recordAuditEvent(cwd, {
     event: 'wrap',
     path: capture.path,

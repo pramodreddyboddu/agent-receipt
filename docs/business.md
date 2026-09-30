@@ -1,6 +1,6 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.27 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.28 for teams: install once, capture every session, fail CI
 on high-severity findings, share a redacted HTML + Markdown package (or HTML
 alone), verify that package with `verify --package`, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. When
@@ -135,7 +135,7 @@ is the artifact, not the gate. The gate object itself is
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.27",
+  "version": "1.0.28",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -268,7 +268,7 @@ Copy one of:
 | Example | What to do with it |
 |---------|--------------------|
 | [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. After a green gate it runs `prove --json` (`prove` defaults to true) and uploads `receipt-gate.json` plus the receipt Markdown (`actions/upload-artifact@v4`, name `agent-receipt-gate`). |
-| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.27`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.28`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
 
 ### Drop-in
 
@@ -287,7 +287,7 @@ true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
 - uses: ./.github/actions/agent-receipt
   with:
     install: true
-    from: github:pramodreddyboddu/agent-receipt#v1.0.27
+    from: github:pramodreddyboddu/agent-receipt#v1.0.28
     prove: true
     fail-on: high
     base: origin/main
@@ -649,6 +649,14 @@ listing (`[]` with `--json`). An empty receipt store still errors, same as
 `history` with no flags. Unknown flags exit 1. `--agent` requires a name.
 `--failed` takes no value. Matching rows show a `[failed]` badge.
 
+### Linking multi-agent runs
+
+A receipt can name the session it belongs to and the parent receipt that spawned it. `capture`, `wrap`, and `watch` take `--session`, `--parent`, and `--agent`. The same values fall back to `AGENT_RECEIPT_SESSION`, `AGENT_RECEIPT_PARENT`, and `AGENT_RECEIPT_AGENT` so a parent process can hand them to a child. Flags win. `wrap --link` (or `--session`, including `--session new`) writes the fields and exports the session and this receipt's id into the command after `--`. Nested wraps then share one session.
+
+Those fields are inside the hashed body. Changing them breaks `verify`. Receipts that omit them verify exactly as before. `agent-receipt session <id>` lists the local tree and exits 1 when any receipt fails verify. `prove` and `prove --html` show the session, the parent, and whether a local parent verifies. That does not change the prove exit code.
+
+`host` is off unless `--host` or `AGENT_RECEIPT_HOST` is set. `share` keeps session, parent, and agent, and masks host unless `--include-host`. This is not a cross-host merge and not a signed session manifest. Receipts outside `outDir` are not indexed. Auto-prune can delete a parent; the child is then an orphan, which does not by itself fail `session`.
+
 ### Deferred
 
 A signed CI drop-in landed in 1.0.19 (`sign` on the composite action and
@@ -689,8 +697,7 @@ not a long-running daemon or cron. `prove --html` landed in 1.0.27: an
 offline, redacted, self-contained HTML verification report (not itself
 signed). This is not a CA. Full PKI/CA is still deferred. Minisign, GPG/OpenPGP, default auto-sign
 on capture without config (signing stays opt-in via config `sign: true` or
-`--sign`), a signed one-pager or signed HTML prove report, and multi-agent
-receipt linking are still deferred. A long-running prune
+`--sign`), and a signed one-pager or signed HTML prove report are still deferred. Thin local multi-agent receipt linking landed in 1.0.28 (`--session`, `--parent`, `--agent`, `--host`, `wrap --link`, `session`). Cross-host session merge, a signed session manifest, and importing a whole session tree are still deferred. A long-running prune
 daemon or cron is still deferred. `trust show` landed in
 1.0.23: a read-only report of the allowlist and whether the local key is
 listed. It is not a CA. Config `sign: true` /
@@ -719,7 +726,7 @@ are checklist and listing tools; they do not sign the audit log.
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.27 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.28 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

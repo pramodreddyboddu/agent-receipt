@@ -45,7 +45,22 @@
       "additionalProperties": false
     },
     "agent": { "type": ["string", "null"] },
-    "session": { "type": ["string", "null"] },
+    "id": {
+      "type": "string",
+      "description": "Optional link id (r- + 16 hex). Present when this receipt records a session, parent, or host. Omitted otherwise."
+    },
+    "session": {
+      "type": ["string", "null"],
+      "description": "Optional session id grouping related runs. Null or omitted when this receipt is not linked."
+    },
+    "parent": {
+      "type": "string",
+      "description": "Optional parent receipt reference (link id or sha256 of the run that spawned this one)."
+    },
+    "host": {
+      "type": "string",
+      "description": "Optional host label. Omitted unless the user passed --host or AGENT_RECEIPT_HOST. share masks it unless --include-host."
+    },
     "message": { "type": ["string", "null"] },
     "uncommitted": {
       "type": "boolean",

@@ -25,6 +25,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     'prune',
     'no-prune',
     'auto-prune',
+    'link',
+    'include-host',
   ]);
   // Repeatable flags are joined with commas (`--trusted-key a --trusted-key b`).
   const repeatable = new Set(['trusted-key']);
