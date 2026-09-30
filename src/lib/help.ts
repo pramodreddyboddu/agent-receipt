@@ -598,7 +598,11 @@ sidecar was signed by a different key exits 2 and writes nothing.
 \`--resign\` re-signs with the local key, prints both fingerprints on
 stderr, and sets manifest \`resignedBy\`. \`originalFingerprint\` is the
 source sidecar fingerprint, or null. \`fingerprint\` is the packaged
-sidecar. When keys load, \`session-manifest.sig.json\` is the same Ed25519
+sidecar. An unsigned source whose bytes change is signed with the
+exporter key when keys load. The manifest records that as \`signedBy\`
+(equal to \`fingerprint\`) with \`originalFingerprint\` null, and export
+warns on stderr. That signature is the exporter's, not the original
+author's. A same-key rewrite leaves \`signedBy\` null. When keys load, \`session-manifest.sig.json\` is the same Ed25519
 SignatureDocument as \`sign\`, over the UTF-8 hex sha256 of the manifest
 bytes, including those fingerprint fields. Missing keys omit that file
 and do not exit 2.
@@ -620,7 +624,10 @@ outDir. The basename is kept when it is a safe \`*.md\` name
 (\`receipts/foo.md\` → \`foo.md\`). Same id and same canonical sha256 skips
 (idempotent) and does not rewrite a sidecar. Same id, or the same
 basename compared case-insensitively, with a different sha256 refuses
-the whole import and writes nothing. A stray \`.sig.json\` is a conflict
+the whole import and writes nothing. On start, a non-dry-run import
+deletes stale \`.import-staging-*\` directories inside outDir only when
+they contain this tool's marker file and are older than the current run.
+A directory without that marker is never deleted. A stray \`.sig.json\` is a conflict
 unless the bytes are identical. An unreadable destination, including
 mode 0200, is a conflict. A symlink at the destination or at a parent
 inside outDir, including a dangling symlink and a symlink outDir, exits
@@ -629,7 +636,13 @@ published with an exclusive no-overwrite link. A name that already
 exists is left in place. A failed copy removes the stage and any file
 this import published.
 \`--dry-run\` plans the copy and writes nothing. \`--json\` files[] include
-\`fingerprint\`, \`originalFingerprint\`, and \`resignedBy\`.
+\`fingerprint\`, \`originalFingerprint\`, \`resignedBy\`, and \`signedBy\`.
+Human output after import names \`originalFingerprint\` and \`resignedBy\`.
+\`session <id>\` repeats those claims from
+\`.agent-receipt/resign-provenance.json\` when import recorded them.
+\`originalFingerprint\` is the manifest signer's claim, covered by
+\`session-manifest.sig.json\` when that sidecar verifies. It is not a
+second signature over the pre-export bytes.
 \`--require-sig\` requires a valid receipt sidecar and a valid manifest
 signature. When a known-keys allowlist is active, those fingerprints
 must be trusted. The same 32 MiB / 256 KiB / 8 MiB caps as export apply,
@@ -657,6 +670,207 @@ Examples:
   agent-receipt session import .agent-receipt/ci-link.session
   agent-receipt session merge .agent-receipt/ci-link.session --dry-run --json
   agent-receipt session import .agent-receipt/ci-link.session --require-sig
+`,
+
+  report: `agent-receipt report — signed one-page HTML report
+
+Usage:
+  agent-receipt report <receipt|last> [--out <path>] [--include-host] [--no-redact] [--json]
+  agent-receipt report --session <id> [--out <path>] [--json]
+  agent-receipt report <path/to/name.session> [--out <path>]
+  agent-receipt report verify <file.html> [more.html ...] [--receipts <dir>] [--require-sig] [--json]
+
+Writes one self-contained HTML file a reviewer can open offline. Inline CSS
+only. No images, fonts, or network requests. JavaScript is not required to
+read the page. The embedded \`<script type="application/json">\` blocks are
+data. The Content-Security-Policy is
+\`default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'\`.
+\`style-src 'unsafe-inline'\` is the stylesheet inside the file. There is no
+external CSS to hash, and a style hash would change on every edit without
+adding a boundary the opened file does not already have. \`script-src 'none'\`
+blocks executable script.
+
+The default path is the sibling of outDir:
+\`.agent-receipt/receipts\` becomes \`.agent-receipt/<stem>.report.html\`.
+A receipt stem that is not a safe filename becomes
+\`report-<sha256-12>.report.html\`. A session id that is one safe path
+segment becomes \`<id>.report.html\`; anything else becomes
+\`session-<sha256-12>.report.html\`. \`--out <file>\` is that file. An
+existing directory, or a path that ends with \`/\`, receives
+\`<stem>.report.html\`. The report is never written over the source receipt.
+\`*.report.html\` is not a receipt. \`last\`, \`history\`, and \`prune\` ignore it.
+A file that contains the report payload block is already a report, including
+one renamed to \`.md\`. \`report\` on that file exits 1.
+
+The page shows a verdict banner (VERIFIED, FAILED, UNSIGNED, UNTRUSTED),
+what the agent did (summary, commands, files, risk flags, What to review),
+the session tree for a session report, commits and range, signer
+fingerprints and trust per receipt (including originalFingerprint,
+resignedBy, and signedBy), the CLI version, and the exact commands to
+re-verify offline. Those commands use basenames.
+
+Redaction uses the same \`publishRedactedReceipt\` pipeline as share and
+session export (secrets, nested receipt/index bodies, and Host).
+\`--include-host\` keeps Host and still masks secrets, the same as share.
+\`--no-redact\` skips the pipeline and wins over \`--include-host\`. Either
+opt-out prints a loud UNREDACTED marker on the page.
+
+The page is a pure function of the canonical JSON payload and the
+signature document. The signature is the UTF-8 hex SHA-256 of that JSON
+(sorted keys, no whitespace), the same SignatureDocument as \`sign\`. It is
+not a signature over the HTML bytes. The payload holds every string the
+page shows: verdict, banner, pills, agent, fingerprints, trust, the
+signature status line, the title, the UNREDACTED state, and the narrative
+(branch, message, summary, files, diff, commits, risk, session tree).
+Sign the payload, then render with the signature block at a fixed place.
+A detached \`<report>.html.sig.json\` is written beside the HTML when keys
+load. The embedded signature block is JSON \`null\` when the report is
+unsigned, and the page says UNSIGNED. Missing keys exit 0. Keys that
+exist but cannot be loaded exit 1. A receipt that fails verify, a present
+invalid receipt signature, or a session whose root or any receipt fails
+verification still writes the page with verdict FAILED and exits 2.
+UNTRUSTED means an active allowlist rejected a fingerprint. Generation
+still exits 0.
+
+\`report verify\` finds exactly one payload block and exactly one signature
+block outside HTML comments (a strict scan, not a regex). Zero, a
+duplicate, or a block inside a comment exits 2. A payload that is present
+but fails the schema exits 2. It then checks the signature, re-renders the
+page, and requires the same bytes. A single missing trailing newline is
+ignored. Any other difference exits 2 with
+"page content does not match signed payload". CRLF (a CR followed by LF)
+exits 2 with "page has CRLF line endings" and names \`core.autocrlf\`.
+A lone CR exits 2 with "page has CR line endings". A leading UTF-8 BOM
+exits 2. Add \`*.report.html -text\` and \`.agent-receipt/** -text\` to
+\`.gitattributes\`. Those bytes are not rewritten. The report page is not
+normalized. \`audit.jsonl\` is a separate check: exactly one trailing CR on each
+line is stripped before the chain hash. A second trailing CR fails the chain.
+Invalid UTF-8 exits 2. \`renderVersion\` selects the
+renderer. Version 1 is this page. An unknown renderVersion exits 2. Bidi controls in rendered
+fields, including agent names, are shown as \`\\uXXXX\`. Share HTML uses the same escape.
+
+Candidate receipts come from outDir. \`--receipts <dir>\` searches that
+directory instead, including subdirectories, and does not fall back to
+outDir. The candidate walk has a depth of 4. It applies equally to a page
+from report last, \`report verify\`, or report --session. The start
+directory is depth 0. A file four directories down is still read. A file
+at depth 5 or deeper is not a candidate. For each payload
+receipt, every candidate must be acceptable. A candidate is any file whose
+parsed id equals that receipt, or whose raw sha256 or embedded hash is the
+recorded sha256, redactedSha256, or originalSha256. The file name, subdirectory, and session
+do not matter. \`.md\` is matched case-insensitively, so \`file.MD\` is a
+candidate. A symlink candidate exits 2 ("receipt <id> at <path> is a symlink").
+
+A candidate is acceptable only when it passes receipt integrity (the
+embedded hash is correct) and its bytes match. A present sidecar that
+does not verify is "signature mismatch" before any hash is accepted.
+On every acceptance path (raw sha256, raw sha256 equal to redactedSha256,
+and redact-then-hash), when the payload records that receipt as signed
+(a fingerprint or originalFingerprint is present), a valid sidecar whose
+fingerprint matches is required, with or without \`--require-sig\`.
+A raw or redactedSha256 byte match uses the payload fingerprint when it
+is set, otherwise originalFingerprint. When the payload is unsigned
+(neither fingerprint nor originalFingerprint), a valid stray sidecar is
+ignored. An invalid sidecar is never ignored. A file whose raw sha256
+equals the recorded redactedSha256 is a byte match in a local-store
+report and in a session-package report, because that hash is a signed
+value, and the sidecar rule above still applies. Computing
+\`publishRedactedReceipt\` and comparing that hash is limited to a
+session-package report (\`manifestSha256\` is set, as with
+\`report <package>.session\`). A local-store report, including
+\`--include-host\`, \`--no-redact\`, and \`report --session\`, does not
+accept that redact-then-hash stand-in. On the redact-then-hash path, a
+non-null originalFingerprint (or the recorded fingerprint when signedBy
+is null) requires a valid sidecar whose fingerprint equals it, with or
+without \`--require-sig\`. When originalFingerprint is null and signedBy
+is set, an unsigned source is allowed. That is why the unredacted original
+still verifies in the exporter's repo, and why deleting its sidecar after
+a host edit and a re-hash does not.
+
+An unacceptable file exits 2 with the path:
+"receipt <id> at <path> fails integrity",
+"receipt <id> at <path> signature mismatch", or
+"receipt <id> at <path> differs from the signed payload".
+One matching copy does not hide another same-id file.
+With \`--receipts\`, a referenced receipt that is absent exits 2
+("receipt <id> referenced by report not found in --receipts").
+Without \`--receipts\`, a missing receipt that is still listed in
+\`.agent-receipt/index.json\` or \`.agent-receipt/audit.jsonl\` exits 2
+("still lists it"). The newest audit event for that sha256, originalSha256,
+or path wins. When that event is \`prune\`, or a prune event removed the
+index row, a missing capture, wrap, or watch event for that receipt is
+not tampering. The result is exit 0 and the reason is
+"receipt absent; audit.jsonl (unsigned) records a prune", under the headline
+"VERIFIED (payload only; N receipts not checked)". Exit 2 only when a
+capture, wrap, or watch event for that receipt does exist and the prune
+is timestamped more than 5 seconds before it. Clock skew of up to 5
+seconds stays payload-only. An unparseable prune or capture timestamp,
+when a capture event exists, exits 2 with that same before-capture reason.
+audit.jsonl is not signed.
+Anyone with write access can extend it, so that reason does not mean the
+prune was legitimate. When the store has no retention config (\`maxCount\`,
+\`maxAgeDays\`, or \`autoPrune\`) and the newest prune line is not
+\`source\` \`command\`, verify also warns
+"audit.jsonl is unsigned; no retention config and no recorded prune command".
+\`source\` \`retention\` does not silence that warning unless that config
+is present. When \`source\` is \`retention\` and the config is absent, the
+warning adds "(retention source claimed but no retention config found)".
+If this store does not list it at all, the page can still be exit 0 with
+that same headline. \`--json\` then uses verdict \`VERIFIED_PAYLOAD_ONLY\`
+and \`notChecked\`. It does not print a plain VERIFIED. When \`audit.jsonl\`
+exists in the store being searched, verify checks its hash chain the same
+way \`doctor --strict\` does and exits 2 with "audit log hash chain is broken"
+on a break. \`--receipts\` pointing elsewhere does not use an unrelated
+audit.jsonl in the current directory. One trailing CR is stripped from
+each audit line before the hash, so a \`core.autocrlf\` checkout of the
+log still verifies. A second trailing CR is not stripped and fails the
+chain. If the chain still fails and the failing line itself ends in CR,
+the reason names CRLF and \`core.autocrlf\`. A CR on another line does
+not add that hint. Add \`.agent-receipt/** -text\`
+next to \`*.report.html -text\` in \`.gitattributes\`. A store with no
+\`audit.jsonl\` is not a chain failure. A chain-only failure still counts
+as failed, so the line is not "failed: 0" beside FAILED. On failure the
+counts are checked, skipped, and failed, and the reason lists every
+problem, not only the first.
+A leading UTF-8 BOM (EF BB BF) exits 2 ("page starts with a UTF-8 BOM").
+The decoder is created with \`ignoreBOM: true\` and the bytes are checked
+explicitly. A CR that is part of CRLF is "page has CRLF line endings".
+A lone CR is "page has CR line endings".
+Exit 0 only when every found candidate is acceptable and the page and
+signature rules above pass. Several HTML files are allowed; the exit code
+is the worst of them. \`last\` still picks the newest receipt by mtime, so
+a planted copy can win. That is unchanged.
+
+Exit codes:
+  0  signature valid, page matches, verdict VERIFIED, every candidate acceptable
+  0  VERIFIED page whose receipts are not listed in this store
+     (printed "VERIFIED (payload only; N receipts not checked)")
+  0  no --require-sig, page matches, verdict UNSIGNED (printed UNSIGNED)
+  1  missing file, unreadable file, or --receipts is not a readable directory
+  2  bad or missing blocks, schema, signature, page bytes, BOM, CR or CRLF,
+     an unacceptable candidate, a receipt deleted while the index or audit
+     log still lists it, a broken audit hash chain, a missing --receipts entry, verdict FAILED, verdict
+     UNTRUSTED, or UNSIGNED with --require-sig (printed "FAILED (unsigned)")
+A non-zero exit never prints VERIFIED. A failing unsigned page prints
+"FAILED (unsigned)", not UNSIGNED. \`--require-sig\` enforces the
+trust allowlist when one is configured. Removing the page key from a
+store that still lists another key exits 2 (\`fingerprint not trusted\`).
+An empty allowlist is inactive. With no trust store,
+\`--require-sig\` accepts any valid self-signed page and prints a one-line
+note. Use a trust allowlist (\`agent-receipt trust add --self\`) so a
+reviewer accepts only known keys. originalFingerprint, resignedBy, and
+signedBy are the manifest signer's claims. This is not a certificate authority.
+
+\`--json\` prints one object (command \`report\` or \`report-verify\`).
+The report does not append the audit log and does not add an index row.
+
+Examples:
+  agent-receipt report last
+  agent-receipt report last --json
+  agent-receipt report --session s-0123456789abcdef
+  agent-receipt report .agent-receipt/s-0123456789abcdef.session
+  agent-receipt report verify .agent-receipt/*.report.html
+  agent-receipt report verify review.report.html --require-sig --receipts .agent-receipt/receipts
 `,
 
   verify: `agent-receipt verify — hash-check tamper-evident integrity
@@ -1089,9 +1303,18 @@ It does **not** store diff bodies or the session \`--message\`.
 \`share\` (not a second \`export\` line). \`watch\` records \`watch\` per capture.
 
 Each line's \`prev\` is the SHA-256 of the previous line (or null on the
-first). \`audit --verify\` checks that chain. Exit 0 = intact, exit 2 =
-mismatch, exit 1 = unreadable or a bad flag. This is **experimental**
-tamper-evidence for the log — not a signature and not PKI.
+first). Exactly one trailing CR is stripped before that hash, so a
+\`core.autocrlf\` checkout does not break the chain by itself. Two
+trailing CRs still fail the chain. If the chain still fails and the
+failing line itself ends in CR, the reason names CRLF and
+\`core.autocrlf\`. \`audit --verify\` checks that chain. Exit 0 = intact,
+exit 2 = mismatch, exit 1 = unreadable or a bad flag. This is
+**experimental** tamper-evidence for the log — not a signature and not
+PKI. audit.jsonl is not signed. Anyone with write access can extend it.
+A prune line written by this version records \`source\` \`command\` when
+\`--max-count\` or \`--max-age-days\` was passed, and \`source\`
+\`retention\` when the limit came from config, including auto-prune.
+Older logs omit \`source\`.
 
 \`--json\` prints a JSON array, oldest first. \`--verify --json\` prints
 \`{ ok, command, version, events, brokenAt, reason }\`.
@@ -1173,8 +1396,11 @@ Rows that already point at missing files under outDir are dropped too.
 \`--dry-run\` prints the plan and does not delete, rewrite the index, or
 append \`audit.jsonl\`. An applied delete appends one \`prune\` audit line
 per receipt (path, sha256, agent, redacted, verified, exit — no diff body
-and no \`--message\`). The sibling \`.json\` is not a second event. A run
-that deletes nothing does not append.
+and no \`--message\`). The line records \`source\` \`command\` when
+\`--max-count\` or \`--max-age-days\` was passed, and \`source\`
+\`retention\` when the limit came from config, including auto-prune.
+The sibling \`.json\` is not a second event. A run
+that deletes nothing does not append. audit.jsonl is not signed.
 
 \`--json\` adds \`command\`, \`version\`, \`exitCode\`, and \`audited\` (lines
 appended; 0 on dry-run). Each \`deleted\` row has the same identity fields
@@ -1407,6 +1633,7 @@ Commands:
   trust                  Known-keys allowlist: list, show, add <fp>, add --self, rm <fp>
   verify [path]          Hash-check integrity (hash-only; --package checks a share dir; --require-sig opts in)
   import <dir>           Verify a share package, then copy receipt.md into outDir
+  report [path|last]     Signed one-page HTML report (or report verify <file.html>)
   prove [path]           Prove-this-run: verify + audit link + signature status (--page writes foo.prove.md, --html writes foo.prove.html)
   audit                  List the compliance log (--event, --agent, --failed filter the listing)
   log                    Alias for audit
@@ -1472,6 +1699,8 @@ Examples:
   agent-receipt prove
   agent-receipt prove --page
   agent-receipt prove --html
+  agent-receipt report last
+  agent-receipt report verify .agent-receipt/receipt.report.html
   agent-receipt session <id>
   agent-receipt session <id> --json
   agent-receipt session export <id>
@@ -1494,7 +1723,7 @@ Examples:
 Docs: https://github.com/pramodreddyboddu/agent-receipt
 Agent tips: docs/agents.md · docs/grok-cli.md · examples/ (Cursor, Grok, Claude Code, Aider)
 Prod / CI: docs/business.md · examples/org-policy.yml · examples/github/
-Schema: docs/receipt.schema.json · docs/gate.schema.json · docs/signature.schema.json · Release: docs/RELEASE.md
+Schema: docs/receipt.schema.json · docs/gate.schema.json · docs/signature.schema.json · docs/report-payload.schema.json · Release: docs/RELEASE.md
 `;
 }
 

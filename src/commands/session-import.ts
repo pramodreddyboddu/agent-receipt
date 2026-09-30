@@ -10,6 +10,7 @@ import {
   readdirSync,
   rmSync,
   unlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { ByteLimitError, assertReadableSize, resolveByteLimits, type ByteLimits } from '../lib/byte-limit.js';
@@ -30,6 +31,7 @@ import {
   type SessionManifest,
   type SessionManifestReceipt,
 } from '../lib/session-package.js';
+import { recordResignProvenance } from '../lib/resign-provenance.js';
 import { sha256FileBytes } from '../lib/share-package.js';
 import {
   inspectReceiptSignature,
@@ -68,6 +70,8 @@ export interface SessionImportFile {
   fingerprint: string | null;
   originalFingerprint: string | null;
   resignedBy: string | null;
+  /** Exporter key that signed an unsigned source. Null on a 1.0.29 package. */
+  signedBy: string | null;
 }
 
 export interface SessionImportReport {
@@ -87,6 +91,10 @@ export interface SessionImportReport {
   manifestSig: ManifestSigReport;
   reason: string | null;
 }
+
+const IMPORT_STAGING_PREFIX = '.import-staging-';
+const IMPORT_STAGING_MARKER = '.agent-receipt-import-staging';
+const IMPORT_STAGING_MARKER_TEXT = 'agent-receipt-import-staging';
 
 const ABSENT_MANIFEST_SIG: ManifestSigReport = {
   present: false,
@@ -196,6 +204,7 @@ export function cmdSessionImport(
     });
   }
   const outDir = dryRun ? configuredOut : ensureOutDir(cwd, loadConfig(cwd).outDir);
+  if (!dryRun) cleanupStaleImportStages(outDir, Date.now());
   const planned = planMerge(packageDir, manifest, outDir, limits);
   const plan = planned.files;
   const copied = plan.filter((file) => file.action === 'copy').length;
@@ -226,6 +235,7 @@ export function cmdSessionImport(
     const published: string[] = [];
     try {
       mkdirSync(stage, { recursive: false });
+      writeFileSync(join(stage, IMPORT_STAGING_MARKER), `${IMPORT_STAGING_MARKER_TEXT}\n`, 'utf8');
       const jobs = stageJobs(plan, planned.sidecars, stage);
       let stagedCopies = 0;
       for (const job of jobs) {
@@ -266,6 +276,20 @@ export function cmdSessionImport(
       });
     }
     rmSync(stage, { recursive: true, force: true });
+  }
+
+  if (!dryRun) {
+    recordResignProvenance(
+      cwd,
+      plan
+        .filter((file) => file.action === 'copy' || file.action === 'skip')
+        .map((file) => ({
+          sha256: file.sha256,
+          originalFingerprint: file.originalFingerprint,
+          resignedBy: file.resignedBy,
+          signedBy: file.signedBy,
+        })),
+    );
   }
 
   return finish({
@@ -681,13 +705,58 @@ function planMerge(
 
 function signerFields(entry: SessionManifestReceipt): Pick<
   SessionImportFile,
-  'fingerprint' | 'originalFingerprint' | 'resignedBy'
+  'fingerprint' | 'originalFingerprint' | 'resignedBy' | 'signedBy'
 > {
   return {
     fingerprint: entry.fingerprint,
     originalFingerprint: entry.originalFingerprint,
     resignedBy: entry.resignedBy,
+    signedBy: entry.signedBy ?? null,
   };
+}
+
+/**
+ * Drop staging directories this process owns from an earlier import.
+ * Only a real directory whose name starts with `.import-staging-`, whose
+ * mtime is older than this run, and which contains a regular marker file
+ * is removed. Anything without that marker is left alone, including a
+ * symlink that happens to use the prefix.
+ */
+function cleanupStaleImportStages(outDir: string, startedAt: number): void {
+  let names: string[];
+  try {
+    names = readdirSync(outDir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.startsWith(IMPORT_STAGING_PREFIX)) continue;
+    const dir = join(outDir, name);
+    let st;
+    try {
+      st = lstatSync(dir);
+    } catch {
+      continue;
+    }
+    if (st.isSymbolicLink() || !st.isDirectory()) continue;
+    if (st.mtimeMs >= startedAt) continue;
+    const marker = join(dir, IMPORT_STAGING_MARKER);
+    let markerStat;
+    try {
+      markerStat = lstatSync(marker);
+    } catch {
+      continue;
+    }
+    if (markerStat.isSymbolicLink() || !markerStat.isFile()) continue;
+    let text = '';
+    try {
+      text = readFileSync(marker, 'utf8');
+    } catch {
+      continue;
+    }
+    if (!text.startsWith(IMPORT_STAGING_MARKER_TEXT)) continue;
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function listLocal(outDir: string, maxBytes: number): LocalFile[] {
@@ -1033,11 +1102,12 @@ function emitImport(report: SessionImportReport, json: boolean): void {
     else if (file.action === 'skip') lines.push(`  skip: ${file.to}`);
     else if (file.action === 'symlink') lines.push(`  symlink: ${file.reason || file.to}`);
     else lines.push(`  conflict: ${file.reason || file.to}`);
-    if (file.originalFingerprint || file.resignedBy || file.fingerprint) {
-      const original = file.originalFingerprint ?? 'unsigned';
-      const current = file.fingerprint ?? 'unsigned';
-      const resign = file.resignedBy ? ` re-signed-by: ${file.resignedBy}` : '';
-      lines.push(`  signer: ${current} original: ${original}${resign}`);
+    if (file.fingerprint) lines.push(`  signer: ${file.fingerprint}`);
+    if (file.originalFingerprint || file.resignedBy || file.signedBy) {
+      const signedBy = file.signedBy ? ` signedBy: ${file.signedBy}` : '';
+      lines.push(
+        `  originalFingerprint: ${file.originalFingerprint ?? 'null'} resignedBy: ${file.resignedBy ?? 'null'}${signedBy}`,
+      );
     }
   }
   if (report.reason) lines.push(`  reason: ${report.reason}`);

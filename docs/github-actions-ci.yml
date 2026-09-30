@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.29: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.30: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -281,3 +281,11 @@ jobs:
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="session-import"||g.exitCode!==0||g.copied!==2||g.conflicts!==0||g.written!==true){console.error(g); process.exit(1)}' "$tmp/session-import.json"
           node bin/agent-receipt.js session ci-link-1028 --json --cwd "$second" > "$tmp/session-imported.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="session"||g.exitCode!==0||g.session!=="ci-link-1028"||!Array.isArray(g.receipts)||g.receipts.length!==2||g.receipts.some(function(r){return r.verified!==true})){console.error(g); process.exit(1)} const parent=g.receipts.find(function(r){return r.agent==="parent"}); const child=g.receipts.find(function(r){return r.agent==="child"}); if(!parent||!child||child.parent!==parent.id){console.error(g); process.exit(1)}' "$tmp/session-imported.json"
+          # v1.0.30: signed one-page report, then verify it offline.
+          # Keys exist. trusted-keys.txt was removed above, so trust is inactive.
+          # The latest receipt verifies and the report is signed: verdict VERIFIED.
+          node bin/agent-receipt.js report last --json --cwd "$tmp" > "$tmp/report.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="report"||g.exitCode!==0||g.verdict!=="VERIFIED"||g.signed!==true||typeof g.htmlPath!=="string"||!g.htmlPath.endsWith(".report.html")||!fs.existsSync(g.htmlPath)||!g.sigPath||!fs.existsSync(g.sigPath)){console.error(g); process.exit(1)} const h=fs.readFileSync(g.htmlPath,"utf8"); if(h.indexOf("Content-Security-Policy")===-1||h.indexOf("default-src '\''none'\''")===-1||h.indexOf("VERIFIED")===-1){console.error("csp"); process.exit(1)} if(/src\s*=\s*["'\'']https?:|href\s*=\s*["'\'']https?:/i.test(h)){console.error("remote"); process.exit(1)}' "$tmp/report.json"
+          html=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).htmlPath)' "$tmp/report.json")
+          node bin/agent-receipt.js report verify "$html" --json --cwd "$tmp" > "$tmp/report-verify.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="report-verify"||g.exitCode!==0||g.signed!==true||g.verdict!=="VERIFIED"||g.checked<1){console.error(g); process.exit(1)}' "$tmp/report-verify.json"

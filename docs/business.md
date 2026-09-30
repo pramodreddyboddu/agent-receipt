@@ -1,8 +1,9 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.28 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.30 for teams: install once, capture every session, fail CI
 on high-severity findings, share a redacted HTML + Markdown package (or HTML
-alone), verify that package with `verify --package`, and keep a local
+alone), verify that package with `verify --package`, hand a reviewer a signed
+one-page HTML report (`report` / `report verify`), and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. When
 `autoPrune: true` and a retention limit is set, capture, wrap, and watch
 delete old receipts with the same trusted prune (a broken audit chain skips
@@ -135,7 +136,7 @@ is the artifact, not the gate. The gate object itself is
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.29",
+  "version": "1.0.30",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -268,7 +269,7 @@ Copy one of:
 | Example | What to do with it |
 |---------|--------------------|
 | [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. After a green gate it runs `prove --json` (`prove` defaults to true) and uploads `receipt-gate.json` plus the receipt Markdown (`actions/upload-artifact@v4`, name `agent-receipt-gate`). |
-| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.29`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.30`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
 
 ### Drop-in
 
@@ -287,7 +288,7 @@ true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
 - uses: ./.github/actions/agent-receipt
   with:
     install: true
-    from: github:pramodreddyboddu/agent-receipt#v1.0.29
+    from: github:pramodreddyboddu/agent-receipt#v1.0.30
     prove: true
     fail-on: high
     base: origin/main
@@ -661,7 +662,11 @@ Those fields are inside the hashed `## Session` header. A receipt is 1.0.28+ onl
 
 `session export <id>` (alias `session pack`) writes a portable directory for that local tree. The default path is the sibling of `outDir`: `.agent-receipt/receipts` becomes `.agent-receipt/<id>.session/`. `--out <dir>` names the directory. The package contains each receipt, a sidecar when one was copied or re-signed, `session-manifest.json`, and `session-manifest.sig.json` when local keys load. Unless `--include-host`, export calls the same function as `share`: secrets are masked, a nested receipt or index diff body is replaced with `[REDACTED — nested receipt/index body omitted]`, and the header Host line becomes `[REDACTED]`. `--include-host` keeps the original bytes. A sidecar from another key is kept when the bytes do not change. Redaction that would change those bytes exits 2 and writes nothing unless `--resign`. `--resign` warns on stderr and records `originalFingerprint` and `resignedBy`. Orphans and cycles are included and named in `warnings`. An empty session or a receipt that fails verify writes nothing. Reads are capped at 32 MiB (receipt), 256 KiB (sidecar), and 8 MiB (manifest) unless the matching `--max-*-bytes` flag raises the cap. `stat` runs before the read.
 
-`session import <dir>` (alias `session merge`) verifies the manifest, the file hashes, each receipt, and any signatures, then copies the receipts into `outDir`. The same id and the same sha256 is skipped. A different sha256 for the same id, or the same filename compared case-insensitively, refuses the import and does not overwrite. A symlink at the destination or in a parent inside `outDir` exits 2 and writes nothing. A stray sidecar or an unreadable destination is a conflict. The copy is staged inside `outDir` and published only onto names that do not exist. `--dry-run` and `--json` report the plan, including both fingerprints. `--require-sig` requires receipt sidecars and a manifest signature. After import, `session <id>` lists the merged tree. Import does not append the audit log and does not add an index row. `last`, `history`, and `prune` ignore `*.session/` directories. `prune` deletes the `.sig.json` sidecar of each receipt it deletes.
+`session import <dir>` (alias `session merge`) verifies the manifest, the file hashes, each receipt, and any signatures, then copies the receipts into `outDir`. The same id and the same sha256 is skipped. A different sha256 for the same id, or the same filename compared case-insensitively, refuses the import and does not overwrite. A symlink at the destination or in a parent inside `outDir` exits 2 and writes nothing. A stray sidecar or an unreadable destination is a conflict. The copy is staged inside `outDir` and published only onto names that do not exist. A real import first removes stale `.import-staging-*` directories that contain the marker `.agent-receipt-import-staging` and are older than this run. Anything without that marker stays, including a symlink. `--dry-run` does not delete them. `--dry-run` and `--json` report the plan, including `originalFingerprint`, `resignedBy`, and `signedBy`. `originalFingerprint` is the manifest signer's claim, covered by `session-manifest.sig.json` when that sidecar verifies. It is not a second signature over the pre-export bytes. An unsigned source whose bytes changed is recorded as `signedBy` (the exporter key) with `originalFingerprint` null, and export warns on stderr. After import, `session <id>` and the human import summary show those claims. Import does not append the audit log and does not add an index row. `last`, `history`, and `prune` ignore `*.session/` directories. `prune` lstats every target before unlinking, and refuses a symlink sidecar without deleting the rest of the batch.
+
+### Signed one-page report
+
+`agent-receipt report last` (or a receipt path, `report --session <id>`, or a `*.session` directory) writes one offline HTML file beside `outDir`. A reviewer opens it with no network and no install. The banner is VERIFIED, FAILED, UNSIGNED, or UNTRUSTED. The page shows the summary, commands, files touched, risk flags, what to review, commits, range, and, for a session, the parent/child/agent tree plus signer fingerprints and trust. Range and Summary are clean text. Redaction matches `share` unless `--include-host` or `--no-redact` is set, which print an UNREDACTED marker. The whole rendered page is covered: the canonical payload holds every visible string, the Ed25519 signature covers that payload, and `report verify` re-renders the HTML and requires the same bytes (a single missing trailing newline is ignored). Any other difference exits 2 with `page content does not match signed payload`. A session report is FAILED, not VERIFIED, when the session root or any receipt in the tree fails verification. Exit 0 only for a valid signature, a matching page, and verdict VERIFIED, or for an honestly UNSIGNED page without `--require-sig` (printed UNSIGNED). FAILED, UNTRUSTED, a page mismatch, a bad signature, or a schema failure exits 2. A non-zero exit never prints VERIFIED. A failing unsigned page prints `FAILED (unsigned)`. `--receipts` must be a readable directory or verify exits 1. When it is set, only that directory is searched: a referenced receipt that is missing exits 2, and every same-id candidate must pass. A file whose raw sha256 equals the recorded sha256 or redactedSha256 matches. When the payload records a fingerprint or originalFingerprint, that match requires a valid sidecar. When the payload is unsigned, a valid stray sidecar is ignored. A session-package report may also match the redacted form, and a non-null originalFingerprint then requires that sidecar. A newest prune audit event is payload-only when this log has no capture, wrap, or watch event for that receipt. A missing capture is not tampering. When one of those events exists, the prune stays payload-only unless it is more than 5 seconds before that event. Clock skew of up to 5 seconds stays payload-only; more than 5 seconds exits 2. The reason is `receipt absent; audit.jsonl (unsigned) records a prune`. audit.jsonl is not signed, and anyone with write access can extend it. A present audit log in the store being searched with a broken hash chain exits 2. A symlink exits 2. Without `--receipts`, a missing receipt that the store index or audit log still lists exits 2. Otherwise the headline is `VERIFIED (payload only; N receipts not checked)`. `renderVersion` selects the HTML renderer. The candidate walk stops at depth 5. CRLF in the page exits 2 and names `core.autocrlf`; a lone CR is `page has CR line endings`. Add `*.report.html -text` and `.agent-receipt/** -text` to `.gitattributes`. Exactly one trailing CR on an audit line is stripped before the chain hash. Two trailing CRs still fail. The CRLF hint is added only when the failing line itself ends in CR. With no trust store, `--require-sig` accepts any valid self-signed page and prints a one-line note; use a trust allowlist. A detached `<report>.html.sig.json` is written when keys load, and the signature is also inside the file. Missing keys leave the report unsigned and exit 0. Schema: [`report-payload.schema.json`](report-payload.schema.json). This is not a CA.
 
 Schema: [`session-package.schema.json`](session-package.schema.json). This is not a CA.
 
@@ -705,7 +710,7 @@ not a long-running daemon or cron. `prove --html` landed in 1.0.27: an
 offline, redacted, self-contained HTML verification report (not itself
 signed). This is not a CA. Full PKI/CA is still deferred. Minisign, GPG/OpenPGP, default auto-sign
 on capture without config (signing stays opt-in via config `sign: true` or
-`--sign`), and a signed one-pager or signed HTML prove report are still deferred. Thin local multi-agent receipt linking landed in 1.0.28 (`--session`, `--parent`, `--agent`, `--host`, `wrap --link`, `session`). Cross-host session merge landed in 1.0.29 (`session export`, `session import`, optional `session-manifest.sig.json`). A long-running prune
+`--sign`). Thin local multi-agent receipt linking landed in 1.0.28 (`--session`, `--parent`, `--agent`, `--host`, `wrap --link`, `session`). Cross-host session merge landed in 1.0.29 (`session export`, `session import`, optional `session-manifest.sig.json`). The signed one-page HTML report landed in 1.0.30 (`report`, `report verify`). A long-running prune
 daemon or cron is still deferred. `trust show` landed in
 1.0.23: a read-only report of the allowlist and whether the local key is
 listed. It is not a CA. Config `sign: true` /
@@ -734,7 +739,7 @@ are checklist and listing tools; they do not sign the audit log.
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.29 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.30 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { assertReadableSize } from '../lib/byte-limit.js';
+import { provenanceForNodes } from '../lib/resign-provenance.js';
 import { VERSION } from '../lib/version.js';
 import {
   WARN_CROSS_SESSION,
@@ -224,6 +225,6 @@ export function cmdSession(
     return 1;
   }
 
-  console.log(formatSessionTree(session, nodes, aliasToId));
+  console.log(formatSessionTree(session, nodes, aliasToId, provenanceForNodes(cwd, nodes)));
   return exitCode;
 }
