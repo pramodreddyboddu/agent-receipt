@@ -12,10 +12,11 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { appendHashFooter, canonicalBody, sha256Hex } from '../dist/lib/hash.js';
+import { formatMarkdown } from '../dist/lib/receipt.js';
 import { parseLinkMeta, parseSessionHeader, readLocalReceipt } from '../dist/lib/link.js';
 import { CURSOR_RULE_MDC } from '../dist/lib/cursor-rule.js';
 import { GROK_WRAP_SCRIPT_REL } from '../dist/lib/grok-rule.js';
@@ -79,6 +80,12 @@ function latestReceipt(dir) {
   return { path: body.path, md: readFileSync(body.path, 'utf8') };
 }
 
+const STRUCTURAL_HEADINGS = ['# Agent Receipt', '## What to review', '## Session'];
+
+function headingCount(markdown, heading) {
+  return markdown.split('\n').filter((line) => line === heading).length;
+}
+
 /**
  * Minimal 1.0.28 writer header. Field lines are placed in writer order so
  * the structural grammar accepts the receipt as link-era.
@@ -93,7 +100,7 @@ function linkEraBody(fieldLines) {
   const lines = [
     '# Agent Receipt',
     '',
-    '> **TL;DR** ci · 2026-09-29T00:00:00.000Z · main @ abcdef012345 · 0 files · +0/\u22120 · risk none',
+    `> **TL;DR** ci · ${timestamp} · main @ abcdef012345 · 0 files · +0/\u22120 · risk none`,
     '',
     '## What to review',
     '',
@@ -175,8 +182,18 @@ describe('v1.0.28 multi-agent receipt linking', () => {
     assert.match(cli(root, ['help', 'share']), /--include-host/);
     const readme = readFileSync(join(root, 'README.md'), 'utf8');
     assert.match(readme, /Linking multi-agent runs/);
+    assert.match(readme, /exactly one line equal to `# Agent Receipt`/);
+    assert.match(readme, /pre-1\.0\.28 receipt unlinkable/);
+    assert.match(readme, /Only that receipt's author, or whoever signs it/);
     const business = readFileSync(join(root, 'docs', 'business.md'), 'utf8');
     assert.match(business, /Linking multi-agent runs/);
+    assert.match(business, /exactly one line equal to `# Agent Receipt`/);
+    assert.match(business, /every pre-1\.0\.28 receipt unlinkable/);
+    assert.match(business, /Only the author of that old receipt, or whoever signs it/);
+    assert.match(changelog, /exactly one line equal to `# Agent Receipt`/);
+    assert.match(changelog, /every pre-1\.0\.28 receipt unlinkable/);
+    assert.match(changelog, /Only the author of that old receipt, or whoever holds the key that signs it/);
+    assert.match(changelog, /Share HTML keeps the 1\.0\.27 Content-Security-Policy/);
     const mirror = readFileSync(join(root, 'docs', 'github-actions-ci.yml'), 'utf8');
     assert.match(mirror, /1\.0\.28/);
     assert.match(mirror, /ci-link-1028/);
@@ -1544,5 +1561,253 @@ _No file changes in range._
     const spoofed = cliResult(dir, ['session', 's-spoof', '--json']);
     assert.equal(spoofed.code, 1);
     assert.deepEqual(parseJson(spoofed.out).receipts, []);
+  });
+
+  it('reads no link metadata from 1.0.16 and 1.0.27 layout-mimic receipts', () => {
+    const dir = initRepo();
+    const outDir = join(dir, '.agent-receipt', 'receipts');
+    mkdirSync(outDir, { recursive: true });
+    const versions = ['v1.0.16', 'v1.0.27'];
+    const names = ['mimic', 'mimic-title', 'mimic-blank', 'mimic-id-todo', 'mimic-host'];
+    for (const version of versions) {
+      for (const name of names) {
+        const mdPath = join(root, 'test', 'fixtures', version, `${name}.md`);
+        const sigPath = join(root, 'test', 'fixtures', version, `${name}.sig.json`);
+        const label = `${version}/${name}`;
+        const text = readFileSync(mdPath, 'utf8');
+        assert.ok(headingCount(text, '## What to review') > 1, label);
+        assert.ok(headingCount(text, '## Session') > 1, label);
+        const meta = parseLinkMeta(text);
+        assert.equal(meta.id, null, label);
+        assert.equal(meta.session, null, label);
+        assert.equal(meta.parent, null, label);
+        assert.equal(meta.host, null, label);
+        assert.equal(meta.agent, null, label);
+        for (const args of [
+          ['verify', mdPath],
+          ['verify', '--require-sig', mdPath],
+          ['prove', mdPath],
+          ['prove', mdPath, '--json'],
+        ]) {
+          const result = cliResult(dir, args);
+          assert.equal(result.code, 0, `${label} ${args.join(' ')}\n${result.out}\n${result.err}`);
+        }
+        const proved = parseJson(cli(dir, ['prove', mdPath, '--json']));
+        assert.equal(proved.exitCode, 0, label);
+        assert.equal('session' in proved, false, label);
+        assert.equal('parent' in proved, false, label);
+
+        const unsigned = join(dir, `${version}-${name}.md`);
+        copyFileSync(mdPath, unsigned);
+        assert.equal(cliResult(dir, ['verify', unsigned]).code, 0, label);
+        assert.equal(cliResult(dir, ['prove', unsigned]).code, 0, label);
+        const unsignedSig = cliResult(dir, ['verify', '--require-sig', unsigned]);
+        assert.equal(unsignedSig.code, 2, `${label} unsigned require-sig\n${unsignedSig.out}\n${unsignedSig.err}`);
+        assert.match(unsignedSig.out + unsignedSig.err, /signature absent/);
+
+        copyFileSync(mdPath, join(outDir, `${version}-${name}.md`));
+        copyFileSync(sigPath, join(outDir, `${version}-${name}.sig.json`));
+      }
+    }
+    const listed = cliResult(dir, ['session', 's-spoof', '--json']);
+    assert.equal(listed.code, 1);
+    assert.deepEqual(parseJson(listed.out).receipts, []);
+  });
+
+  it('keeps a 1.0.28 receipt linked when user content repeats structural headings', () => {
+    const dir = initRepo();
+    const headings = ['# Agent Receipt', '## What to review', '## Session'];
+    const message = headings.join('\n');
+    for (const name of headings) {
+      writeFileSync(join(dir, name), `${message}\n`);
+    }
+    git(dir, ['add', '--', ...headings]);
+    git(dir, ['commit', '-m', '## What to review', '-m', '# Agent Receipt\n## Session']);
+    const captured = cliResult(dir, [
+      'capture',
+      '--commits',
+      '1',
+      '--full',
+      '--session',
+      's-headings',
+      '--agent',
+      'ci',
+      '--message',
+      message,
+    ]);
+    assert.equal(captured.code, 0, captured.err);
+    const receipt = latestReceipt(dir);
+    for (const heading of STRUCTURAL_HEADINGS) {
+      assert.equal(headingCount(receipt.md, heading), 1, heading);
+    }
+    assert.match(receipt.md, /^> # Agent Receipt$/m);
+    assert.match(receipt.md, /^> ## What to review$/m);
+    assert.match(receipt.md, /^> ## Session$/m);
+    assert.match(receipt.md, /^ {2}## What to review$/m);
+    assert.match(receipt.md, /^ {2}## Session$/m);
+    assert.match(receipt.md, /^- [0-9a-f]+ ## What to review$/m);
+    assert.match(receipt.md, /^\+## What to review$/m);
+    assert.match(receipt.md, /^\+# Agent Receipt$/m);
+    assert.match(receipt.md, /^\+## Session$/m);
+    assert.equal(parseLinkMeta(receipt.md).session, 's-headings');
+    assert.equal(parseSessionHeader(receipt.md).Message, message);
+    assert.equal(cliResult(dir, ['verify', receipt.path]).code, 0);
+    const listed = parseJson(cli(dir, ['session', 's-headings', '--json']));
+    assert.equal(listed.exitCode, 0);
+    assert.equal(listed.receipts.length, 1);
+    assert.equal(listed.receipts[0].verified, true);
+
+    const shared = cliResult(dir, ['share', receipt.path, '--md', 'shared.md']);
+    assert.equal(shared.code, 0, shared.err);
+    const sharedMd = readFileSync(join(dir, 'shared.md'), 'utf8');
+    for (const heading of STRUCTURAL_HEADINGS) {
+      assert.equal(headingCount(sharedMd, heading), 1, `share ${heading}`);
+    }
+    assert.equal(parseLinkMeta(sharedMd).session, 's-headings');
+    assert.equal(cliResult(dir, ['verify', 'shared.md']).code, 0);
+
+    const proved = parseJson(cli(dir, ['prove', receipt.path, '--json', '--page']));
+    const pageMd = readFileSync(proved.pagePath, 'utf8');
+    assert.match(pageMd, /^# Agent Receipt — Prove$/m);
+    assert.equal(headingCount(pageMd, '# Agent Receipt'), 0);
+    assert.equal(headingCount(pageMd, '## Session'), 0);
+    assert.equal(headingCount(pageMd, '## What to review'), 0);
+  });
+
+  it('indents user lines that would be a second structural heading and still verifies', () => {
+    const dir = initRepo();
+    const timestamp = '2026-09-29T00:00:00.000Z';
+    const message = '# Agent Receipt\n## What to review\n## Session';
+    const md = formatMarkdown({
+      version: '1.0.28',
+      timestamp,
+      branch: 'main',
+      head: 'abcdef0123456789abcdef0123456789abcdef01',
+      remote: null,
+      rangeLabel: 'HEAD~1..HEAD',
+      base: 'abcdef0123456789abcdef0123456789abcdef01',
+      agent: 'ci',
+      id: 'r-aaaaaaaaaaaaaaaa',
+      session: 's-headings',
+      message,
+      commits: ['aaa1111 ## Session', 'bbb2222 subject\n## What to review\n# Agent Receipt'],
+      files: [
+        { path: 'src/app.ts', status: 'M', insertions: 3, deletions: 0, binary: false },
+        { path: '## What to review', status: 'A', insertions: 1, deletions: 0, binary: false },
+        { path: '## Session', status: 'A', insertions: 1, deletions: 0, binary: false },
+        { path: '# Agent Receipt', status: 'A', insertions: 1, deletions: 0, binary: false },
+        {
+          path: 'pkg\n# Agent Receipt\n',
+          status: 'A',
+          insertions: 1,
+          deletions: 0,
+          binary: false,
+        },
+        {
+          path: '.github/workflows/ci.yml\n## Session\n',
+          status: 'A',
+          insertions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ],
+      diffs: {
+        'src/app.ts': 'diff --git a/src/app.ts b/src/app.ts\n## Session\n+## What to review\n+# Agent Receipt\n',
+        '## What to review': '+# Agent Receipt\n+## What to review\n+## Session\n',
+      },
+      risks: [
+        {
+          severity: 'high',
+          code: 'heading-line',
+          message: 'saw\n# Agent Receipt\n## What to review',
+          path: 'src/app.ts',
+        },
+      ],
+      cwd: '/tmp/ws',
+    });
+    const lines = md.split('\n');
+    for (const heading of STRUCTURAL_HEADINGS) {
+      assert.equal(headingCount(md, heading), 1, heading);
+    }
+    assert.ok(lines.includes(' ## What to review'));
+    assert.ok(lines.includes(' ## Session'));
+    assert.ok(lines.includes(' # Agent Receipt'));
+    assert.ok(lines.includes('> # Agent Receipt'));
+    assert.ok(lines.includes('  ## What to review'));
+    assert.ok(lines.includes('  ## Session'));
+    assert.equal(parseLinkMeta(md).session, 's-headings');
+    assert.equal(parseSessionHeader(md).Message, message);
+    const review = lines.find((line) => line.startsWith('1. **high**'));
+    assert.ok(review);
+    assert.equal(review.includes('\n'), false);
+    assert.match(review, /saw # Agent Receipt ## What to review/);
+    const path = join(dir, 'shielded.md');
+    writeFileSync(path, md);
+    assert.equal(cliResult(dir, ['verify', path]).code, 0);
+
+    const duplicated = md.replace('\n## Integrity\n', '\n## Session\n\n## Integrity\n');
+    const rehashed = appendHashFooter(duplicated);
+    assert.equal(parseLinkMeta(rehashed).session, null);
+    assert.equal(parseLinkMeta(rehashed).id, null);
+    const dupPath = join(dir, 'duplicated.md');
+    writeFileSync(dupPath, rehashed);
+    assert.equal(cliResult(dir, ['verify', dupPath]).code, 0);
+
+    const mismatched = md.replace(
+      `> **TL;DR** ci · ${timestamp} ·`,
+      '> **TL;DR** ci · 1999-01-01T00:00:00.000Z ·',
+    );
+    const mismatchHashed = appendHashFooter(mismatched);
+    assert.equal(parseLinkMeta(mismatchHashed).session, null);
+    const mismatchPath = join(dir, 'mismatch.md');
+    writeFileSync(mismatchPath, mismatchHashed);
+    assert.equal(cliResult(dir, ['verify', mismatchPath]).code, 0);
+
+    const undated = md.replace(
+      `> **TL;DR** ci · ${timestamp} ·`,
+      '> **TL;DR** ci · now ·',
+    );
+    assert.equal(parseLinkMeta(appendHashFooter(undated)).session, 's-headings');
+  });
+
+  it('keeps the link when branch and workspace contain a backtick', () => {
+    const parent = mkdtempSync(join(tmpdir(), 'ar-bt-'));
+    dirs.push(parent);
+    const ws = join(parent, 'space%`name');
+    mkdirSync(ws);
+    git(ws, ['init']);
+    git(ws, ['config', 'user.email', 'test@example.com']);
+    git(ws, ['config', 'user.name', 'Test']);
+    git(ws, ['checkout', '-b', 'rel/a`b']);
+    writeFileSync(join(ws, 'a.txt'), 'a\n');
+    git(ws, ['add', 'a.txt']);
+    git(ws, ['commit', '-m', 'tick']);
+    cli(ws, ['init']);
+    const captured = cliResult(ws, [
+      'capture',
+      '--commits',
+      '1',
+      '--session',
+      'bt-sess',
+      '--agent',
+      'ci',
+      '--message',
+      'tick %60 stays literal',
+    ]);
+    assert.equal(captured.code, 0, captured.err);
+    const receipt = latestReceipt(ws);
+    const branchLine = receipt.md.split('\n').find((line) => line.startsWith('- **Branch**:'));
+    const workspaceLine = receipt.md.split('\n').find((line) => line.startsWith('- **Workspace**:'));
+    assert.equal(branchLine, '- **Branch**: `rel/a%60b`');
+    assert.match(workspaceLine, /%25%60/);
+    assert.doesNotMatch(branchLine, /%25/);
+    assert.equal(parseSessionHeader(receipt.md).Branch, 'rel/a`b');
+    assert.equal(parseSessionHeader(receipt.md).Workspace, resolve(ws));
+    assert.equal(parseSessionHeader(receipt.md).Message, 'tick %60 stays literal');
+    assert.equal(parseLinkMeta(receipt.md).session, 'bt-sess');
+    assert.equal(cliResult(ws, ['verify', receipt.path]).code, 0);
+    const listed = parseJson(cli(ws, ['session', 'bt-sess', '--json']));
+    assert.equal(listed.exitCode, 0);
+    assert.equal(listed.receipts[0].verified, true);
   });
 });

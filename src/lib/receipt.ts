@@ -138,6 +138,41 @@ export function buildReviewItems(data: ReceiptData, limit = 8): ReviewItem[] {
 
 const CONTROL_RE = /[\u0000-\u001f\u007f\u2028\u2029]/;
 
+/**
+ * Headings the link grammar counts across the whole file. The writer emits
+ * each of these once. User content must not emit them again as their own line.
+ */
+export const STRUCTURAL_HEADING_LINES = new Set([
+  '# Agent Receipt',
+  '## What to review',
+  '## Session',
+]);
+
+/**
+ * Branch and Workspace are single-backtick spans (`[^`]*`). A raw backtick
+ * ends the span and the receipt is treated as pre-1.0.28. Percent-encode
+ * `%` and `` ` `` so the span matches and the value round-trips.
+ */
+export function encodeBacktickField(value: string): string {
+  return value.replace(/%/g, '%25').replace(/`/g, '%60');
+}
+
+export function decodeBacktickField(value: string): string {
+  return value.replace(/%60/g, '`').replace(/%25/g, '%');
+}
+
+/**
+ * A line after `## Session` is outside the writer grammar. If it is exactly
+ * a structural heading, the whole-file count is not one and the receipt
+ * does not link. Prefix that line with a space. Git diff bodies already
+ * start with `+`, `-`, or a space, so those lines are unchanged.
+ */
+function pushUserLines(lines: string[], text: string): void {
+  for (const line of String(text).split('\n')) {
+    lines.push(STRUCTURAL_HEADING_LINES.has(line) ? ` ${line}` : line);
+  }
+}
+
 function rejectHeaderControl(kind: string, value: string | undefined): void {
   if (value && CONTROL_RE.test(value)) {
     throw new Error(
@@ -218,7 +253,9 @@ export function formatMarkdown(
     let i = 1;
     for (const r of review) {
       const label = r.severity === 'notable' ? 'notable' : r.severity;
-      lines.push(`${i}. **${label}** \`${r.code}\` — ${r.text}`);
+      // One physical line. A newline is still inside the writer grammar.
+      const text = r.text.replace(/[\r\n\u2028\u2029]+/g, ' ');
+      lines.push(`${i}. **${label}** \`${r.code}\` — ${text}`);
       i++;
     }
     lines.push('');
@@ -245,7 +282,7 @@ export function formatMarkdown(
   lines.push('');
   lines.push(`- **Version**: ${data.version}`);
   lines.push(`- **Timestamp**: ${data.timestamp}`);
-  lines.push(`- **Branch**: \`${data.branch}\``);
+  lines.push(`- **Branch**: \`${encodeBacktickField(data.branch)}\``);
   lines.push(`- **HEAD**: \`${data.head}\``);
   if (data.remote) lines.push(`- **Remote**: ${data.remote}`);
   if (data.uncommitted) {
@@ -262,14 +299,14 @@ export function formatMarkdown(
   if (data.parent) lines.push(`- **Parent**: ${data.parent}`);
   if (data.host) lines.push(`- **Host**: ${data.host}`);
   if (data.message) pushHeaderMessage(lines, data.message);
-  lines.push(`- **Workspace**: \`${data.cwd}\``);
+  lines.push(`- **Workspace**: \`${encodeBacktickField(data.cwd)}\``);
   lines.push('');
 
   if (notable.length) {
     lines.push('## Notable changes');
     lines.push('');
     for (const n of notable) {
-      lines.push(`- **${n.kind}**: ${n.note} (\`${n.path}\`)`);
+      pushUserLines(lines, `- **${n.kind}**: ${n.note} (\`${n.path}\`)`);
     }
     lines.push('');
   }
@@ -282,7 +319,7 @@ export function formatMarkdown(
   } else if (data.commits.length) {
     lines.push('## Commits');
     lines.push('');
-    for (const c of data.commits) lines.push(`- ${c}`);
+    for (const c of data.commits) pushUserLines(lines, `- ${c}`);
     lines.push('');
   }
 
@@ -295,7 +332,8 @@ export function formatMarkdown(
     lines.push('| Status | File | + | − | Binary |');
     lines.push('|--------|------|---|---|--------|');
     for (const f of data.files) {
-      lines.push(
+      pushUserLines(
+        lines,
         `| ${f.status} | \`${f.path}\` | ${f.insertions} | ${f.deletions} | ${f.binary ? 'yes' : ''} |`,
       );
     }
@@ -307,7 +345,7 @@ export function formatMarkdown(
   if (diffStat) {
     lines.push('## Diff stat');
     lines.push('');
-    for (const l of formatDiffStatTable(data.files)) lines.push(l);
+    for (const l of formatDiffStatTable(data.files)) pushUserLines(lines, l);
     lines.push('');
   }
 
@@ -320,7 +358,7 @@ export function formatMarkdown(
     lines.push('|-----|------|--------|');
     for (const r of shown) {
       const detail = r.message.replace(/\|/g, '\\|');
-      lines.push(`| ${r.severity} | \`${r.code}\` | ${detail} |`);
+      pushUserLines(lines, `| ${r.severity} | \`${r.code}\` | ${detail} |`);
     }
     if (sorted.length > shown.length) {
       lines.push('');
@@ -340,10 +378,10 @@ export function formatMarkdown(
     lines.push('');
   } else {
     for (const p of paths) {
-      lines.push(`### \`${p}\``);
+      pushUserLines(lines, `### \`${p}\``);
       lines.push('');
       lines.push('```diff');
-      lines.push(data.diffs[p]);
+      pushUserLines(lines, data.diffs[p]);
       lines.push('```');
       lines.push('');
     }

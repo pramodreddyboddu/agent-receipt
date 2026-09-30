@@ -7,12 +7,14 @@
  *
  * These fields are written into the hashed Markdown body, inside the
  * `## Session` block the writer already emits. A receipt is 1.0.28+ only
- * when the bytes from the title line through the end of that block match
- * `matchV1028WriterSession` — the 1.0.28 writer grammar, with fence
- * awareness off. Anything else is pre-1.0.28: no link metadata, and verify
- * uses 1.0.27 rules. The 1.0.28 writer quotes every message line in the
- * TL;DR and indents every header continuation, so a message cannot put a
- * raw heading in that region. Nothing is written when no link flag and no
+ * when `matchV1028WriterSession` matches: the 1.0.28 writer grammar, with
+ * fence awareness off, and exactly one `# Agent Receipt`, one
+ * `## What to review`, and one `## Session` in the whole file. Fences do
+ * not hide a line. Anything else is pre-1.0.28: no link metadata, and
+ * verify uses 1.0.27 rules. An old writer quotes only the first message
+ * line and then emits its own header, so a pasted 1.0.28 block leaves two
+ * or more of each heading. The 1.0.28 writer never emits those lines from
+ * user content. Nothing is written when no link flag and no
  * AGENT_RECEIPT_SESSION / PARENT / AGENT / HOST env is set.
  *
  * `--agent` stays the 1.0.27 free-form label (spaces allowed). `--session`
@@ -35,9 +37,11 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { loadConfig } from './config.js';
 import { extractEmbeddedHash, verifyMarkdown } from './hash.js';
 import {
+  decodeBacktickField,
   isInsideSharePackage,
   isProveOnePagerName,
   isSharePackageDirName,
+  STRUCTURAL_HEADING_LINES,
 } from './receipt.js';
 
 /** 1–64 of [A-Za-z0-9._:-], must start alphanumeric, no ".." and no slashes. */
@@ -318,10 +322,17 @@ function writerGrammarLines(markdown: string): string[] | null {
  * next (`## Notable changes`, `## Commits`, or `## Files changed`). A raw
  * line, a fence (` ``` ` or `~~~`, any info string), an extra heading, a
  * CR-only or mixed line ending, or an out-of-order field means
- * pre-1.0.28: no link metadata. The 1.0.28 writer quotes every message
- * line, so its own header satisfies this and a message cannot insert a
- * raw heading in the region. Older writers always leave those raw lines,
- * so they cannot satisfy it.
+ * pre-1.0.28: no link metadata.
+ *
+ * That grammar alone still accepts a layout mimic: an old writer quotes
+ * only the first message line, so the rest of a pasted 1.0.28 block is
+ * raw, and this scan stops at the first `## Commits`. The real header is
+ * later in the file. After the grammar matches, the whole file is scanned
+ * again with fences ignored (a fenced line still counts). There must be
+ * exactly one `# Agent Receipt`, one `## What to review`, and one
+ * `## Session`. Any other count is pre-1.0.28. When the TL;DR line
+ * contains a timestamp, it must be the header Timestamp; a TL;DR with no
+ * timestamp skips that check. The 1.0.28 writer emits one and it matches.
  */
 export function matchV1028WriterSession(markdown: string): string[] | null {
   const lines = writerGrammarLines(markdown);
@@ -411,7 +422,38 @@ export function matchV1028WriterSession(markdown: string): string[] | null {
   if (lines[i] !== '') return null;
   i += 1;
   if (!NEXT_WRITER_HEADINGS.has(lines[i] ?? '')) return null;
-  return lines.slice(bodyStart, i - 1);
+  const body = lines.slice(bodyStart, i - 1);
+  if (!exactlyOneStructuralHeading(lines)) return null;
+  const tsLine = body.find((line) => line.startsWith('- **Timestamp**: '));
+  const ts = tsLine ? tsLine.slice('- **Timestamp**: '.length) : '';
+  if (!tldrTimestampAgrees(lines, ts)) return null;
+  return body;
+}
+
+/** Fences are not tracked. A line inside a fence counts. */
+function exactlyOneStructuralHeading(lines: string[]): boolean {
+  const counts = new Map<string, number>();
+  for (const heading of STRUCTURAL_HEADING_LINES) counts.set(heading, 0);
+  for (const line of lines) {
+    if (!counts.has(line)) continue;
+    counts.set(line, (counts.get(line) ?? 0) + 1);
+  }
+  for (const count of counts.values()) {
+    if (count !== 1) return false;
+  }
+  return true;
+}
+
+/**
+ * The 1.0.28 writer puts the header timestamp in the TL;DR between ` · `.
+ * No timestamp-shaped token in that line means this writer did not emit
+ * one: skip the check. A token that is not the header timestamp is a mimic.
+ */
+function tldrTimestampAgrees(lines: string[], headerTimestamp: string): boolean {
+  const tldr = lines.find((line) => line.startsWith('> **TL;DR** '));
+  if (!tldr) return true;
+  if (!/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(tldr)) return true;
+  return tldr.includes(` · ${headerTimestamp} · `);
 }
 
 /**
@@ -456,7 +498,8 @@ function headerFieldMap(body: string[]): Map<string, string> {
         }
         if (extra.length) raw = `${raw}\n${extra.join('\n')}`;
       }
-      const value = cleanFieldValue(raw);
+      let value = cleanFieldValue(raw);
+      if (label === 'Branch' || label === 'Workspace') value = decodeBacktickField(value);
       if (value) fields.set(label, value);
     }
     if (label === 'Message' || label === 'Workspace') closed = true;
