@@ -38,8 +38,10 @@ import { loadConfig } from './config.js';
 import { extractEmbeddedHash, verifyMarkdown } from './hash.js';
 import {
   decodeBacktickField,
+  isInsideSessionPackage,
   isInsideSharePackage,
   isProveOnePagerName,
+  isSessionPackageDirName,
   isSharePackageDirName,
   STRUCTURAL_HEADING_LINES,
 } from './receipt.js';
@@ -213,16 +215,16 @@ function requireFlagValue(name: string, present: boolean, value: string | undefi
   return value.trim();
 }
 
-/** Receipt .md files under outDir, newest last is not required. Skips prove pages and share packages. */
+/** Receipt .md files under outDir, newest last is not required. Skips prove pages, share packages, and session packages. */
 export function listOutDirReceipts(cwd: string): string[] {
   const cfg = loadConfig(cwd);
   const dir = cfg.outDir.startsWith('/') ? cfg.outDir : join(cwd, cfg.outDir);
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
-    .filter((f) => !isSharePackageDirName(f))
+    .filter((f) => !isSharePackageDirName(f) && !isSessionPackageDirName(f))
     .filter((f) => f.endsWith('.md') && !isProveOnePagerName(f))
     .map((f) => join(dir, f))
-    .filter((p) => !isInsideSharePackage(p))
+    .filter((p) => !isInsideSharePackage(p) && !isInsideSessionPackage(p))
     .filter((p) => {
       try {
         return statSync(p).isFile();

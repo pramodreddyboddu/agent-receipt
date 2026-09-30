@@ -70,24 +70,24 @@ function toReceipt(node: SessionNode): SessionReceipt {
   };
 }
 
+export interface CollectedSession {
+  session: string;
+  nodes: SessionNode[];
+  /** Maps a stored parent reference onto the canonical id inside this session. */
+  aliasToId: Map<string, string>;
+  empty: boolean;
+  exitCode: 0 | 1;
+  reason: string | null;
+}
+
 /**
- * List receipts in one session as a parent/child tree.
- * Scans the configured outDir only. A receipt written with `--out` outside
- * that directory is not included. Orphans and cycles are flagged and do not
- * by themselves change the exit code. Exit 1 when any receipt fails verify
- * or when no local receipt carries this session id. A local parent that
- * fails verify also exits 1. A parent that verifies in another session is
- * a warning. A receipt with no Session line whose parent is in this session
- * is listed with `missing-session` (warning, unless that receipt fails verify).
+ * Receipts `session` lists for one id: a Session line equal to the id, plus
+ * a receipt with no Session line whose parent is in this session
+ * (`missing-session`). Orphans and cycles are flagged. A local parent that
+ * fails verify adds `parent-unverified`. A parent in another local session
+ * adds `cross-session-parent`.
  */
-export function cmdSession(
-  cwd: string,
-  sessionId: string | undefined,
-  opts: SessionOptions = {},
-): number {
-  if (typeof sessionId !== 'string' || !sessionId.trim()) {
-    throw new Error('session requires an id. Usage: agent-receipt session <id> [--json]');
-  }
+export function collectSession(cwd: string, sessionId: string): CollectedSession {
   const session = validateLegacySession(sessionId);
   const local = indexLocalReceipts(cwd);
   const scanned: Array<{
@@ -166,6 +166,36 @@ export function cmdSession(
         ? 'a local parent failed verify'
         : null;
 
+  const aliasToId = new Map<string, string>();
+  for (const row of rows) {
+    aliasToId.set(row.id, row.id);
+    for (const alias of row.aliases) aliasToId.set(alias, row.id);
+  }
+
+  return { session, nodes, aliasToId, empty, exitCode, reason };
+}
+
+/**
+ * List receipts in one session as a parent/child tree.
+ * Scans the configured outDir only. A receipt written with `--out` outside
+ * that directory is not included. Orphans and cycles are flagged and do not
+ * by themselves change the exit code. Exit 1 when any receipt fails verify
+ * or when no local receipt carries this session id. A local parent that
+ * fails verify also exits 1. A parent that verifies in another session is
+ * a warning. A receipt with no Session line whose parent is in this session
+ * is listed with `missing-session` (warning, unless that receipt fails verify).
+ */
+export function cmdSession(
+  cwd: string,
+  sessionId: string | undefined,
+  opts: SessionOptions = {},
+): number {
+  if (typeof sessionId !== 'string' || !sessionId.trim()) {
+    throw new Error('session requires an id. Usage: agent-receipt session <id> [--json]');
+  }
+  const collected = collectSession(cwd, sessionId);
+  const { session, nodes, aliasToId, empty, exitCode, reason } = collected;
+
   if (opts.json) {
     const report: SessionReport = {
       command: 'session',
@@ -185,11 +215,6 @@ export function cmdSession(
     return 1;
   }
 
-  const aliasToId = new Map<string, string>();
-  for (const row of rows) {
-    aliasToId.set(row.id, row.id);
-    for (const alias of row.aliases) aliasToId.set(alias, row.id);
-  }
   console.log(formatSessionTree(session, nodes, aliasToId));
   return exitCode;
 }

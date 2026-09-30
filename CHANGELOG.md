@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.29] — 2026-09-30
+
+### Added
+
+- `agent-receipt session export <sessionId>` (alias `session pack`) writes a portable session directory. The default path is the sibling of `outDir`: `.agent-receipt/receipts` becomes `.agent-receipt/<sessionId>.session/`. A session id that is not one safe path segment is packed as `session-<sha256-12>.session`. `--out <dir>` names that directory. An existing path is refused.
+- The package contains every local receipt the `session <id>` list would show (including orphans, cycles, and a `missing-session` child), as `receipts/<basename>.md`, plus `receipts/<basename>.sig.json` when a sidecar is copied or re-signed, `session-manifest.json`, and optional `session-manifest.sig.json`. The manifest (`kind: agent-receipt-session`, version 1) records the CLI version, session id, receipt count, and one entry per receipt: id, parent, agent, host, relative path, canonical `sha256`, raw `bytes` hash, `signed`, optional fingerprint, and warning flags. See [`docs/session-package.schema.json`](docs/session-package.schema.json).
+- Host is masked as `[REDACTED]` unless `--include-host`, matching `share`. Session, parent, and agent stay. A masked host re-hashes the receipt. An unchanged hash copies a valid source sidecar. A rewrite is re-signed when local keys load and left unsigned (no stale sidecar) when they do not. `session-manifest.sig.json` is the same Ed25519 `SignatureDocument` as `sign`, over the UTF-8 hex SHA-256 of the manifest bytes. Missing keys omit it and do not exit 2.
+- An empty session exits 1 and writes nothing. A listed receipt that fails verify, or a present sidecar that does not verify when the body was not rewritten, exits 2 and writes nothing. Orphans and cycles are packed and named in `warnings` (`orphan`, `cycle`, `cross-session-parent`, `parent-unverified`, `missing-session`). A parent that fails verify outside this session does not by itself block export.
+- `agent-receipt session import <packageDir>` (alias `session merge`) verifies the package, then copies receipts and sidecars into `outDir`. The original basename is kept when it is a safe `*.md` name. The same id and the same canonical sha256 skips (idempotent). The same id, or the same basename, with a different sha256 refuses the whole import and writes nothing. `--dry-run` plans the copy. `--json` prints `VERIFIED`/`FAILED` fields: `copied`, `skipped`, `conflicts`, and `files[]`. `--require-sig` requires a valid receipt sidecar and a valid manifest signature, and trusted fingerprints when an allowlist is active.
+- Verify is fail-closed. Malformed manifest shape (kind, version, required fields, lowercase hex) exits 1. A file hash that does not match the bytes on disk, a receipt that fails the existing hash path, a canonical sha256 that does not match the manifest entry, a present invalid receipt sidecar, or a present invalid manifest signature exits 2. An absent receipt sidecar is fine when the entry is unsigned. An absent manifest signature is fine unless `--require-sig` is set. A failed verify copies nothing.
+- After import, `agent-receipt session <id>` lists the merged tree. Imported receipts stay under `outDir` and keep their session id. Import does not append the audit log and does not add an index row. `history` still prefers the index, so a fresh import is absent there while the index has rows. `last` follows mtime.
+- `last`, `history`, and `prune` ignore `*.session/` package directories the same way they ignore `*.share/`. `session-manifest.json` and the files inside the package are not receipts.
+
+### Changed
+
+- Package version bumped to `1.0.29`.
+- [`README.md`](README.md) and [`docs/business.md`](docs/business.md) document cross-host session merge. Pin comments that track the current cut are `v1.0.29`.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) version-range comments include 1.0.29. A smoke runs `session export`, `session import`, and `session --json`. Live [`.github/workflows/*`](.github/workflows) was not edited.
+- `doctor` link row names `session export` and `session import`. It stays INFO and does not fail default `doctor` or `doctor --strict`.
+
+### Fixed
+
+- `session export` verifies every listed receipt before it creates the package directory. A verify failure leaves no partial `*.session/` tree. A write that fails after a temporary directory is created removes that directory.
+
+### Notes
+
+- Live workflow files were not edited. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm. No new runtime dependencies.
+- Export and import do not append `.agent-receipt/audit.jsonl` and do not invent capture index rows.
+- Still deferred: a signed HTML report / signed one-pager, native adapters (Claude, Cursor, Grok, Codex, MCP), in-toto/SLSA export, Sigstore keyless signing, a published GitHub Action (the drop-in under `examples/github/` stays an example to copy), policy packs, a local web viewer, full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.28] — 2026-09-29
 
 ### Added

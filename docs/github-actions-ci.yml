@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.28: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.29: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -46,6 +46,7 @@ jobs:
           node bin/agent-receipt.js help share
           node bin/agent-receipt.js help verify
           node bin/agent-receipt.js help import
+          node bin/agent-receipt.js help session
           node bin/agent-receipt.js help audit
           node bin/agent-receipt.js help prune
           node bin/agent-receipt.js help doctor
@@ -265,3 +266,18 @@ jobs:
           node bin/agent-receipt.js wrap --link --session ci-link-1028 --agent parent --message link-parent --cwd "$tmp" -- node bin/agent-receipt.js wrap --agent child --message link-child --cwd "$tmp"
           node bin/agent-receipt.js session ci-link-1028 --json --cwd "$tmp" > "$tmp/session.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="session"||g.exitCode!==0||g.session!=="ci-link-1028"||!Array.isArray(g.receipts)||g.receipts.length!==2||g.receipts.some(function(r){return r.verified!==true})){console.error(g); process.exit(1)} const parent=g.receipts.find(function(r){return r.agent==="parent"}); const child=g.receipts.find(function(r){return r.agent==="child"}); if(!parent||!child||child.parent!==parent.id||parent.parent!==null||child.orphan===true||child.cycle===true){console.error(g); process.exit(1)}' "$tmp/session.json"
+          # v1.0.29: pack that session and merge it into a second repo.
+          # Keys from the earlier keygen sign session-manifest.sig.json.
+          # The link wraps are unsigned and have no host, so receipt sidecars stay absent.
+          node bin/agent-receipt.js session export ci-link-1028 --json --cwd "$tmp" > "$tmp/session-export.json"
+          node -e 'const fs=require("fs"); const path=require("path"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="session-export"||g.exitCode!==0||g.session!=="ci-link-1028"||g.receiptCount!==2||g.written!==true||!g.packagePath||!g.manifestSigPath){console.error(g); process.exit(1)} if(path.basename(g.packagePath)!=="ci-link-1028.session"){console.error(g.packagePath); process.exit(1)} const m=JSON.parse(fs.readFileSync(g.manifestPath,"utf8")); if(m.kind!=="agent-receipt-session"||m.version!==1||m.receiptCount!==2||m.session!=="ci-link-1028"){console.error(m); process.exit(1)} if(!fs.existsSync(g.manifestSigPath)){console.error("missing manifest sig"); process.exit(1)}' "$tmp/session-export.json"
+          second=$(mktemp -d)
+          git -C "$second" init
+          git -C "$second" config user.email "ci@example.com"
+          git -C "$second" config user.name "CI"
+          node bin/agent-receipt.js init --cwd "$second"
+          pkg=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).packagePath)' "$tmp/session-export.json")
+          node bin/agent-receipt.js session import "$pkg" --json --cwd "$second" > "$tmp/session-import.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="session-import"||g.exitCode!==0||g.copied!==2||g.conflicts!==0||g.written!==true){console.error(g); process.exit(1)}' "$tmp/session-import.json"
+          node bin/agent-receipt.js session ci-link-1028 --json --cwd "$second" > "$tmp/session-imported.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="session"||g.exitCode!==0||g.session!=="ci-link-1028"||!Array.isArray(g.receipts)||g.receipts.length!==2||g.receipts.some(function(r){return r.verified!==true})){console.error(g); process.exit(1)} const parent=g.receipts.find(function(r){return r.agent==="parent"}); const child=g.receipts.find(function(r){return r.agent==="child"}); if(!parent||!child||child.parent!==parent.id){console.error(g); process.exit(1)}' "$tmp/session-imported.json"

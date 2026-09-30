@@ -24,6 +24,8 @@ import { cmdHistory } from './commands/history.js';
 import { cmdWatch } from './commands/watch.js';
 import { cmdWrap } from './commands/wrap.js';
 import { cmdSession } from './commands/session.js';
+import { cmdSessionExport } from './commands/session-export.js';
+import { cmdSessionImport } from './commands/session-import.js';
 import { resolveLink, type ResolvedLink } from './lib/link.js';
 import { cmdExport, cmdHtml } from './commands/export.js';
 import { cmdShare } from './commands/share.js';
@@ -568,9 +570,65 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         return result.exitCode;
       }
       case 'session': {
+        const sub = positional[0];
+        if (sub === 'export' || sub === 'pack') {
+          for (const key of Object.keys(flags)) {
+            if (key !== 'cwd' && key !== 'json' && key !== 'out' && key !== 'include-host') {
+              throw new Error(
+                `Unknown flag: --${key}. session export accepts --out <dir>, --include-host, --json, and --cwd.`,
+              );
+            }
+          }
+          if (positional.length > 2) {
+            throw new Error(
+              'session export accepts one id. Usage: agent-receipt session export <id> [--out <dir>] [--include-host] [--json]',
+            );
+          }
+          const out = flags.out;
+          if (out !== undefined && (typeof out !== 'string' || !out.trim())) {
+            throw new Error('--out requires a directory path');
+          }
+          const result = cmdSessionExport(cwd, positional[1], {
+            json: flagBool(flags, 'json'),
+            out: typeof out === 'string' ? out : undefined,
+            includeHost: flagBool(flags, 'include-host'),
+          });
+          return result.exitCode;
+        }
+        if (sub === 'import' || sub === 'merge') {
+          for (const key of Object.keys(flags)) {
+            if (
+              key !== 'cwd' &&
+              key !== 'json' &&
+              key !== 'dry-run' &&
+              key !== 'require-sig' &&
+              key !== 'require-signature' &&
+              key !== 'trusted-key'
+            ) {
+              throw new Error(
+                `Unknown flag: --${key}. session import accepts --dry-run, --json, --require-sig, --trusted-key, and --cwd.`,
+              );
+            }
+          }
+          if (positional.length > 2) {
+            throw new Error(
+              'session import accepts one package directory. Usage: agent-receipt session import <packageDir> [--dry-run] [--json] [--require-sig]',
+            );
+          }
+          const result = cmdSessionImport(cwd, positional[1], {
+            json: flagBool(flags, 'json'),
+            dryRun: flagBool(flags, 'dry-run'),
+            requireSig: flagBool(flags, 'require-sig', 'require-signature'),
+            trustedKeys: flagTrustedKeys(flags),
+          });
+          return result.exitCode;
+        }
         for (const key of Object.keys(flags)) {
           if (key !== 'cwd' && key !== 'json') {
-            throw new Error(`Unknown flag: --${key}. session accepts --json and --cwd.`);
+            throw new Error(
+              `Unknown flag: --${key}. session accepts --json and --cwd. ` +
+                'session export|pack and session import|merge are separate subcommands.',
+            );
           }
         }
         if (positional.length > 1) {

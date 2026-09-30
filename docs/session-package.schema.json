@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/session-package.schema.json",
+  "title": "SessionPackageManifest",
+  "description": "session-manifest.json written by `agent-receipt session export` (alias `session pack`) inside a portable `<id>.session/` directory. The default directory is the sibling of outDir (`.agent-receipt/receipts` becomes `.agent-receipt/<id>.session/`). `--out` names that directory. Peers check it with `agent-receipt session import` (alias `session merge`), which also accepts this file path and resolves it to the parent directory. The directory contains receipts/<basename>.md for every receipt in the session, receipts/<basename>.sig.json when a Markdown sidecar was copied or re-signed, this manifest, and optional session-manifest.sig.json. sha256 is the verify hash of that receipt (canonical body, the same hex verify uses). bytes and sigBytes are SHA-256 of the raw file bytes. signed is true when the receipt sidecar is present. fingerprint is that sidecar's key fingerprint, or null when the Markdown is unsigned. includeHost is false when export masked Host as [REDACTED] (the default). Session, parent, and agent are kept. Optional session-manifest.sig.json (not a receipt) is the same Ed25519 SignatureDocument as docs/signature.schema.json, over the UTF-8 hex SHA-256 of these session-manifest.json bytes. It is omitted when local keys do not load. That omission does not fail export. warnings may include orphan, cycle, cross-session-parent, parent-unverified, and missing-session. Those receipts are still packed. This is not a CA. Import does not append the audit log and does not add an index row.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "cliVersion",
+    "session",
+    "receiptCount",
+    "includeHost",
+    "warnings",
+    "receipts"
+  ],
+  "properties": {
+    "kind": {
+      "const": "agent-receipt-session",
+      "description": "Discriminator. Peers should reject other kinds."
+    },
+    "version": {
+      "const": 1,
+      "description": "Manifest schema version. Not the CLI version."
+    },
+    "cliVersion": {
+      "type": "string",
+      "minLength": 1,
+      "description": "agent-receipt version that wrote the package."
+    },
+    "session": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Session id stored on the receipts. Not necessarily the directory basename."
+    },
+    "receiptCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Equal to receipts.length. An empty session is not packaged."
+    },
+    "includeHost": {
+      "type": "boolean",
+      "description": "True when --include-host kept the Host label. False when export masked it as [REDACTED]."
+    },
+    "warnings": {
+      "type": "array",
+      "description": "Union of per-receipt warning codes. Orphans and cycles are included, not dropped.",
+      "items": {
+        "enum": [
+          "orphan",
+          "cycle",
+          "cross-session-parent",
+          "parent-unverified",
+          "missing-session"
+        ]
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "parent",
+          "agent",
+          "host",
+          "path",
+          "sha256",
+          "bytes",
+          "signed",
+          "fingerprint",
+          "orphan",
+          "cycle",
+          "warnings"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Receipt link id (r- + 16 hex) or, when the receipt has no id, its canonical sha256."
+          },
+          "parent": {
+            "description": "Parent r- id or sha256, or null.",
+            "anyOf": [{ "type": "string" }, { "type": "null" }]
+          },
+          "agent": {
+            "description": "Agent label, or null.",
+            "anyOf": [{ "type": "string" }, { "type": "null" }]
+          },
+          "host": {
+            "description": "Packaged host. [REDACTED] or null when includeHost is false. The original label when --include-host was set.",
+            "anyOf": [{ "type": "string" }, { "type": "null" }]
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^receipts/[A-Za-z0-9][A-Za-z0-9._-]{0,180}\\.md$",
+            "description": "Path relative to the package root."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "Canonical verify hash of the packaged receipt. The same hex `agent-receipt verify` prints."
+          },
+          "bytes": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "SHA-256 of the raw receipt file bytes."
+          },
+          "signed": {
+            "type": "boolean",
+            "description": "True when receipts/<basename>.sig.json is in the package."
+          },
+          "fingerprint": {
+            "description": "64-hex fingerprint of the receipt sidecar, or null when unsigned.",
+            "anyOf": [
+              { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              { "type": "null" }
+            ]
+          },
+          "sigBytes": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "SHA-256 of the raw sidecar bytes. Present only when signed is true."
+          },
+          "orphan": {
+            "type": "boolean",
+            "description": "True when the parent ref was not a local receipt on the exporting machine."
+          },
+          "cycle": {
+            "type": "boolean",
+            "description": "True when parent links loop inside this session."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "orphan",
+                "cycle",
+                "cross-session-parent",
+                "parent-unverified",
+                "missing-session"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
