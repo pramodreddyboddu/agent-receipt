@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/report-payload.schema.json",
   "title": "ReportPayload",
-  "description": "Canonical JSON embedded in a signed one-page HTML report (`<script type=\"application/json\" id=\"agent-receipt-report\">`) by `agent-receipt report`. The Ed25519 signature is a SignatureDocument (docs/signature.schema.json) over the UTF-8 hex SHA-256 of the canonical form of this object (sorted object keys, no whitespace, array order kept). It is not a signature over the HTML bytes. The same document is embedded as id `agent-receipt-report-sig` and written beside the file as `<report>.html.sig.json` when local keys load. Missing keys omit the signature. CSS, narrative wording, file lists, commit messages, risk text, diff excerpts, and the receipt bytes are not covered. `report verify` re-hashes receipt files when they are on disk. originalFingerprint, resignedBy, and signedBy are the manifest signer's claims when the report was built from a session package. This is not a certificate authority.",
+  "description": "Canonical JSON embedded in a signed one-page HTML report (`<script type=\"application/json\" id=\"agent-receipt-report\">`) by `agent-receipt report`. The Ed25519 signature is a SignatureDocument (docs/signature.schema.json) over the UTF-8 hex SHA-256 of the canonical form of this object (sorted object keys, no whitespace, array order kept). The signature document is not inside this object. `render(payload, signature)` writes the page and inserts the signature block (`id` `agent-receipt-report-sig`, or JSON `null` when unsigned) at a fixed place. `report verify` re-renders and requires the same bytes. A single missing trailing newline is ignored. Any other difference exits 2 with \"page content does not match signed payload\". Every string the page shows is a field here: verdict, banner, pills, agent, fingerprints, trust, signature status, title, UNREDACTED state, and the narrative. Exactly one payload block and exactly one signature block must sit outside HTML comments. Zero, a duplicate, a block inside a comment, or a payload that fails this schema exits 2. A detached `<report>.html.sig.json` is written when local keys load. Receipt files are re-hashed only when their canonical sha256 or redactedSha256 matches. They are not matched by id. originalFingerprint, resignedBy, and signedBy are the manifest signer's claims when the report was built from a session package. This is not a certificate authority.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -15,7 +15,11 @@
     "manifestSha256",
     "exposure",
     "verdict",
+    "title",
+    "banner",
+    "unredacted",
     "verifyCommands",
+    "tree",
     "receipts"
   ],
   "properties": {
@@ -30,23 +34,23 @@
     "cliVersion": {
       "type": "string",
       "minLength": 1,
-      "description": "agent-receipt version that wrote the report."
+      "description": "agent-receipt version that wrote the report. Shown on the page."
     },
     "generatedAt": {
       "type": "string",
       "minLength": 1,
-      "description": "ISO-8601 timestamp when the report was written."
+      "description": "ISO-8601 timestamp when the report was written. Shown on the page."
     },
     "subject": {
       "enum": ["receipt", "session"],
       "description": "receipt for one file. session for `report --session` or a `*.session` package."
     },
     "session": {
-      "description": "Session id from the receipt or the package, or null.",
+      "description": "Session id from the receipt or the package, or null. Shown on the page.",
       "anyOf": [{ "type": "string" }, { "type": "null" }]
     },
     "manifestSha256": {
-      "description": "SHA-256 of the raw session-manifest.json bytes, or null when the report is not a session package.",
+      "description": "SHA-256 of the raw session-manifest.json bytes, or null when the report is not a session package. Shown on the page.",
       "anyOf": [
         { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         { "type": "null" }
@@ -54,17 +58,57 @@
     },
     "exposure": {
       "enum": ["redacted", "host", "unredacted"],
-      "description": "redacted is the default pipeline. host is --include-host (secrets still masked). unredacted is --no-redact."
+      "description": "redacted is the default pipeline. host is --include-host (secrets still masked). unredacted is --no-redact. Shown on the page."
     },
     "verdict": {
       "enum": ["VERIFIED", "FAILED", "UNSIGNED", "UNTRUSTED"],
-      "description": "FAILED wins, then UNTRUSTED, then UNSIGNED when the report itself has no signature, otherwise VERIFIED. An unsigned receipt does not by itself make a signed report UNSIGNED."
+      "description": "FAILED wins, then UNTRUSTED, then UNSIGNED when the report itself has no signature, otherwise VERIFIED. A session root or any receipt that fails verification forces FAILED. An unsigned receipt does not by itself make a signed report UNSIGNED. report verify exits 0 only for VERIFIED with a valid signature and a matching page, or for an honestly UNSIGNED page without --require-sig."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Exact document title. agent-receipt writes \"Agent Receipt report — \" plus the verdict."
+    },
+    "banner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["className", "verdict", "signatureStatus", "fingerprint"],
+      "description": "Banner pixels. className is the verdict in lower case. signatureStatus is the exact line, such as \"Report signature: present (trusted)\" or \"Report signature: absent (unsigned)\".",
+      "properties": {
+        "className": { "enum": ["verified", "failed", "unsigned", "untrusted"] },
+        "verdict": { "enum": ["VERIFIED", "FAILED", "UNSIGNED", "UNTRUSTED"] },
+        "signatureStatus": { "type": "string", "minLength": 1 },
+        "fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Report signer fingerprint, or \"unsigned\"."
+        }
+      }
+    },
+    "unredacted": {
+      "description": "Null when exposure is redacted. Otherwise the visible UNREDACTED marker and its detail sentence. Hiding, commenting, or removing that marker changes the page bytes and fails verify.",
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["marker", "detail"],
+          "properties": {
+            "marker": { "const": "UNREDACTED" },
+            "detail": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
     },
     "verifyCommands": {
       "type": "array",
       "minItems": 1,
       "items": { "type": "string", "minLength": 1 },
       "description": "Exact offline commands shown on the page. Basenames, not absolute paths."
+    },
+    "tree": {
+      "description": "Plain session tree shown on a session report, or null for a single receipt.",
+      "anyOf": [{ "type": "string" }, { "type": "null" }]
     },
     "receipts": {
       "type": "array",
@@ -75,6 +119,7 @@
         "required": [
           "id",
           "sha256",
+          "redactedSha256",
           "parent",
           "agent",
           "verified",
@@ -83,7 +128,20 @@
           "trusted",
           "originalFingerprint",
           "resignedBy",
-          "signedBy"
+          "signedBy",
+          "pills",
+          "timestamp",
+          "branch",
+          "head",
+          "range",
+          "message",
+          "summary",
+          "commands",
+          "files",
+          "risks",
+          "review",
+          "commits",
+          "diffs"
         ],
         "properties": {
           "id": {
@@ -94,23 +152,30 @@
           "sha256": {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$",
-            "description": "Canonical verify hash of the on-disk source receipt, not the redacted display body."
+            "description": "Canonical verify hash of the file the report was built from."
+          },
+          "redactedSha256": {
+            "description": "Canonical hash of the default redacted body when it differs from sha256, otherwise null. report verify may match this hash. It never matches a different byte string by id.",
+            "anyOf": [
+              { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              { "type": "null" }
+            ]
           },
           "parent": {
             "description": "Parent r- id or sha256, or null.",
             "anyOf": [{ "type": "string" }, { "type": "null" }]
           },
           "agent": {
-            "description": "Agent label, or null.",
+            "description": "Agent label shown on the page, or null.",
             "anyOf": [{ "type": "string" }, { "type": "null" }]
           },
           "verified": {
             "type": "boolean",
-            "description": "True when the receipt hash path matches."
+            "description": "True when the receipt hash path matches. False forces the report verdict FAILED."
           },
           "signature": {
             "enum": ["valid", "invalid", "unsigned"],
-            "description": "Receipt sidecar status. invalid is a present sidecar that does not verify."
+            "description": "Receipt sidecar status. invalid is a present sidecar that does not verify and forces verdict FAILED."
           },
           "fingerprint": {
             "description": "64-hex fingerprint of the receipt sidecar, or null when unsigned.",
@@ -143,7 +208,51 @@
               { "type": "string", "pattern": "^[0-9a-f]{64}$" },
               { "type": "null" }
             ]
-          }
+          },
+          "pills": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["verified", "signature", "trust"],
+            "description": "Exact pill labels shown for this receipt.",
+            "properties": {
+              "verified": { "enum": ["yes", "no"] },
+              "signature": { "enum": ["VALID", "INVALID", "UNSIGNED"] },
+              "trust": { "type": "string", "minLength": 1 }
+            }
+          },
+          "timestamp": { "type": "string", "description": "Timestamp line shown on the page." },
+          "branch": { "type": "string", "description": "Branch line shown on the page." },
+          "head": { "type": "string", "description": "HEAD line shown on the page." },
+          "range": { "type": "string", "description": "Range as clean text, not raw Markdown." },
+          "message": { "type": "string", "description": "Message line shown on the page." },
+          "summary": { "type": "string", "description": "Summary as clean text, not a raw Markdown table." },
+          "commands": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Commands shown on the page."
+          },
+          "files": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Files touched, in receipt order. The page shows the first 50."
+          },
+          "risks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["severity", "code", "detail"],
+              "properties": {
+                "severity": { "type": "string" },
+                "code": { "type": "string" },
+                "detail": { "type": "string" }
+              }
+            },
+            "description": "Risk rows shown on the page. The page shows the first 50."
+          },
+          "review": { "type": "string", "description": "What to review, as shown." },
+          "commits": { "type": "string", "description": "Commits section, as shown." },
+          "diffs": { "type": "string", "description": "Capped diff excerpt, as shown." }
         }
       }
     }

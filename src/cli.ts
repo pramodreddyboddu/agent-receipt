@@ -567,14 +567,16 @@ export async function run(argv: string[] = process.argv): Promise<number> {
               );
             }
           }
-          if (positional.length > 2) {
-            throw new Error('report verify accepts one HTML file. Usage: agent-receipt report verify <file.html>');
+          if (positional.length < 2) {
+            throw new Error(
+              'report verify requires an HTML file. Usage: agent-receipt report verify <file.html> [more.html ...]',
+            );
           }
           const receipts = flags.receipts;
           if (receipts !== undefined && (typeof receipts !== 'string' || !receipts.trim())) {
             throw new Error('--receipts requires a directory');
           }
-          return cmdReportVerify(cwd, positional[1], {
+          return cmdReportVerify(cwd, positional.slice(1), {
             json: flagBool(flags, 'json'),
             receiptsDir: typeof receipts === 'string' ? receipts : undefined,
             requireSig: flagBool(flags, 'require-sig', 'require-signature'),

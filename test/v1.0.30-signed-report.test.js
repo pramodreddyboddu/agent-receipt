@@ -1,6 +1,8 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -94,6 +96,76 @@ function visibleHtml(html) {
     .replace(/<script type="application\/json" id="agent-receipt-report-sig">[\s\S]*?<\/script>/g, '');
 }
 
+const PAGE_MISMATCH = 'page content does not match signed payload';
+
+/** Change only the part a reviewer reads. The signed blocks stay intact. */
+function mutateVisible(html, from, to) {
+  const marker = '<script type="application/json" id="agent-receipt-report">';
+  const at = html.indexOf(marker);
+  assert.ok(at > 0, 'payload script missing');
+  const visible = html.slice(0, at);
+  assert.ok(visible.includes(from), `visible page is missing ${from}`);
+  const changed = visible.replace(from, to);
+  assert.notEqual(changed, visible);
+  return changed + html.slice(at);
+}
+
+function expectPageReject(dir, html, label) {
+  const file = join(dir, `${label}.report.html`);
+  writeFileSync(file, html);
+  const plain = cliResult(dir, ['report', 'verify', file, '--json']);
+  const required = cliResult(dir, ['report', 'verify', file, '--require-sig', '--json']);
+  assert.equal(plain.code, 2, `${label} plain\n${plain.out}\n${plain.err}`);
+  assert.equal(required.code, 2, `${label} require-sig\n${required.out}\n${required.err}`);
+  assert.equal(parseJson(plain.out).reason, PAGE_MISMATCH);
+  assert.equal(parseJson(required.out).reason, PAGE_MISMATCH);
+  assert.notEqual(parseJson(plain.out).verdict, 'VERIFIED');
+  assert.notEqual(parseJson(required.out).verdict, 'VERIFIED');
+  const text = cliResult(dir, ['report', 'verify', file]);
+  assert.equal(text.code, 2);
+  assert.doesNotMatch(text.out, /^VERIFIED/m);
+}
+
+function expectStructureReject(dir, html, label, reason) {
+  const file = join(dir, `${label}.report.html`);
+  writeFileSync(file, html);
+  for (const args of [
+    ['report', 'verify', file, '--json'],
+    ['report', 'verify', file, '--require-sig', '--json'],
+  ]) {
+    const result = cliResult(dir, args);
+    assert.equal(result.code, 2, `${label}\n${result.out}\n${result.err}`);
+    const body = parseJson(result.out);
+    assert.equal(body.exitCode, 2);
+    assert.match(body.reason, reason);
+    assert.notEqual(body.verdict, 'VERIFIED');
+  }
+}
+
+function scriptBlock(html, id) {
+  const match = html.match(new RegExp(`<script type="application\\/json" id="${id}">[\\s\\S]*?<\\/script>`));
+  assert.ok(match, `${id} missing`);
+  return match[0];
+}
+
+function canonicalBodyOf(markdown) {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  const out = [];
+  for (const line of lines) {
+    if (line.startsWith('## Integrity') || line.includes('agent-receipt-sha256')) break;
+    out.push(line);
+  }
+  while (out.length > 0 && out[out.length - 1].trim() === '') out.pop();
+  return `${out.join('\n')}\n`;
+}
+
+/** Rewrite the receipt id and refresh the integrity footer. */
+function withReceiptId(markdown, id) {
+  const body = canonicalBodyOf(markdown).replace(/^- \*\*Id\*\*: .+$/m, `- **Id**: ${id}`);
+  const hash = createHash('sha256').update(body, 'utf8').digest('hex');
+  return `${body}\n## Integrity\n\n<!-- agent-receipt-sha256:${hash} -->\n\nSHA-256 of canonical body: \`${hash}\`\n`;
+}
+
 describe('v1.0.30 signed one-page report', () => {
   const dirs = [];
   after(() => {
@@ -155,10 +227,14 @@ describe('v1.0.30 signed one-page report', () => {
     assert.equal(sessionSchema.properties.receipts.items.required.includes('signedBy'), false);
     const readme = readFileSync(join(root, 'README.md'), 'utf8');
     assert.match(readme, /Signed one-page|signed one-page HTML report/);
+    assert.match(readme, /page content does not match signed payload/);
+    assert.match(schema.description, /page content does not match signed payload/);
     assert.match(readme, /symlinked `\.agent-receipt` parent is followed/);
     assert.match(readme, /originalFingerprint` is the manifest signer's claim/);
     const business = readFileSync(join(root, 'docs', 'business.md'), 'utf8');
     assert.match(business, /### Signed one-page report/);
+    assert.match(business, /page content does not match signed payload/);
+    assert.match(changelog, /page content does not match signed payload/);
     const mirror = readFileSync(join(root, 'docs', 'github-actions-ci.yml'), 'utf8');
     assert.match(mirror, /1\.0\.30/);
     assert.match(mirror, /# v1\.0\.29:/);
@@ -173,7 +249,8 @@ describe('v1.0.30 signed one-page report', () => {
     const help = cli(root, ['help', 'report']);
     assert.match(help, /report verify/);
     assert.match(help, /canonical JSON payload/);
-    assert.match(help, /does not cover CSS/);
+    assert.match(help, /page content does not match signed payload/);
+    assert.doesNotMatch(help, /does not cover CSS/);
     assert.match(help, /UNREDACTED/);
   });
 
@@ -216,6 +293,12 @@ describe('v1.0.30 signed one-page report', () => {
     assert.equal(payload.verdict, 'UNSIGNED');
     assert.equal(payload.receipts.length, 1);
     assert.equal(payload.receipts[0].signature, 'unsigned');
+    assert.doesNotMatch(payload.receipts[0].range, /`/);
+    assert.doesNotMatch(payload.receipts[0].range, /_\(/);
+    assert.match(payload.receipts[0].summary, /^Files: /m);
+    assert.doesNotMatch(payload.receipts[0].summary, /\|/);
+    assert.doesNotMatch(payload.receipts[0].summary, /\*\*/);
+    assert.doesNotMatch(visibleHtml(html), /\| Metric \|/);
     assert.match(payload.verifyCommands[0], /^agent-receipt report verify \S+\.report\.html$/);
     const checked = cliResult(dir, ['report', 'verify', body.htmlPath, '--json']);
     assert.equal(checked.code, 0, checked.err);
@@ -261,14 +344,23 @@ describe('v1.0.30 signed one-page report', () => {
 
     const cssCopy = join(dir, 'css.report.html');
     writeFileSync(cssCopy, html.replace('#1a7f37', '#1a7f38'));
-    assert.equal(cliResult(dir, ['report', 'verify', cssCopy, '--json']).code, 0);
+    const css = cliResult(dir, ['report', 'verify', cssCopy, '--json']);
+    assert.equal(css.code, 2);
+    assert.equal(parseJson(css.out).reason, PAGE_MISMATCH);
 
     const visibleCopy = join(dir, 'visible.report.html');
     writeFileSync(
       visibleCopy,
-      html.replace('<span data-covered="verdict">VERIFIED</span>', '<span data-covered="verdict">FAILED</span>'),
+      html.replace('<div class="verdict">VERIFIED</div>', '<div class="verdict">FAILED</div>'),
     );
-    assert.equal(cliResult(dir, ['report', 'verify', visibleCopy, '--json']).code, 2);
+    const visible = cliResult(dir, ['report', 'verify', visibleCopy, '--json']);
+    assert.equal(visible.code, 2);
+    assert.equal(parseJson(visible.out).reason, PAGE_MISMATCH);
+    assert.notEqual(parseJson(visible.out).verdict, 'VERIFIED');
+
+    const trimmed = join(dir, 'trimmed.report.html');
+    writeFileSync(trimmed, html.replace(/\n$/, ''));
+    assert.equal(cliResult(dir, ['report', 'verify', trimmed, '--json']).code, 0);
 
     const payloadCopy = join(dir, 'payload.report.html');
     const sha = payload.receipts[0].sha256;
@@ -296,6 +388,8 @@ describe('v1.0.30 signed one-page report', () => {
     ]);
     assert.equal(miss.code, 2);
     assert.equal(parseJson(miss.out).ok, false);
+    assert.equal(parseJson(miss.out).verdict, 'FAILED');
+    assert.notEqual(parseJson(miss.out).verdict, 'VERIFIED');
 
     cli(dir, ['trust', 'add', '--self']);
     assert.equal(cliResult(dir, ['report', 'verify', made.htmlPath, '--require-sig', '--json']).code, 0);
@@ -488,6 +582,411 @@ describe('v1.0.30 signed one-page report', () => {
     assert.equal(shown.code, 0, shown.err);
     assert.match(shown.out, new RegExp(`originalFingerprint=${first.fingerprint}`));
     assert.match(shown.out, new RegExp(`resignedBy=${second.fingerprint}`));
+  });
+
+  it('rejects a hidden verdict, a flipped banner, and pill or title edits (B1)', () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', 'b1\n');
+    cli(dir, ['wrap', '--agent', 'ci', '--message', 'unsigned banner']);
+    const html = readFileSync(parseJson(cli(dir, ['report', 'last', '--json'])).htmlPath, 'utf8');
+    let attacked = mutateVisible(
+      html,
+      '<body>\n',
+      '<body>\n<span hidden data-covered="verdict">FAILED</span>\n',
+    );
+    attacked = mutateVisible(attacked, '<div class="banner unsigned"', '<div class="banner verified"');
+    attacked = mutateVisible(
+      attacked,
+      '<div class="verdict">UNSIGNED</div>',
+      '<div class="verdict">VERIFIED</div>',
+    );
+    attacked = mutateVisible(
+      attacked,
+      '<title>Agent Receipt report — UNSIGNED</title>',
+      '<title>Agent Receipt report — VERIFIED</title>',
+    );
+    attacked = mutateVisible(
+      attacked,
+      '<th scope="row">Signature</th><td><span class="pill mid">UNSIGNED</span>',
+      '<th scope="row">Signature</th><td><span class="pill ok">VALID</span>',
+    );
+    attacked = mutateVisible(
+      attacked,
+      '<th scope="row">Trust</th><td><span class="pill mid">UNSIGNED</span>',
+      '<th scope="row">Trust</th><td><span class="pill ok">TRUSTED</span>',
+    );
+    attacked = mutateVisible(
+      attacked,
+      '<th scope="row">Verified</th><td><span class="pill ok">yes</span>',
+      '<th scope="row">Verified</th><td><span class="pill ok">yes</span><!--pill-->',
+    );
+    expectPageReject(dir, attacked, 'b1-banner');
+  });
+
+  it('rejects edits to the agent, pills, fingerprint, status line, and narrative (B2)', () => {
+    const dir = initRepo();
+    git(dir, ['checkout', '-b', 'b2-branch']);
+    commitFile(dir, 'b2-file.txt', 'b2-diff-token\n', 'b2-commit-token');
+    cli(dir, ['wrap', '--base', 'HEAD~1', '--full', '--session', 's-b2page', '--agent', 'b2-agent', '--message', 'b2-message-token']);
+    cli(dir, ['keygen']);
+    cli(dir, ['trust', 'add', '--self']);
+    const made = parseJson(cli(dir, ['report', '--session', 's-b2page', '--json']));
+    assert.equal(made.verdict, 'VERIFIED');
+    const html = readFileSync(made.htmlPath, 'utf8');
+    assert.match(html, /Report signature: present \(trusted\)/);
+    assert.match(html, /<h2>Session tree<\/h2>/);
+    const fp = html.match(/<p>Fingerprint: <code>([0-9a-f]{64})<\/code><\/p>/);
+    assert.ok(fp);
+    const flipped = fp[1].slice(0, -1) + (fp[1].endsWith('a') ? 'b' : 'a');
+    const edits = [
+      ['agent', '<th scope="row">Agent</th><td>b2-agent</td>', '<th scope="row">Agent</th><td>other-agent</td>'],
+      [
+        'verified-pill',
+        '<th scope="row">Verified</th><td><span class="pill ok">yes</span>',
+        '<th scope="row">Verified</th><td><span class="pill ok">no</span>',
+      ],
+      [
+        'trust-pill',
+        '<th scope="row">Trust</th><td><span class="pill mid">UNSIGNED</span>',
+        '<th scope="row">Trust</th><td><span class="pill ok">TRUSTED</span>',
+      ],
+      ['fingerprint', `<p>Fingerprint: <code>${fp[1]}</code></p>`, `<p>Fingerprint: <code>${flipped}</code></p>`],
+      ['status', 'Report signature: present (trusted)', 'Report signature: present (untrusted)'],
+      ['banner-class', '<div class="banner verified"', '<div class="banner failed"'],
+      [
+        'title',
+        '<title>Agent Receipt report — VERIFIED</title>',
+        '<title>Agent Receipt report — FAILED</title>',
+      ],
+      [
+        'branch',
+        '<th scope="row">Branch</th><td><code>b2-branch</code>',
+        '<th scope="row">Branch</th><td><code>other-branch</code>',
+      ],
+      [
+        'message',
+        '<th scope="row">Message</th><td>b2-message-token</td>',
+        '<th scope="row">Message</th><td>other-message</td>',
+      ],
+      ['files', 'b2-file.txt', 'other-file.txt'],
+      ['diff', 'b2-diff-token', 'other-diff-token'],
+      ['commits', 'b2-commit-token', 'other-commit-token'],
+      ['risk', 'No risk findings.', 'Risk was cleared.'],
+      ['tree', 'session s-b2page', 'session s-other'],
+    ];
+    for (const [label, from, to] of edits) {
+      expectPageReject(dir, mutateVisible(html, from, to), `b2-${label}`);
+    }
+  });
+
+  it('rejects a payload hidden in a comment, a second payload, and a second signature (B3)', () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', 'b3\n');
+    cli(dir, ['wrap', '--agent', 'ci', '--message', 'blocks']);
+    const html = readFileSync(parseJson(cli(dir, ['report', 'last', '--json'])).htmlPath, 'utf8');
+    const payload = scriptBlock(html, 'agent-receipt-report');
+    const signature = scriptBlock(html, 'agent-receipt-report-sig');
+    assert.doesNotMatch(payload, /-->/);
+    const forged = '<script type="application/json" id="agent-receipt-report">{"forged":true}</script>';
+    expectStructureReject(
+      dir,
+      html.replace(payload, `<!-- ${payload} -->\n${forged}`),
+      'b3-comment',
+      /report payload block is inside a comment/,
+    );
+    expectStructureReject(
+      dir,
+      html.replace(payload, `${payload}\n${forged}`),
+      'b3-duplicate-payload',
+      /report has more than one payload block/,
+    );
+    expectStructureReject(
+      dir,
+      html.replace(signature, `${signature}\n${signature}`),
+      'b3-duplicate-sig',
+      /report has more than one signature block/,
+    );
+  });
+
+  it('rejects a hidden, commented, or removed UNREDACTED marker (B4)', () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', 'b4\n');
+    cli(dir, ['wrap', '--host', HOST, '--agent', 'ci', '--message', 'show host']);
+    const made = parseJson(cli(dir, ['report', 'last', '--include-host', '--json']));
+    const html = readFileSync(made.htmlPath, 'utf8');
+    const marker = html.match(/<div class="banner unredacted" role="status">[\s\S]*?<\/div>/);
+    assert.ok(marker, 'expected a visible UNREDACTED banner');
+    assert.match(marker[0], /<strong>UNREDACTED<\/strong>/);
+    expectPageReject(dir, html.replace(marker[0], '<!-- UNREDACTED -->'), 'b4-comment');
+    expectPageReject(dir, html.replace(marker[0], '<p hidden>UNREDACTED</p>'), 'b4-hidden');
+    expectPageReject(dir, html.replace(marker[0], ''), 'b4-removed');
+  });
+
+  it('never accepts a one-byte flip or insert spread through the file', { timeout: 120000 }, () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', 'fuzz\n');
+    cli(dir, ['wrap', '--agent', 'ci', '--message', 'fuzz']);
+    cli(dir, ['keygen']);
+    const html = readFileSync(parseJson(cli(dir, ['report', 'last', '--json'])).htmlPath, 'utf8');
+    const buf = Buffer.from(html, 'utf8');
+    const spots = 10;
+    for (let i = 0; i < spots; i += 1) {
+      const at = Math.min(buf.length - 1, Math.floor(((buf.length - 1) * i) / (spots - 1)));
+      const flipped = Buffer.from(buf);
+      flipped[at] = flipped[at] ^ 0x01;
+      const inserted = Buffer.concat([buf.subarray(0, at), Buffer.from([0x58]), buf.subarray(at)]);
+      for (const [label, body] of [
+        [`flip-${at}`, flipped],
+        [`ins-${at}`, inserted],
+      ]) {
+        const file = join(dir, `${label}.report.html`);
+        writeFileSync(file, body);
+        for (const args of [
+          ['report', 'verify', file],
+          ['report', 'verify', file, '--require-sig'],
+        ]) {
+          const result = cliResult(dir, args);
+          assert.notEqual(result.code, 0, `${label} ${args.join(' ')} exited 0`);
+          assert.equal(result.code, 2, `${label} ${args.join(' ')}\n${result.out}\n${result.err}`);
+          assert.doesNotMatch(result.out, /^VERIFIED/m);
+        }
+      }
+    }
+  });
+
+  it('does not fail verify when a local receipt shares the id but not the bytes', () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', `host ${HOST}\n`);
+    cli(dir, ['keygen']);
+    cli(dir, ['wrap', '--session', 's-sameid', '--agent', 'exporter', '--host', HOST, '--message', 'local host']);
+    const localText = readFileSync(latestReceipt(dir), 'utf8');
+    const exported = parseJson(cli(dir, ['session', 'export', 's-sameid', '--json']));
+    const packaged = cliResult(dir, ['report', exported.packagePath, '--json']);
+    assert.equal(packaged.code, 0, packaged.out + packaged.err);
+    const body = parseJson(packaged.out);
+    assert.equal(body.verdict, 'VERIFIED');
+    const html = readFileSync(body.htmlPath, 'utf8');
+    const payload = payloadOf(html);
+    const localSha = createHash('sha256').update(canonicalBodyOf(localText), 'utf8').digest('hex');
+    assert.notEqual(payload.receipts[0].sha256, localSha);
+    const checked = cliResult(dir, ['report', 'verify', body.htmlPath, '--json']);
+    assert.equal(checked.code, 0, checked.out + checked.err);
+    assert.equal(parseJson(checked.out).verdict, 'VERIFIED');
+    const text = cliResult(dir, ['report', 'verify', body.htmlPath]);
+    assert.equal(text.code, 0, text.out + text.err);
+    assert.match(text.out, /^VERIFIED  report verify/m);
+  });
+
+  it('signs a session report FAILED when the session root does not verify', () => {
+    const dir = initRepo();
+    commitFile(dir, 'parent.txt', 'parent\n');
+    const parent = parseJson(cli(dir, ['wrap', '--session', 's-rootfail', '--agent', 'parent', '--message', 'parent', '--json']));
+    commitFile(dir, 'child.txt', 'child\n');
+    cli(dir, ['wrap', '--session', 's-rootfail', '--parent', parent.path, '--agent', 'child', '--message', 'child']);
+    cli(dir, ['keygen']);
+    cli(dir, ['trust', 'add', '--self']);
+    const good = cliResult(dir, ['report', '--session', 's-rootfail', '--out', join(dir, 'good-root.report.html'), '--json']);
+    assert.equal(good.code, 0, good.out + good.err);
+    const goodBody = parseJson(good.out);
+    assert.equal(goodBody.verdict, 'VERIFIED');
+    const rootId = payloadOf(readFileSync(goodBody.htmlPath, 'utf8')).receipts.find((item) => !item.parent).id;
+    const original = readFileSync(parent.path, 'utf8');
+    writeFileSync(parent.path, original.replace(/agent-receipt-sha256:[0-9a-f]{64}/, (hex) => {
+      return hex.replace(/[0-9a-f]$/, (ch) => (ch === 'a' ? 'b' : 'a'));
+    }));
+    const made = cliResult(dir, ['report', '--session', 's-rootfail', '--json']);
+    assert.equal(made.code, 2, made.out + made.err);
+    const body = parseJson(made.out);
+    assert.equal(body.verdict, 'FAILED');
+    assert.match(body.reason, new RegExp(`session root ${rootId} failed verification`));
+    const html = readFileSync(body.htmlPath, 'utf8');
+    assert.match(html, /<div class="banner failed"/);
+    assert.match(html, /<div class="verdict">FAILED<\/div>/);
+    assert.doesNotMatch(html, /<div class="banner verified"/);
+    assert.match(html, /<title>Agent Receipt report — FAILED<\/title>/);
+    for (const args of [
+      ['report', 'verify', body.htmlPath],
+      ['report', 'verify', body.htmlPath, '--require-sig'],
+    ]) {
+      const checked = cliResult(dir, args);
+      assert.equal(checked.code, 2, checked.out + checked.err);
+      assert.match(checked.out, /^FAILED  report verify/m);
+      assert.doesNotMatch(checked.out, /^VERIFIED/m);
+      assert.match(checked.err, new RegExp(rootId));
+    }
+    const json = cliResult(dir, ['report', 'verify', body.htmlPath, '--json']);
+    assert.equal(json.code, 2);
+    assert.equal(parseJson(json.out).verdict, 'FAILED');
+  });
+
+  it('exits 2 for FAILED and UNTRUSTED and never prints VERIFIED on failure', () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', 'policy\n');
+    cli(dir, ['wrap', '--agent', 'ci', '--message', 'policy']);
+    const unsignedHtml = parseJson(cli(dir, ['report', 'last', '--out', join(dir, 'unsigned.report.html'), '--json'])).htmlPath;
+    const honest = cliResult(dir, ['report', 'verify', unsignedHtml]);
+    assert.equal(honest.code, 0, honest.err);
+    assert.match(honest.out, /^UNSIGNED  report verify/m);
+    assert.doesNotMatch(honest.out, /^VERIFIED/m);
+    const needSig = cliResult(dir, ['report', 'verify', unsignedHtml, '--require-sig']);
+    assert.equal(needSig.code, 2);
+    assert.match(needSig.out, /^UNSIGNED  report verify/m);
+    assert.doesNotMatch(needSig.out, /^VERIFIED/m);
+
+    const receipt = latestReceipt(dir);
+    const bad = join(dir, 'bad-policy.md');
+    writeFileSync(bad, readFileSync(receipt, 'utf8').replace(/agent-receipt-sha256:[0-9a-f]{64}/, (hex) => {
+      return hex.replace(/[0-9a-f]$/, (ch) => (ch === 'a' ? 'b' : 'a'));
+    }));
+    const failed = cliResult(dir, ['report', bad, '--out', join(dir, 'failed-policy.report.html'), '--json']);
+    assert.equal(failed.code, 2);
+    assert.equal(parseJson(failed.out).verdict, 'FAILED');
+    for (const args of [
+      ['report', 'verify', parseJson(failed.out).htmlPath],
+      ['report', 'verify', parseJson(failed.out).htmlPath, '--require-sig'],
+    ]) {
+      const checked = cliResult(dir, args);
+      assert.equal(checked.code, 2, checked.out + checked.err);
+      assert.match(checked.out, /^FAILED  report verify/m);
+      assert.doesNotMatch(checked.out, /^VERIFIED/m);
+    }
+
+    cli(dir, ['keygen']);
+    cli(dir, ['trust', 'add', 'ab'.repeat(32)]);
+    const untrusted = cliResult(dir, ['report', 'last', '--out', join(dir, 'untrusted.report.html'), '--json']);
+    assert.equal(untrusted.code, 0, untrusted.out + untrusted.err);
+    assert.equal(parseJson(untrusted.out).verdict, 'UNTRUSTED');
+    for (const args of [
+      ['report', 'verify', parseJson(untrusted.out).htmlPath],
+      ['report', 'verify', parseJson(untrusted.out).htmlPath, '--require-sig'],
+    ]) {
+      const checked = cliResult(dir, args);
+      assert.equal(checked.code, 2, checked.out + checked.err);
+      assert.match(checked.out, /^UNTRUSTED  report verify/m);
+      assert.doesNotMatch(checked.out, /^VERIFIED/m);
+    }
+    const untrustedJson = cliResult(dir, ['report', 'verify', parseJson(untrusted.out).htmlPath, '--json']);
+    assert.equal(parseJson(untrustedJson.out).verdict, 'UNTRUSTED');
+    assert.equal(parseJson(untrustedJson.out).exitCode, 2);
+  });
+
+  it('exits 1 when --receipts is missing or not a directory', () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', 'receipts-dir\n');
+    cli(dir, ['wrap', '--agent', 'ci', '--message', 'receipts dir']);
+    const htmlPath = parseJson(cli(dir, ['report', 'last', '--json'])).htmlPath;
+    const missing = cliResult(dir, ['report', 'verify', htmlPath, '--receipts', join(dir, 'no-such-receipts')]);
+    assert.equal(missing.code, 1);
+    assert.match(missing.err, /--receipts directory not found/);
+    const notDir = join(dir, 'not-a-receipts-dir');
+    writeFileSync(notDir, 'x\n');
+    const fileDir = cliResult(dir, ['report', 'verify', htmlPath, '--receipts', notDir]);
+    assert.equal(fileDir.code, 1);
+    assert.match(fileDir.err, /--receipts is not a directory/);
+    const blocked = join(dir, 'blocked-receipts');
+    mkdirSync(blocked);
+    chmodSync(blocked, 0);
+    let readable = true;
+    try {
+      readdirSync(blocked);
+    } catch {
+      readable = false;
+    }
+    const unread = cliResult(dir, ['report', 'verify', htmlPath, '--receipts', blocked]);
+    chmodSync(blocked, 0o755);
+    if (!readable) {
+      assert.equal(unread.code, 1);
+      assert.match(unread.err, /--receipts directory is unreadable/);
+    }
+  });
+
+  it('treats a present payload that fails the schema as tampering', () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', 'schema\n');
+    cli(dir, ['wrap', '--agent', 'ci', '--message', 'schema']);
+    const html = readFileSync(parseJson(cli(dir, ['report', 'last', '--json'])).htmlPath, 'utf8');
+    const match = html.match(/<script type="application\/json" id="agent-receipt-report">([\s\S]*?)<\/script>/);
+    assert.ok(match);
+    const obj = JSON.parse(match[1]);
+    delete obj.title;
+    const encoded = JSON.stringify(obj)
+      .replace(/&/g, '\\u0026')
+      .replace(/</g, '\\u003c')
+      .replace(/>/g, '\\u003e');
+    expectStructureReject(dir, html.replace(match[1], encoded), 'schema-title', /report payload title is missing/);
+    expectStructureReject(
+      dir,
+      html.replace(match[1], '{'),
+      'schema-json',
+      /embedded report payload is malformed JSON/,
+    );
+  });
+
+  it('checks several reports and exits with the worst code', () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', 'multi\n');
+    cli(dir, ['wrap', '--agent', 'ci', '--message', 'multi']);
+    const good = parseJson(cli(dir, ['report', 'last', '--json'])).htmlPath;
+    const bad = join(dir, 'multi-bad.report.html');
+    writeFileSync(bad, readFileSync(good, 'utf8').replace('<h1>', '<h1 data-x="1">'));
+    const missing = join(dir, 'multi-missing.report.html');
+    const both = cliResult(dir, ['report', 'verify', good, bad, '--json']);
+    assert.equal(both.code, 2);
+    const lines = both.out.trim().split('\n');
+    assert.equal(lines.length, 2);
+    assert.equal(JSON.parse(lines[0]).exitCode, 0);
+    assert.equal(JSON.parse(lines[0]).verdict, 'UNSIGNED');
+    assert.equal(JSON.parse(lines[1]).exitCode, 2);
+    assert.equal(JSON.parse(lines[1]).reason, PAGE_MISMATCH);
+    const withMissing = cliResult(dir, ['report', 'verify', good, missing]);
+    assert.equal(withMissing.code, 1);
+    assert.match(withMissing.err, /report not found/);
+    const worst = cliResult(dir, ['report', 'verify', good, missing, bad]);
+    assert.equal(worst.code, 2);
+    assert.doesNotMatch(worst.out, /^VERIFIED/m);
+  });
+
+  it('refuses to write a report from an existing report file', () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', 'already\n');
+    cli(dir, ['wrap', '--agent', 'ci', '--message', 'already']);
+    const htmlPath = parseJson(cli(dir, ['report', 'last', '--json'])).htmlPath;
+    const refused = cliResult(dir, ['report', htmlPath]);
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /input is already a report; use report verify/);
+    assert.equal(existsSync(`${htmlPath}.report.html`), false);
+    const upper = cliResult(dir, ['report', 'NOPE.REPORT.HTML', '--json']);
+    assert.equal(upper.code, 1);
+    assert.equal(parseJson(upper.out).reason, 'input is already a report; use report verify');
+    assert.equal(existsSync(join(dir, 'NOPE.REPORT.HTML.report.html')), false);
+    assert.equal(existsSync(join(dir, '.agent-receipt', 'NOPE.REPORT.HTML.report.html')), false);
+  });
+
+  it('writes a complete session --json document when stdout is a pipe', { timeout: 60000 }, () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', 'bulk\n');
+    cli(dir, ['wrap', '--session', 's-bigjson', '--agent', 'ci', '--message', 'bulk']);
+    const original = readFileSync(latestReceipt(dir), 'utf8');
+    assert.match(original, /^- \*\*Id\*\*: r-[0-9a-f]{16}$/m);
+    const receipts = join(dir, '.agent-receipt', 'receipts');
+    const count = 320;
+    for (let i = 0; i < count; i += 1) {
+      const id = `r-${i.toString(16).padStart(16, '0')}`;
+      writeFileSync(join(receipts, `${id}.md`), withReceiptId(original, id));
+    }
+    const result = spawnSync(process.execPath, [bin, 'session', 's-bigjson', '--json'], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: spawnEnv(),
+      timeout: 30000,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    assert.equal(result.status, 0, result.stderr || result.error);
+    assert.ok(Buffer.byteLength(result.stdout, 'utf8') > 65536, `stdout bytes ${Buffer.byteLength(result.stdout || '', 'utf8')}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.command, 'session');
+    assert.equal(parsed.session, 's-bigjson');
+    assert.ok(parsed.receipts.length >= count);
   });
 
   it('refuses a symlinked sidecar before deleting any prune target', () => {

@@ -678,7 +678,7 @@ Usage:
   agent-receipt report <receipt|last> [--out <path>] [--include-host] [--no-redact] [--json]
   agent-receipt report --session <id> [--out <path>] [--json]
   agent-receipt report <path/to/name.session> [--out <path>]
-  agent-receipt report verify <file.html> [--receipts <dir>] [--require-sig] [--json]
+  agent-receipt report verify <file.html> [more.html ...] [--receipts <dir>] [--require-sig] [--json]
 
 Writes one self-contained HTML file a reviewer can open offline. Inline CSS
 only. No images, fonts, or network requests. JavaScript is not required to
@@ -713,33 +713,43 @@ session export (secrets, nested receipt/index bodies, and Host).
 \`--no-redact\` skips the pipeline and wins over \`--include-host\`. Either
 opt-out prints a loud UNREDACTED marker on the page.
 
-The signature covers the canonical JSON payload
-(kind \`agent-receipt-report\`, version 1, cliVersion, generatedAt, subject,
-session, manifestSha256, exposure, verdict, verifyCommands, and each
-receipt id, sha256, parent, agent, verified, signature, fingerprint,
-trusted, originalFingerprint, resignedBy, signedBy). It is the UTF-8 hex
-SHA-256 of that JSON, signed with the same SignatureDocument as \`sign\`.
-It does not cover CSS, narrative wording, file lists, commit messages,
-risk text, or the receipt bytes. \`report verify\` re-hashes receipt files
-when they are on disk. A detached \`<report>.html.sig.json\` is written
-beside the HTML when keys load, and the same signature is embedded so one
-file is enough. Missing keys write an UNSIGNED report and exit 0. Keys
-that exist but cannot be loaded exit 1. A receipt that fails verify, or a
-present invalid receipt signature, still writes the page and exits 2.
-UNTRUSTED means an active allowlist rejected a fingerprint. That still
-exits 0 on generation.
+The page is a pure function of the canonical JSON payload and the
+signature document. The signature is the UTF-8 hex SHA-256 of that JSON
+(sorted keys, no whitespace), the same SignatureDocument as \`sign\`. It is
+not a signature over the HTML bytes. The payload holds every string the
+page shows: verdict, banner, pills, agent, fingerprints, trust, the
+signature status line, the title, the UNREDACTED state, and the narrative
+(branch, message, summary, files, diff, commits, risk, session tree).
+Sign the payload, then render with the signature block at a fixed place.
+A detached \`<report>.html.sig.json\` is written beside the HTML when keys
+load. The embedded signature block is JSON \`null\` when the report is
+unsigned, and the page says UNSIGNED. Missing keys exit 0. Keys that
+exist but cannot be loaded exit 1. A receipt that fails verify, a present
+invalid receipt signature, or a session whose root or any receipt fails
+verification still writes the page with verdict FAILED and exits 2.
+UNTRUSTED means an active allowlist rejected a fingerprint. Generation
+still exits 0.
 
-\`report verify <file.html>\` checks the embedded payload against the visible
-covered fields, verifies the signature, and re-hashes local receipts
-(outDir, or \`--receipts <dir>\`). A receipt that is not on disk is skipped.
-Exit 0 when the payload, signature, and found receipts agree. Exit 2 when
-a covered field, the payload, the signature, or a found receipt was
-tampered with, or when a found receipt fails verify. Exit 1 when the file
-or the payload is missing or malformed. \`--require-sig\` requires a
-signature and enforces the trust allowlist. Without it, an absent
-signature is unsigned and still exits 0. An invalid signature exits 2
-either way. originalFingerprint, resignedBy, and signedBy are the manifest
-signer's claims. This is not a certificate authority.
+\`report verify\` finds exactly one payload block and exactly one signature
+block outside HTML comments (a strict scan, not a regex). Zero, a
+duplicate, or a block inside a comment exits 2. A payload that is present
+but fails the schema exits 2. It then checks the signature, re-renders the
+page, and requires the same bytes. A single missing trailing newline is
+ignored. Any other difference exits 2 with
+"page content does not match signed payload". Receipt files are re-hashed when outDir or
+\`--receipts <dir>\` has the recorded sha256 or redactedSha256. A different
+file with the same id is not a match. Several HTML files are allowed; the
+exit code is the worst of them.
+
+Exit codes:
+  0  signature valid, page matches, verdict VERIFIED
+  0  no --require-sig, page matches, verdict UNSIGNED (printed UNSIGNED)
+  1  missing file, unreadable file, or --receipts is not a readable directory
+  2  bad or missing blocks, schema, signature, page bytes, a found receipt,
+     verdict FAILED, verdict UNTRUSTED, or UNSIGNED with --require-sig
+A non-zero exit never prints VERIFIED. \`--require-sig\` also enforces the
+trust allowlist. originalFingerprint, resignedBy, and signedBy are the
+manifest signer's claims. This is not a certificate authority.
 
 \`--json\` prints one object (command \`report\` or \`report-verify\`).
 The report does not append the audit log and does not add an index row.
@@ -749,7 +759,7 @@ Examples:
   agent-receipt report last --json
   agent-receipt report --session s-0123456789abcdef
   agent-receipt report .agent-receipt/s-0123456789abcdef.session
-  agent-receipt report verify .agent-receipt/receipt-1.report.html
+  agent-receipt report verify .agent-receipt/*.report.html
   agent-receipt report verify review.report.html --require-sig --receipts .agent-receipt/receipts
 `,
 

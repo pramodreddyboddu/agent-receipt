@@ -2,11 +2,13 @@
  * Signed one-page HTML report.
  *
  * `report <receipt|last>` and `report --session <id>` (or a `*.session`
- * directory) write one offline HTML file beside outDir. The Ed25519
- * signature covers the canonical JSON payload, not the HTML bytes.
+ * directory) write one offline HTML file beside outDir. The page is
+ * `renderReportHtml(payload, signature)`. The Ed25519 signature covers the
+ * canonical payload. Verify re-renders and requires those bytes.
  * Missing keys write an UNSIGNED report and exit 0. A receipt that fails
  * verify, or a present invalid receipt signature, still writes the page
- * and exits 2.
+ * and exits 2. A session whose root or any receipt fails verification is
+ * FAILED, never VERIFIED.
  */
 
 import { createHash } from 'node:crypto';
@@ -21,8 +23,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { color } from '../lib/color.js';
-import { loadConfig } from '../lib/config.js';
-import { verifyMarkdown } from '../lib/hash.js';
+import { canonicalBody, sha256Hex } from '../lib/hash.js';
 import {
   buildSessionNodes,
   formatSessionTree,
@@ -32,20 +33,25 @@ import {
   receiptIntegrity,
   type SessionNode,
 } from '../lib/link.js';
-import { publishRedactedReceipt } from '../lib/redact.js';
+import { defangUrls } from '../lib/prove-html.js';
+import { isHighSecretRiskCode, publishRedactedReceipt, redactSecretsInText } from '../lib/redact.js';
 import { receiptsDir } from '../lib/receipt-index.js';
 import { loadResignProvenance, type ResignClaim } from '../lib/resign-provenance.js';
 import {
-  assertCoveredVisible,
+  assertRenderedPage,
   decideVerdict,
   parseReportHtml,
+  plainReportText,
   renderReportHtml,
+  reportBanner,
   reportPayloadHash,
+  reportPills,
+  reportTitle,
+  reportUnredacted,
   ReportHtmlError,
   type ReportExposure,
   type ReportPayload,
   type ReportReceiptPayload,
-  type ReportReceiptView,
   type ReportSignatureState,
   type ReportVerdict,
 } from '../lib/report-html.js';
@@ -125,7 +131,7 @@ export interface ReportVerifyResult {
 }
 
 interface BuiltReceipt {
-  view: ReportReceiptView;
+  payload: ReportReceiptPayload;
   node: {
     id: string;
     parent: string | null;
@@ -249,6 +255,19 @@ function signatureState(
   return { state: 'valid', fingerprint, trusted };
 }
 
+/** Text the page will show. Secrets are masked unless exposure is unredacted. URLs are defanged. */
+function shownField(value: string | null | undefined, exposure: ReportExposure, fallback = '(none)'): string {
+  if (value === null || value === undefined || value === '') return fallback;
+  const raw = exposure === 'unredacted' ? String(value) : redactSecretsInText(String(value));
+  return defangUrls(raw);
+}
+
+function redactedCanonical(markdown: string, actual: string): string | null {
+  const published = publishRedactedReceipt(markdown, { maskHost: true });
+  const hash = sha256Hex(canonicalBody(published));
+  return hash === actual ? null : hash;
+}
+
 function buildOne(
   filePath: string,
   exposure: ReportExposure,
@@ -270,43 +289,57 @@ function buildOne(
         signedBy: manifestEntry.signedBy ?? null,
       }
     : claimFor(provenance, integrity.actual);
-  const payload: ReportReceiptPayload = {
-    id,
-    sha256: integrity.actual,
-    parent,
-    agent,
-    verified: integrity.ok,
-    signature: sig.state,
-    fingerprint: sig.fingerprint,
-    trusted: sig.trusted,
-    originalFingerprint: claim.originalFingerprint,
-    resignedBy: claim.resignedBy,
-    signedBy: claim.signedBy,
-  };
   const shown = displayMarkdown(original, exposure);
   const header = parseSessionHeader(shown);
   const meta = parseLinkMeta(original);
-  const view: ReportReceiptView = {
-    payload,
-    summary: section(shown, '## Summary'),
-    message: headerValue(header, shown, 'Message'),
-    branch: headerValue(header, shown, 'Branch'),
-    head: headerValue(header, shown, 'HEAD'),
-    range: headerValue(header, shown, 'Range'),
-    timestamp: meta.timestamp || headerValue(header, shown, 'Timestamp'),
-    commands: commandsFrom(shown),
-    files: filesFrom(shown),
-    risks: risksFrom(shown),
-    review: section(shown, '## What to review'),
-    commits: section(shown, '## Commits'),
-    diffs: section(shown, '## Diff summaries').split('\n').slice(0, 40).join('\n'),
-  };
+  const show = (value: string | null | undefined, fallback = '(none)') => shownField(value, exposure, fallback);
+  let summary = plainReportText(section(shown, '## Summary'));
   if (exposure !== 'redacted') {
     const host = headerValue(header, shown, 'Host');
-    if (host) view.summary = `Host: ${host}\n${view.summary}`.trim();
+    if (host) summary = `Host: ${show(host, host)}\n${summary}`.trim();
   }
+  const risks = risksFrom(shown).map((item) => ({
+    severity: show(item.severity, item.severity),
+    code: show(item.code, item.code),
+    detail:
+      exposure !== 'unredacted' && isHighSecretRiskCode(item.code)
+        ? '[REDACTED]'
+        : show(item.detail, item.detail),
+  }));
+  const identity = {
+    verified: integrity.ok,
+    signature: sig.state,
+    trusted: sig.trusted,
+  };
+  const payload: ReportReceiptPayload = {
+    id,
+    sha256: integrity.actual,
+    redactedSha256: redactedCanonical(original, integrity.actual),
+    parent,
+    agent,
+    verified: identity.verified,
+    signature: identity.signature,
+    fingerprint: sig.fingerprint,
+    trusted: identity.trusted,
+    originalFingerprint: claim.originalFingerprint,
+    resignedBy: claim.resignedBy,
+    signedBy: claim.signedBy,
+    pills: reportPills(identity),
+    timestamp: show(meta.timestamp || headerValue(header, shown, 'Timestamp')),
+    branch: show(headerValue(header, shown, 'Branch')),
+    head: show(headerValue(header, shown, 'HEAD')),
+    range: show(plainReportText(headerValue(header, shown, 'Range'))),
+    message: show(headerValue(header, shown, 'Message')),
+    summary: summary ? show(summary, summary) : '(none)',
+    commands: commandsFrom(shown).map((command) => show(command, command)),
+    files: filesFrom(shown).map((file) => show(file, file)),
+    risks,
+    review: show(section(shown, '## What to review')),
+    commits: show(section(shown, '## Commits')),
+    diffs: show(section(shown, '## Diff summaries').split('\n').slice(0, 40).join('\n')),
+  };
   return {
-    view,
+    payload,
     node: {
       id,
       parent,
@@ -376,9 +409,9 @@ function treeFrom(session: string, built: BuiltReceipt[]): string {
   const provenance = new Map<string, ResignClaim>();
   for (const item of built) {
     provenance.set(item.node.id, {
-      originalFingerprint: item.view.payload.originalFingerprint,
-      resignedBy: item.view.payload.resignedBy,
-      signedBy: item.view.payload.signedBy,
+      originalFingerprint: item.payload.originalFingerprint,
+      resignedBy: item.payload.resignedBy,
+      signedBy: item.payload.signedBy,
     });
   }
   return formatSessionTree(session, nodes as SessionNode[], aliasToId, provenance);
@@ -439,6 +472,28 @@ function reportTrustedFor(keys: LoadedKeys | null, store: TrustStore): boolean |
   return applyTrust(status, store).trusted;
 }
 
+function aliasesOf(built: BuiltReceipt[]): Set<string> {
+  const aliases = new Set<string>();
+  for (const item of built) {
+    aliases.add(item.payload.id);
+    aliases.add(item.payload.sha256);
+    if (item.payload.redactedSha256) aliases.add(item.payload.redactedSha256);
+    for (const alias of item.node.aliases) aliases.add(alias);
+  }
+  return aliases;
+}
+
+/** Why this tree cannot be VERIFIED. Null when every receipt's hash and signature hold. */
+function verificationFailure(built: BuiltReceipt[]): string | null {
+  const aliases = aliasesOf(built);
+  const failed = built.filter((item) => !item.payload.verified || item.payload.signature === 'invalid');
+  if (!failed.length) return null;
+  const roots = failed.filter((item) => !item.payload.parent || !aliases.has(item.payload.parent));
+  const focus = roots[0] ?? failed[0];
+  const role = roots.length ? 'session root' : 'receipt';
+  return `${role} ${focus.payload.id} failed verification`;
+}
+
 function writeReport(
   cwd: string,
   opts: ReportOptions,
@@ -450,9 +505,10 @@ function writeReport(
   receiptsArg: string | null,
   packageBase: string | null,
   sourcePaths: string[],
+  sessionFailure: string | null = null,
 ): ReportCommandResult {
   if (!built.length) return emptyResult(1, 'report has no receipts');
-  built.sort((a, b) => (a.view.payload.id < b.view.payload.id ? -1 : a.view.payload.id > b.view.payload.id ? 1 : 0));
+  built.sort((a, b) => (a.payload.id < b.payload.id ? -1 : a.payload.id > b.payload.id ? 1 : 0));
   const htmlPath = resolveReportOut(cwd, fileName, opts.out);
   for (const source of sourcePaths) {
     if (resolve(source) === resolve(htmlPath)) {
@@ -463,8 +519,10 @@ function writeReport(
   const store = loadTrustedFingerprints(cwd, { extra: opts.trustedKeys });
   const keys = tryLoadKeys(cwd);
   const reportTrusted = reportTrustedFor(keys, store);
-  const receipts = built.map((item) => item.view.payload);
-  const verdict = decideVerdict(keys !== null, reportTrusted, receipts);
+  const receipts = built.map((item) => item.payload);
+  const broken = verificationFailure(built);
+  const failure = broken ?? sessionFailure;
+  const verdict = failure ? 'FAILED' : decideVerdict(keys !== null, reportTrusted, receipts);
   const verifyCommands = verifyCommandsFor(
     htmlPath,
     subject,
@@ -473,6 +531,7 @@ function writeReport(
     packageBase,
   );
   const generatedAt = new Date().toISOString();
+  const tree = subject === 'session' ? treeFrom(session ?? '', built) : null;
   const payload: ReportPayload = {
     kind: 'agent-receipt-report',
     version: 1,
@@ -483,17 +542,15 @@ function writeReport(
     manifestSha256,
     exposure,
     verdict,
+    title: reportTitle(verdict),
+    banner: reportBanner(verdict, keys !== null, reportTrusted, keys?.fingerprint ?? null),
+    unredacted: reportUnredacted(exposure),
     verifyCommands,
+    tree,
     receipts,
   };
   const signature = keys ? createSignatureDocument(reportPayloadHash(payload), keys) : null;
-  const html = renderReportHtml({
-    payload,
-    signature,
-    reportTrusted,
-    receipts: built.map((item) => item.view),
-    tree: subject === 'session' && session ? treeFrom(session, built) : null,
-  });
+  const html = renderReportHtml(payload, signature);
   mkdirSync(dirname(htmlPath), { recursive: true });
   writeFileSync(htmlPath, html, 'utf8');
   let sigPath: string | null = null;
@@ -515,10 +572,7 @@ function writeReport(
     redacted: exposure === 'redacted',
     exposure,
     receiptCount: receipts.length,
-    reason:
-      exitCode === 2
-        ? 'one or more receipts failed verify or had an invalid signature'
-        : null,
+    reason: exitCode === 2 ? failure ?? 'one or more receipts failed verify or had an invalid signature' : null,
   };
 }
 
@@ -567,6 +621,7 @@ function localSessionReport(cwd: string, sessionId: string, opts: ReportOptions)
   const provenance = loadResignProvenance(cwd);
   const built = collected.nodes.map((node) => buildOne(node.path, exposure, store, provenance));
   const outName = basename(receiptsDir(cwd));
+  const sessionFailure = collected.exitCode !== 0 ? collected.reason ?? 'session verification failed' : null;
   return writeReport(
     cwd,
     opts,
@@ -578,6 +633,7 @@ function localSessionReport(cwd: string, sessionId: string, opts: ReportOptions)
     outName,
     null,
     collected.nodes.map((node) => node.path),
+    sessionFailure,
   );
 }
 
@@ -598,7 +654,7 @@ function oneReceiptReport(cwd: string, pathArg: string, opts: ReportOptions): Re
     session,
     null,
     [built],
-    receiptFileName(target, built.view.payload.sha256),
+    receiptFileName(target, built.payload.sha256),
     null,
     null,
     [target],
@@ -625,6 +681,9 @@ export function cmdReport(
 ): number {
   if (opts.session && pathArg) {
     return emitReport(emptyResult(1, 'pass a receipt path or --session, not both'), Boolean(opts.json));
+  }
+  if (pathArg && pathArg !== 'last' && /\.report\.html$/i.test(basename(pathArg))) {
+    return emitReport(emptyResult(1, 'input is already a report; use report verify'), Boolean(opts.json));
   }
   let result: ReportCommandResult;
   if (opts.session) {
@@ -714,37 +773,46 @@ function checkLocalReceipts(
   let checked = 0;
   let skipped = 0;
   for (const receipt of payload.receipts) {
-    const byHash = hashed.find((item) => item.sha256 === receipt.sha256);
-    const byId = hashed.find((item) => item.id === receipt.id);
-    const found = byHash ?? byId;
+    const accepted = new Set<string>([receipt.sha256]);
+    if (receipt.redactedSha256) accepted.add(receipt.redactedSha256);
+    const found = hashed.find((item) => accepted.has(item.sha256));
     if (!found) {
       skipped += 1;
       continue;
     }
     checked += 1;
-    if (found.sha256 !== receipt.sha256) {
-      return { checked, skipped, reason: `receipt ${receipt.id} hash does not match the signed payload` };
-    }
-    if (found.verified !== receipt.verified || found.signature !== receipt.signature) {
-      return { checked, skipped, reason: `receipt ${receipt.id} no longer matches the signed payload` };
-    }
-    if (!found.verified || found.signature === 'invalid') {
-      return { checked, skipped, reason: `receipt ${receipt.id} failed verify` };
+    if (found.sha256 === receipt.sha256) {
+      if (found.verified !== receipt.verified || found.signature !== receipt.signature) {
+        return { checked, skipped, reason: `receipt ${receipt.id} no longer matches the signed payload` };
+      }
+      if (!found.verified || found.signature === 'invalid') {
+        return { checked, skipped, reason: `receipt ${receipt.id} failed verify` };
+      }
+    } else if (!found.verified || found.signature === 'invalid') {
+      return { checked, skipped, reason: `receipt ${receipt.id} redacted copy failed verify` };
     }
   }
   return { checked, skipped, reason: null };
 }
 
-function emitVerify(result: ReportVerifyResult, json: boolean): number {
+/** A non-zero exit never reports VERIFIED. The page's claim is not a pass. */
+function shownVerdict(result: ReportVerifyResult): ReportVerdict | null {
+  if (result.exitCode !== 0 && result.verdict === 'VERIFIED') return 'FAILED';
+  return result.verdict;
+}
+
+function emitVerify(result: ReportVerifyResult, json: boolean): 0 | 1 | 2 {
+  const verdict = shownVerdict(result);
+  const printed = { ...result, verdict };
   if (json) {
-    console.log(JSON.stringify(result));
+    console.log(JSON.stringify(printed));
     return result.exitCode;
   }
   if (result.exitCode === 1) {
     console.error(color.red('Error:') + ` ${result.reason ?? 'report verify failed'}`);
     return 1;
   }
-  const label = result.verdict ?? 'FAILED';
+  const label = verdict ?? 'FAILED';
   const paint = result.exitCode === 0 && label === 'VERIFIED' ? color.green : result.exitCode === 0 ? color.yellow : color.red;
   console.log(`${paint(label)}  report verify`);
   if (result.fingerprint) console.log(`  fingerprint: ${result.fingerprint}`);
@@ -769,20 +837,73 @@ function readSignatureFile(sigPath: string): { doc: SignatureDocument | null; re
   }
 }
 
+function sameSignature(a: SignatureDocument, b: SignatureDocument): boolean {
+  return (
+    a.alg === b.alg &&
+    a.version === b.version &&
+    a.sha256 === b.sha256 &&
+    a.fingerprint === b.fingerprint &&
+    a.signature === b.signature &&
+    a.publicKey === b.publicKey
+  );
+}
+
+function failedVerdictReason(payload: ReportPayload): string {
+  const known = new Set<string>();
+  for (const receipt of payload.receipts) {
+    known.add(receipt.id);
+    known.add(receipt.sha256);
+    if (receipt.redactedSha256) known.add(receipt.redactedSha256);
+  }
+  const failed = payload.receipts.filter((receipt) => !receipt.verified || receipt.signature === 'invalid');
+  const roots = failed.filter((receipt) => !receipt.parent || !known.has(receipt.parent));
+  if (payload.subject === 'session' && roots[0]) return `session root ${roots[0].id} failed verification`;
+  if (failed[0]) return `receipt ${failed[0].id} failed verification`;
+  return 'report verdict is FAILED';
+}
+
 /**
- * Check the embedded payload and signature. The signature covers the
- * canonical JSON payload, not the HTML. A present invalid signature exits 2.
- * `--require-sig` also requires a signature and enforces the trust allowlist.
- * Local receipts are re-hashed when found under outDir or `--receipts`.
- * A receipt that is not on disk is skipped.
+ * `--receipts` must name a directory we can list. A missing or unreadable
+ * path is usage (exit 1), not a failed proof.
  */
-export function cmdReportVerify(
-  cwd: string,
-  pathArg: string | undefined,
-  opts: ReportVerifyOptions = {},
-): number {
+function receiptsDirError(cwd: string, dir: string | undefined): string | null {
+  if (!dir) return null;
+  const abs = resolve(cwd, dir);
+  if (!existsSync(abs)) return `--receipts directory not found: ${dir}`;
+  let st;
+  try {
+    st = statSync(abs);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return `--receipts directory is unreadable: ${dir} (${detail})`;
+  }
+  if (!st.isDirectory()) return `--receipts is not a directory: ${dir}`;
+  try {
+    readdirSync(abs);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return `--receipts directory is unreadable: ${dir} (${detail})`;
+  }
+  return null;
+}
+
+/**
+ * Check one report file.
+ *
+ * 1. Exactly one payload block and one signature block, outside comments.
+ * 2. Signature over the canonical payload (`--require-sig` and trust as now).
+ * 3. Re-render and require the same bytes (one trailing newline may be absent).
+ * 4. Exit 0 only for a valid signature, a matching page, and verdict VERIFIED,
+ *    or, without `--require-sig`, an honestly UNSIGNED page that matches.
+ *    Verdict FAILED always exits 2. UNTRUSTED always exits 2. UNSIGNED with
+ *    `--require-sig` exits 2. The printed verdict is never VERIFIED on a
+ *    non-zero exit.
+ * Receipts are re-hashed when a file under outDir or `--receipts` has the
+ * recorded sha256 or redactedSha256. An id with different bytes is not a match.
+ */
+function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions): 0 | 1 | 2 {
   const json = Boolean(opts.json);
-  const fail = (exitCode: 1 | 2, reason: string, extra: Partial<ReportVerifyResult> = {}): number =>
+  const fail = (exitCode: 1 | 2, reason: string, extra: Partial<ReportVerifyResult> = {}): 0 | 1 | 2 =>
     emitVerify(
       {
         ok: false,
@@ -800,7 +921,6 @@ export function cmdReportVerify(
       },
       json,
     );
-  if (!pathArg) return fail(1, 'report verify requires an HTML file');
   const htmlPath = resolve(cwd, pathArg);
   if (!existsSync(htmlPath) || !statSync(htmlPath).isFile()) {
     return fail(1, `report not found: ${pathArg}`);
@@ -815,39 +935,42 @@ export function cmdReportVerify(
   let extracted;
   try {
     extracted = parseReportHtml(html);
-    assertCoveredVisible(html, extracted.payload, extracted.signature);
   } catch (err) {
     if (err instanceof ReportHtmlError) return fail(err.exitCode, err.message);
     const detail = err instanceof Error ? err.message : String(err);
-    return fail(1, detail);
+    return fail(2, detail);
   }
   const payload = extracted.payload;
-  let signature = extracted.signature;
-  const detachedPath = signaturePathFor(htmlPath);
-  const detached = readSignatureFile(detachedPath);
-  if (detached.reason) return fail(2, detached.reason, { verdict: payload.verdict, receiptCount: payload.receipts.length });
+  const signature = extracted.signature;
+  const base = {
+    verdict: payload.verdict,
+    signed: signature !== null,
+    fingerprint: signature?.fingerprint ?? null,
+    receiptCount: payload.receipts.length,
+  };
   if (signature) {
     const embedded = verifySignature(signature, extracted.payloadHash);
     if (!embedded.ok) {
-      return fail(2, embedded.reason ?? 'embedded report signature is invalid', {
-        verdict: payload.verdict,
-        signed: true,
-        fingerprint: signature.fingerprint,
-        receiptCount: payload.receipts.length,
-      });
+      return fail(2, embedded.reason ?? 'embedded report signature is invalid', base);
     }
   }
+  const detached = readSignatureFile(signaturePathFor(htmlPath));
+  if (detached.reason) return fail(2, detached.reason, base);
   if (detached.doc) {
+    if (!signature || !sameSignature(detached.doc, signature)) {
+      return fail(2, 'detached signature does not match the embedded signature', base);
+    }
     const check = verifySignature(detached.doc, extracted.payloadHash);
     if (!check.ok) {
-      return fail(2, check.reason ?? 'detached report signature is invalid', {
-        verdict: payload.verdict,
-        signed: true,
-        fingerprint: detached.doc.fingerprint,
-        receiptCount: payload.receipts.length,
-      });
+      return fail(2, check.reason ?? 'detached report signature is invalid', base);
     }
-    if (!signature) signature = detached.doc;
+  }
+  try {
+    assertRenderedPage(html, payload, signature);
+  } catch (err) {
+    if (err instanceof ReportHtmlError) return fail(err.exitCode, err.message, base);
+    const detail = err instanceof Error ? err.message : String(err);
+    return fail(2, detail, base);
   }
   const signed = signature !== null;
   let trusted: boolean | null = null;
@@ -866,43 +989,56 @@ export function cmdReportVerify(
     );
     trusted = applied.trusted;
     if (opts.requireSig && applied.ok !== true) {
-      return fail(2, applied.reason ?? 'report signature is not trusted', {
-        verdict: payload.verdict,
-        signed: true,
-        fingerprint: signature.fingerprint,
-        trusted,
-        receiptCount: payload.receipts.length,
-      });
+      return fail(2, applied.reason ?? 'report signature is not trusted', { ...base, trusted });
     }
-  } else if (opts.requireSig) {
-    return fail(2, 'signature required: report signature absent', {
-      verdict: payload.verdict,
-      receiptCount: payload.receipts.length,
-    });
   }
   const dirs = [receiptsDir(cwd)];
   if (opts.receiptsDir) dirs.unshift(resolve(cwd, opts.receiptsDir));
   const local = checkLocalReceipts(payload, dirs);
-  if (local.reason) {
-    return fail(2, local.reason, {
-      verdict: payload.verdict,
-      signed,
-      fingerprint: signature?.fingerprint ?? null,
-      trusted,
-      receiptCount: payload.receipts.length,
-      checked: local.checked,
-      skipped: local.skipped,
-    });
+  const counts = { checked: local.checked, skipped: local.skipped, trusted };
+  if (local.reason) return fail(2, local.reason, { ...base, ...counts });
+  if (payload.verdict === 'FAILED') {
+    return fail(2, failedVerdictReason(payload), { ...base, ...counts });
   }
-  const ok = true;
+  if (payload.verdict === 'UNTRUSTED') {
+    return fail(2, 'report verdict is UNTRUSTED', { ...base, ...counts });
+  }
+  if (!signed || payload.verdict === 'UNSIGNED') {
+    if (opts.requireSig || signed || payload.verdict !== 'UNSIGNED') {
+      const reason = opts.requireSig && !signed
+        ? 'signature required: report signature absent'
+        : 'report verdict is not VERIFIED';
+      return fail(2, reason, { ...base, ...counts, verdict: signed ? payload.verdict : 'UNSIGNED' });
+    }
+    return emitVerify(
+      {
+        ok: true,
+        command: 'report-verify',
+        version: VERSION,
+        exitCode: 0,
+        verdict: 'UNSIGNED',
+        signed: false,
+        fingerprint: null,
+        trusted: null,
+        receiptCount: payload.receipts.length,
+        checked: local.checked,
+        skipped: local.skipped,
+        reason: null,
+      },
+      json,
+    );
+  }
+  if (payload.verdict !== 'VERIFIED') {
+    return fail(2, 'report verdict is not VERIFIED', { ...base, ...counts });
+  }
   return emitVerify(
     {
-      ok,
+      ok: true,
       command: 'report-verify',
       version: VERSION,
       exitCode: 0,
-      verdict: payload.verdict,
-      signed,
+      verdict: 'VERIFIED',
+      signed: true,
       fingerprint: signature?.fingerprint ?? null,
       trusted,
       receiptCount: payload.receipts.length,
@@ -912,6 +1048,46 @@ export function cmdReportVerify(
     },
     json,
   );
+}
+
+/**
+ * Check one or more report files. The process exit code is the worst
+ * of 0, 1, and 2. `--receipts` is checked once up front.
+ */
+export function cmdReportVerify(
+  cwd: string,
+  pathArg: string | string[] | undefined,
+  opts: ReportVerifyOptions = {},
+): number {
+  const paths = (Array.isArray(pathArg) ? pathArg : pathArg ? [pathArg] : []).filter((item) => item.trim());
+  const json = Boolean(opts.json);
+  const usage = (reason: string): 0 | 1 | 2 =>
+    emitVerify(
+      {
+        ok: false,
+        command: 'report-verify',
+        version: VERSION,
+        exitCode: 1,
+        verdict: null,
+        signed: false,
+        fingerprint: null,
+        trusted: null,
+        receiptCount: 0,
+        checked: 0,
+        skipped: 0,
+        reason,
+      },
+      json,
+    );
+  if (!paths.length) return usage('report verify requires an HTML file');
+  const dirError = receiptsDirError(cwd, opts.receiptsDir);
+  if (dirError) return usage(dirError);
+  let worst: 0 | 1 | 2 = 0;
+  for (const filePath of paths) {
+    const code = verifyOneReport(cwd, filePath, opts);
+    if (code > worst) worst = code;
+  }
+  return worst;
 }
 
 export { SESSION_MANIFEST_NAME };

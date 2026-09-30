@@ -63,4 +63,4 @@ agent-receipt prove --json --html --out ./agent-receipt-report/
 
 `htmlPath` in the JSON names the `*.prove.html` file. It has a PASS/FAIL banner, hash, audit chain, signature and trust status, and a redacted receipt summary. Inline CSS only, no network, secrets masked by default. The report is not itself signed; `prove` / `verify --require-sig` on the receipt stay the proof. Upload `agent-receipt-report/*.prove.html` with `actions/upload-artifact`.
 
-`report last` (v1.0.30) writes a separate signed one-page HTML file beside the receipt store. `report verify` checks the embedded payload. That signature covers the payload, not the HTML bytes. Upload the `*.report.html` file the same way when a reviewer should trust the page offline.
+`report last` (v1.0.30) writes a separate signed one-page HTML file beside the receipt store. `report verify` re-renders that page from the signed payload and requires the same bytes, so the pixels a reviewer sees are what was signed. Upload the `*.report.html` file the same way when a reviewer should trust the page offline.

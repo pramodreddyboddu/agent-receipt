@@ -1,25 +1,21 @@
 /**
  * Signed one-page HTML report.
  *
+ * `renderReportHtml(payload, signature)` is a pure function. Every string
+ * the page shows lives in the canonical payload. The signature document is
+ * not part of that payload (signing it would be circular). It is inserted
+ * at a fixed place after the payload block. `report verify` re-renders and
+ * requires the same bytes. A missing final newline is the only difference
+ * that is ignored.
+ *
  * The page is one file: inline CSS, no images, no fonts, no network.
  * `style-src 'unsafe-inline'` is required because the stylesheet lives in
- * the file. There is no external CSS to hash, and a style hash would have
- * to be rewritten on every CSS edit without adding a boundary the opened
- * file does not already have. `script-src 'none'` blocks executable script.
- * The `<script type="application/json">` blocks are data, not script.
- *
- * The Ed25519 signature covers the canonical JSON payload (see
- * `canonicalReportJson`), not the HTML bytes. Receipt bodies are not in
- * the payload; `report verify` re-hashes them when the files are local.
- * Narrative sections (summary, diffs, review text) are redacted and escaped
- * for display and are not signed. Covered visible fields are bound to the
- * payload with `data-covered` / `data-*` and must match or verify exits 2.
+ * the file. `script-src 'none'` blocks executable script. The
+ * `<script type="application/json">` blocks are data, not script.
  */
 
 import { escapeHtml, OFFLINE_HTML_CSP } from './html.js';
 import { sha256Hex } from './hash.js';
-import { defangUrls } from './prove-html.js';
-import { isHighSecretRiskCode, redactSecretsInText } from './redact.js';
 import type { SignatureDocument } from './sign.js';
 
 export const REPORT_PAYLOAD_KIND = 'agent-receipt-report';
@@ -27,13 +23,52 @@ export const REPORT_PAYLOAD_VERSION = 1;
 export const REPORT_SCRIPT_ID = 'agent-receipt-report';
 export const REPORT_SIG_SCRIPT_ID = 'agent-receipt-report-sig';
 
+/** Human and JSON reason when the file is not the re-rendered page. */
+export const PAGE_MISMATCH_MESSAGE = 'page content does not match signed payload';
+
 export type ReportVerdict = 'VERIFIED' | 'FAILED' | 'UNSIGNED' | 'UNTRUSTED';
 export type ReportExposure = 'redacted' | 'host' | 'unredacted';
 export type ReportSignatureState = 'valid' | 'invalid' | 'unsigned';
+export type ReportBannerClass = 'verified' | 'failed' | 'unsigned' | 'untrusted';
 
+export interface ReportBanner {
+  className: ReportBannerClass;
+  /** Same word as `verdict`. This is the banner text. */
+  verdict: ReportVerdict;
+  /** Exact line, e.g. "Report signature: present (trusted)". */
+  signatureStatus: string;
+  /** Signer fingerprint, or "unsigned". */
+  fingerprint: string;
+}
+
+export interface ReportUnredacted {
+  marker: 'UNREDACTED';
+  detail: string;
+}
+
+export interface ReportPills {
+  verified: 'yes' | 'no';
+  signature: 'VALID' | 'INVALID' | 'UNSIGNED';
+  trust: string;
+}
+
+export interface ReportRisk {
+  severity: string;
+  code: string;
+  detail: string;
+}
+
+/**
+ * One receipt as the page shows it, plus the hashes verify may re-check.
+ * `sha256` is the canonical hash of the file the report was built from.
+ * `redactedSha256` is the canonical hash of the default redacted body when
+ * that hash differs. Verify matches either hash and never an id whose
+ * bytes are different.
+ */
 export interface ReportReceiptPayload {
   id: string;
   sha256: string;
+  redactedSha256: string | null;
   parent: string | null;
   agent: string | null;
   verified: boolean;
@@ -43,12 +78,26 @@ export interface ReportReceiptPayload {
   originalFingerprint: string | null;
   resignedBy: string | null;
   signedBy: string | null;
+  pills: ReportPills;
+  timestamp: string;
+  branch: string;
+  head: string;
+  range: string;
+  message: string;
+  summary: string;
+  commands: string[];
+  files: string[];
+  risks: ReportRisk[];
+  review: string;
+  commits: string;
+  diffs: string;
 }
 
 /**
  * Canonical report payload. The signature is over the UTF-8 hex SHA-256 of
  * `canonicalReportJson(payload)`, the same SignatureDocument pattern as
- * `sign` (the hex string, not the HTML).
+ * `sign` (the hex string, not the HTML). The HTML is then rendered from
+ * this object plus the signature document, and verify requires those bytes.
  */
 export interface ReportPayload {
   kind: typeof REPORT_PAYLOAD_KIND;
@@ -61,43 +110,81 @@ export interface ReportPayload {
   manifestSha256: string | null;
   exposure: ReportExposure;
   verdict: ReportVerdict;
+  title: string;
+  banner: ReportBanner;
+  /** Null when exposure is redacted. The page then has no UNREDACTED marker. */
+  unredacted: ReportUnredacted | null;
   /** Exact offline commands shown on the page. Basenames, not absolute paths. */
   verifyCommands: string[];
+  /** Plain session tree, or null for a single-receipt report. */
+  tree: string | null;
   receipts: ReportReceiptPayload[];
 }
 
-export interface ReportReceiptView {
-  payload: ReportReceiptPayload;
-  summary: string;
-  message: string;
-  branch: string;
-  head: string;
-  range: string;
-  timestamp: string;
-  commands: string[];
-  files: string[];
-  risks: Array<{ severity: string; code: string; detail: string }>;
-  review: string;
-  commits: string;
-  /** Capped diff excerpt. Display only. Not signed. */
-  diffs: string;
+export function reportTitle(verdict: ReportVerdict): string {
+  return `Agent Receipt report — ${verdict}`;
 }
 
-export interface ReportView {
-  payload: ReportPayload;
-  /** Null when local keys did not load. The page then says UNSIGNED. */
-  signature: SignatureDocument | null;
-  /** Report signer's trust at generation. Null when unsigned or allowlist inactive. */
-  reportTrusted: boolean | null;
-  receipts: ReportReceiptView[];
-  /** Plain text from `formatSessionTree`. Null for a single-receipt report. */
-  tree: string | null;
+export function reportBanner(
+  verdict: ReportVerdict,
+  signed: boolean,
+  trusted: boolean | null,
+  fingerprint: string | null,
+): ReportBanner {
+  const trust = !signed
+    ? 'unsigned'
+    : trusted === true
+      ? 'trusted'
+      : trusted === false
+        ? 'untrusted'
+        : 'no trust store';
+  return {
+    className: verdict.toLowerCase() as ReportBannerClass,
+    verdict,
+    signatureStatus: `Report signature: ${signed ? 'present' : 'absent'} (${trust})`,
+    fingerprint: signed && fingerprint ? fingerprint : 'unsigned',
+  };
+}
+
+export function reportUnredacted(exposure: ReportExposure): ReportUnredacted | null {
+  if (exposure === 'redacted') return null;
+  if (exposure === 'host') {
+    return {
+      marker: 'UNREDACTED',
+      detail: 'host is included. Secrets and nested receipt bodies are still masked.',
+    };
+  }
+  return {
+    marker: 'UNREDACTED',
+    detail: 'redaction is off. Secrets, host, and nested bodies are shown.',
+  };
+}
+
+export function reportPills(receipt: {
+  verified: boolean;
+  signature: ReportSignatureState;
+  trusted: boolean | null;
+}): ReportPills {
+  const trust =
+    receipt.trusted === true
+      ? 'TRUSTED'
+      : receipt.trusted === false
+        ? 'UNTRUSTED'
+        : receipt.signature === 'unsigned'
+          ? 'UNSIGNED'
+          : 'NO TRUST STORE';
+  return {
+    verified: receipt.verified ? 'yes' : 'no',
+    signature:
+      receipt.signature === 'valid' ? 'VALID' : receipt.signature === 'invalid' ? 'INVALID' : 'UNSIGNED',
+    trust,
+  };
 }
 
 export function decideVerdict(
   reportSigned: boolean,
   reportTrusted: boolean | null,
-  receipts: ReportReceiptPayload[],
+  receipts: Array<{ verified: boolean; signature: ReportSignatureState; trusted: boolean | null }>,
 ): ReportVerdict {
   if (receipts.some((r) => !r.verified || r.signature === 'invalid')) return 'FAILED';
   if (reportTrusted === false || receipts.some((r) => r.trusted === false)) return 'UNTRUSTED';
@@ -133,21 +220,45 @@ export function embedJson(value: unknown): string {
     .replace(/\u2029/g, '\\u2029');
 }
 
-function text(value: string | null | undefined, redact = true, fallback = '(none)'): string {
-  if (value === null || value === undefined || value === '') return escapeHtml(fallback);
-  const raw = redact ? redactSecretsInText(String(value)) : String(value);
-  return escapeHtml(defangUrls(raw));
+/**
+ * Turn a receipt Range or Summary into the words the page shows.
+ * Tables become "label: value" lines. Backticks, bold, and emphasis
+ * markers are removed. The caller still HTML-escapes the result.
+ */
+export function plainReportText(value: string): string {
+  const lines = value.replace(/\r\n/g, '\n').split('\n');
+  const out: string[] = [];
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) continue;
+    if (trimmed.includes('|')) {
+      const cells = trimmed
+        .replace(/^\|/, '')
+        .replace(/\|$/, '')
+        .split('|')
+        .map((cell) => cell.trim());
+      if (cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell))) continue;
+      if (cells.length >= 2 && cells[0].toLowerCase() === 'metric' && cells[1].toLowerCase() === 'value') {
+        continue;
+      }
+      if (cells.length >= 2) {
+        out.push(stripInlineMd(`${cells[0]}: ${cells.slice(1).join(' ')}`));
+        continue;
+      }
+    }
+    out.push(stripInlineMd(trimmed));
+  }
+  return out.join('\n').trim();
 }
 
-function noneHex(value: string | null): string {
-  return value ?? 'none';
-}
-
-function trustLabel(trusted: boolean | null, signed: boolean): string {
-  if (!signed) return 'unsigned';
-  if (trusted === true) return 'trusted';
-  if (trusted === false) return 'untrusted';
-  return 'no trust store';
+function stripInlineMd(value: string): string {
+  return value
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/\*\*([^*]*)\*\*/g, '$1')
+    .replace(/_([^_\n]+)_/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/`/g, '')
+    .trim();
 }
 
 const STYLE = `
@@ -181,106 +292,103 @@ article{margin:16px 0;padding-top:4px}
 @media print{.banner{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 `.trim();
 
+const COVERAGE_NOTE =
+  'The Ed25519 signature covers the canonical JSON payload embedded in this file (sorted keys, no whitespace). report verify re-renders this page from that payload and the signature block and requires the same bytes. A single missing trailing newline is ignored. Any other difference, including this sentence, the banner, the pills, the narrative, and the exposure marker, fails verify. Receipt files are re-hashed only when their canonical sha256 or the recorded redacted sha256 matches. They are not matched by id. originalFingerprint, resignedBy, and signedBy are the manifest signer\'s claims when they come from a session package. This is not a certificate authority.';
+
 function row(label: string, valueHtml: string): string {
   return `<tr><th scope="row">${escapeHtml(label)}</th><td>${valueHtml}</td></tr>`;
 }
 
-function pill(kind: 'ok' | 'bad' | 'mid', label: string): string {
-  return `<span class="pill ${kind}">${escapeHtml(label)}</span>`;
+function pillClass(label: string): 'ok' | 'bad' | 'mid' {
+  if (label === 'yes' || label === 'VALID' || label === 'TRUSTED') return 'ok';
+  if (label === 'no' || label === 'INVALID' || label === 'UNTRUSTED') return 'bad';
+  return 'mid';
 }
 
-function receiptArticle(view: ReportReceiptView, redact = true): string {
-  const show = (value: string | null | undefined, fallback = '(none)') => text(value, redact, fallback);
-  const r = view.payload;
-  const sig =
-    r.signature === 'valid' ? pill('ok', 'VALID') : r.signature === 'invalid' ? pill('bad', 'INVALID') : pill('mid', 'UNSIGNED');
-  const trust =
-    r.trusted === true ? pill('ok', 'TRUSTED') : r.trusted === false ? pill('bad', 'UNTRUSTED') : pill('mid', trustLabel(r.trusted, r.signature !== 'unsigned').toUpperCase());
-  const files = view.files.slice(0, 50).map((f) => `<li><code>${show(f)}</code></li>`).join('');
-  const moreFiles = view.files.length > 50 ? `<li class="muted">+${view.files.length - 50} more</li>` : '';
-  const risks = view.risks.slice(0, 50).map((item) => {
-    const detail = redact && isHighSecretRiskCode(item.code) ? '[REDACTED]' : show(item.detail);
-    return `<li>${show(item.severity)} <code>${show(item.code)}</code> ${detail}</li>`;
-  }).join('');
-  const commands = view.commands.length
-    ? view.commands.map((c) => `<li><code>${show(c)}</code></li>`).join('')
+function pill(label: string): string {
+  return `<span class="pill ${pillClass(label)}">${escapeHtml(label)}</span>`;
+}
+
+function codeOr(value: string | null, empty: string): string {
+  return value ? `<code>${escapeHtml(value)}</code>` : escapeHtml(empty);
+}
+
+function receiptArticle(receipt: ReportReceiptPayload): string {
+  const files = receipt.files.slice(0, 50).map((file) => `<li><code>${escapeHtml(file)}</code></li>`).join('');
+  const moreFiles = receipt.files.length > 50 ? `<li class="muted">+${receipt.files.length - 50} more</li>` : '';
+  const risks = receipt.risks
+    .slice(0, 50)
+    .map((item) => `<li>${escapeHtml(item.severity)} <code>${escapeHtml(item.code)}</code> ${escapeHtml(item.detail)}</li>`)
+    .join('');
+  const moreRisks = receipt.risks.length > 50 ? `<li class="muted">+${receipt.risks.length - 50} more</li>` : '';
+  const commands = receipt.commands.length
+    ? receipt.commands.map((command) => `<li><code>${escapeHtml(command)}</code></li>`).join('')
     : '<li class="muted">(none)</li>';
-  const attrs = [
-    `data-id="${escapeHtml(r.id)}"`,
-    `data-sha256="${escapeHtml(r.sha256)}"`,
-    `data-signature="${r.signature}"`,
-    `data-fingerprint="${escapeHtml(noneHex(r.fingerprint))}"`,
-    `data-trusted="${r.trusted === null ? 'none' : String(r.trusted)}"`,
-    `data-original-fingerprint="${escapeHtml(noneHex(r.originalFingerprint))}"`,
-    `data-resigned-by="${escapeHtml(noneHex(r.resignedBy))}"`,
-    `data-signed-by="${escapeHtml(noneHex(r.signedBy))}"`,
-    `data-verified="${r.verified ? 'true' : 'false'}"`,
-  ].join(' ');
+  const signature = receipt.fingerprint
+    ? `${pill(receipt.pills.signature)} <code>${escapeHtml(receipt.fingerprint)}</code>`
+    : `${pill(receipt.pills.signature)} no sidecar`;
   return [
-    `<article ${attrs}>`,
-    `<h3><code>${show(r.id)}</code></h3>`,
+    '<article>',
+    `<h3><code>${escapeHtml(receipt.id)}</code></h3>`,
     '<table><tbody>',
-    row('SHA-256', `<code data-covered="sha256">${escapeHtml(r.sha256)}</code>`),
-    row('Verified', r.verified ? pill('ok', 'yes') : pill('bad', 'no')),
-    row('Agent', show(r.agent)),
-    row('Parent', r.parent ? `<code>${show(r.parent)}</code>` : '(none)'),
-    row('Timestamp', show(view.timestamp)),
-    row('Branch', `<code>${show(view.branch)}</code>`),
-    row('HEAD', view.head ? `<code>${show(view.head)}</code>` : '(none)'),
-    row('Range', `<code>${show(view.range)}</code>`),
-    row('Message', show(view.message)),
-    row('Summary', show(view.summary)),
-    row('Signature', `${sig} ${r.fingerprint ? `<code>${escapeHtml(r.fingerprint)}</code>` : 'no sidecar'}`),
-    row('Trust', trust),
-    row('originalFingerprint', r.originalFingerprint ? `<code>${escapeHtml(r.originalFingerprint)}</code>` : 'null'),
-    row('resignedBy', r.resignedBy ? `<code>${escapeHtml(r.resignedBy)}</code>` : 'null'),
-    row('signedBy', r.signedBy ? `<code>${escapeHtml(r.signedBy)}</code>` : 'null'),
+    row('SHA-256', `<code>${escapeHtml(receipt.sha256)}</code>`),
+    row('Verified', pill(receipt.pills.verified)),
+    row('Agent', escapeHtml(receipt.agent ?? '(none)')),
+    row('Parent', codeOr(receipt.parent, '(none)')),
+    row('Timestamp', escapeHtml(receipt.timestamp)),
+    row('Branch', `<code>${escapeHtml(receipt.branch)}</code>`),
+    row('HEAD', codeOr(receipt.head === '(none)' ? null : receipt.head, '(none)')),
+    row('Range', `<code>${escapeHtml(receipt.range)}</code>`),
+    row('Message', escapeHtml(receipt.message)),
+    row('Summary', `<pre>${escapeHtml(receipt.summary)}</pre>`),
+    row('Signature', signature),
+    row('Trust', pill(receipt.pills.trust)),
+    row('originalFingerprint', codeOr(receipt.originalFingerprint, 'null')),
+    row('resignedBy', codeOr(receipt.resignedBy, 'null')),
+    row('signedBy', codeOr(receipt.signedBy, 'null')),
     '</tbody></table>',
     '<h2>Commands</h2>',
     `<ul>${commands}</ul>`,
     '<h2>Files touched</h2>',
     files ? `<ul>${files}${moreFiles}</ul>` : '<p class="muted">No file rows in the receipt.</p>',
     '<h2>Risk flags</h2>',
-    risks ? `<ul>${risks}</ul>` : '<p class="muted">No risk findings.</p>',
+    risks ? `<ul>${risks}${moreRisks}</ul>` : '<p class="muted">No risk findings.</p>',
     '<h2>What to review</h2>',
-    `<pre>${show(view.review)}</pre>`,
+    `<pre>${escapeHtml(receipt.review)}</pre>`,
     '<h2>Commits</h2>',
-    `<pre>${show(view.commits)}</pre>`,
+    `<pre>${escapeHtml(receipt.commits)}</pre>`,
     '<h2>Diff lines</h2>',
-    `<pre>${show(view.diffs)}</pre>`,
+    `<pre>${escapeHtml(receipt.diffs)}</pre>`,
     '</article>',
   ].join('\n');
 }
 
-const COVERAGE_NOTE =
-  'The Ed25519 signature covers the canonical JSON payload (kind, version, cliVersion, generatedAt, subject, session, manifestSha256, exposure, verdict, verifyCommands, and each receipt id, sha256, parent, agent, verified, signature, fingerprint, trusted, originalFingerprint, resignedBy, signedBy). It is the UTF-8 hex SHA-256 of that JSON, signed with the same SignatureDocument as agent-receipt sign. It does not cover CSS, this sentence, or other HTML. Summary, diff, and review text are display-only and redacted. Re-hash the receipt files to check their bodies. originalFingerprint, resignedBy, and signedBy are the manifest signer\'s claims when they come from a session package. This is not a certificate authority.';
+function canonicalSignature(doc: SignatureDocument): SignatureDocument {
+  return {
+    alg: 'ed25519',
+    version: 1,
+    sha256: doc.sha256,
+    fingerprint: doc.fingerprint,
+    signature: doc.signature,
+    publicKey: doc.publicKey,
+  };
+}
 
-/** Render the complete HTML document. Pure: no I/O. */
-export function renderReportHtml(view: ReportView): string {
-  const payload = view.payload;
-  const verdict = payload.verdict;
-  const klass = verdict.toLowerCase();
-  const signed = view.signature !== null;
-  const fp = signed ? view.signature?.fingerprint ?? '' : 'unsigned';
-  const trust = trustLabel(view.reportTrusted, signed);
-  const commands = payload.verifyCommands
-    .map((cmd) => `<li>${escapeHtml(cmd)}</li>`)
-    .join('');
-  const unredacted =
-    payload.exposure === 'redacted'
+/**
+ * Render the complete HTML document.
+ * `signature` null writes the signature block as JSON `null` (UNSIGNED).
+ */
+export function renderReportHtml(payload: ReportPayload, signature: SignatureDocument | null): string {
+  const banner = payload.banner;
+  const commands = payload.verifyCommands.map((command) => `<li>${escapeHtml(command)}</li>`).join('');
+  const unredacted = payload.unredacted
+    ? `<div class="banner unredacted" role="status"><strong>${escapeHtml(payload.unredacted.marker)}</strong> — ${escapeHtml(payload.unredacted.detail)}</div>`
+    : '';
+  const tree =
+    payload.tree === null
       ? ''
-      : `<div class="banner unredacted" role="status"><strong>UNREDACTED</strong> — ${
-          payload.exposure === 'host'
-            ? 'host is included. Secrets and nested receipt bodies are still masked.'
-            : 'redaction is off. Secrets, host, and nested bodies are shown.'
-        }</div>`;
-  const tree = view.tree
-    ? `<h2>Session tree</h2>\n<pre>${escapeHtml(view.tree)}</pre>`
-    : '';
-  const canonical = embedJson(canonicalReportJson(payload));
-  const sigBlock = view.signature
-    ? `<script type="application/json" id="${REPORT_SIG_SCRIPT_ID}">${embedJson(view.signature)}</script>`
-    : '';
+      : `<h2>Session tree</h2>\n<pre>${escapeHtml(payload.tree)}</pre>`;
+  const sigJson = signature ? embedJson(canonicalSignature(signature)) : 'null';
   return [
     '<!DOCTYPE html>',
     '<html lang="en">',
@@ -289,37 +397,57 @@ export function renderReportHtml(view: ReportView): string {
     `<meta http-equiv="Content-Security-Policy" content="${OFFLINE_HTML_CSP}">`,
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     '<meta name="referrer" content="no-referrer">',
-    `<title>Agent Receipt report — ${escapeHtml(verdict)}</title>`,
+    `<title>${escapeHtml(payload.title)}</title>`,
     `<style>${STYLE}</style>`,
     '</head>',
     '<body>',
     '<!-- style-src unsafe-inline: the stylesheet is in this file so it opens offline. script-src none: the JSON blocks are data, not script. No remote sources. -->',
-    `<div class="banner ${klass}" role="status">`,
-    `<div class="verdict"><span data-covered="verdict">${escapeHtml(verdict)}</span></div>`,
-    `<p>Report signature: ${signed ? 'present' : 'absent'} (${escapeHtml(trust)})</p>`,
-    `<p>Fingerprint: <span data-covered="reportFingerprint">${escapeHtml(fp)}</span></p>`,
+    `<div class="banner ${banner.className}" role="status">`,
+    `<div class="verdict">${escapeHtml(banner.verdict)}</div>`,
+    `<p>${escapeHtml(banner.signatureStatus)}</p>`,
+    `<p>Fingerprint: <code>${escapeHtml(banner.fingerprint)}</code></p>`,
     '</div>',
     unredacted,
     '<h1>Agent Receipt — signed report</h1>',
-    `<p class="muted">CLI <span data-covered="cliVersion">${escapeHtml(payload.cliVersion)}</span> · generated <span data-covered="generatedAt">${escapeHtml(payload.generatedAt)}</span></p>`,
+    `<p class="muted">CLI ${escapeHtml(payload.cliVersion)} · generated ${escapeHtml(payload.generatedAt)}</p>`,
     '<table><tbody>',
-    row('Subject', `<span data-covered="subject">${escapeHtml(payload.subject)}</span>`),
-    row('Session', `<span data-covered="session">${escapeHtml(payload.session ?? 'none')}</span>`),
-    row('Manifest SHA-256', `<span data-covered="manifestSha256">${escapeHtml(payload.manifestSha256 ?? 'none')}</span>`),
-    row('Exposure', `<span data-covered="exposure">${escapeHtml(payload.exposure)}</span>`),
+    row('Subject', escapeHtml(payload.subject)),
+    row('Session', escapeHtml(payload.session ?? 'none')),
+    row('Manifest SHA-256', escapeHtml(payload.manifestSha256 ?? 'none')),
+    row('Exposure', escapeHtml(payload.exposure)),
     '</tbody></table>',
     '<h2>What the agent did</h2>',
-    view.receipts.map((item) => receiptArticle(item, payload.exposure !== 'unredacted')).join('\n'),
+    payload.receipts.map((receipt) => receiptArticle(receipt)).join('\n'),
     tree,
     '<h2>Re-verify offline</h2>',
-    `<ol data-covered="verifyCommands">${commands}</ol>`,
+    `<ol>${commands}</ol>`,
     `<footer><p>${escapeHtml(COVERAGE_NOTE)}</p></footer>`,
-    `<script type="application/json" id="${REPORT_SCRIPT_ID}">${canonical}</script>`,
-    sigBlock,
+    `<script type="application/json" id="${REPORT_SCRIPT_ID}">${embedJson(canonicalReportJson(payload))}</script>`,
+    `<script type="application/json" id="${REPORT_SIG_SCRIPT_ID}">${sigJson}</script>`,
     '</body>',
     '</html>',
     '',
   ].join('\n');
+}
+
+/**
+ * The renderer always ends with one newline. Verify treats a file that is
+ * missing that single newline as the same page. Any other byte differs.
+ */
+export function normalizeReportHtml(html: string): string {
+  return html.endsWith('\n') ? html : `${html}\n`;
+}
+
+export function assertRenderedPage(
+  html: string,
+  payload: ReportPayload,
+  signature: SignatureDocument | null,
+): void {
+  const expected = renderReportHtml(payload, signature);
+  const actual = normalizeReportHtml(html);
+  if (actual !== expected) {
+    throw new ReportHtmlError(2, PAGE_MISMATCH_MESSAGE);
+  }
 }
 
 export interface ExtractedReport {
@@ -339,33 +467,136 @@ export class ReportHtmlError extends Error {
   }
 }
 
-function extractScript(html: string, id: string): string | null {
-  const re = new RegExp(
-    `<script type="application/json" id="${id}">([\\s\\S]*?)</script>`,
-  );
-  const match = html.match(re);
-  return match ? match[1] : null;
+interface ParsedTag {
+  name: string;
+  closing: boolean;
+  attrs: Map<string, string>;
+  end: number;
 }
 
-function decodeHtml(value: string): string {
-  return value
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&');
+/** Read one HTML tag starting at `<`. Quoted attributes are honored. Returns null for comments and declarations. */
+function readTag(html: string, start: number): ParsedTag | null {
+  if (html[start] !== '<') return null;
+  if (html.startsWith('<!--', start) || html.startsWith('<!', start) || html.startsWith('<?', start)) return null;
+  let i = start + 1;
+  let closing = false;
+  if (html[i] === '/') {
+    closing = true;
+    i += 1;
+  }
+  const nameStart = i;
+  while (i < html.length && /[A-Za-z0-9]/.test(html[i])) i += 1;
+  if (i === nameStart) return null;
+  const name = html.slice(nameStart, i).toLowerCase();
+  const attrs = new Map<string, string>();
+  while (i < html.length) {
+    while (i < html.length && /[\t\n\r\f ]/.test(html[i])) i += 1;
+    if (i >= html.length) return null;
+    if (html[i] === '>') return { name, closing, attrs, end: i + 1 };
+    if (html[i] === '/' && html[i + 1] === '>') return { name, closing, attrs, end: i + 2 };
+    const attrStart = i;
+    while (i < html.length && /[^\s=/>]/.test(html[i])) i += 1;
+    const attrName = html.slice(attrStart, i).toLowerCase();
+    while (i < html.length && /[\t\n\r\f ]/.test(html[i])) i += 1;
+    if (html[i] !== '=') {
+      if (attrName) attrs.set(attrName, '');
+      continue;
+    }
+    i += 1;
+    while (i < html.length && /[\t\n\r\f ]/.test(html[i])) i += 1;
+    let value = '';
+    if (html[i] === '"' || html[i] === "'") {
+      const quote = html[i];
+      i += 1;
+      const valueStart = i;
+      while (i < html.length && html[i] !== quote) i += 1;
+      value = html.slice(valueStart, i);
+      if (html[i] === quote) i += 1;
+    } else {
+      const valueStart = i;
+      while (i < html.length && /[^\s>]/.test(html[i])) i += 1;
+      value = html.slice(valueStart, i);
+    }
+    if (attrName) attrs.set(attrName, value);
+  }
+  return null;
 }
 
-function coveredText(html: string, name: string): string | null {
-  const re = new RegExp(`data-covered="${name}">([^<]*)<`);
-  const match = html.match(re);
-  return match ? decodeHtml(match[1]) : null;
+function findClosingScript(html: string, from: number): { start: number; end: number } | null {
+  for (let i = from; i < html.length; i += 1) {
+    if (html[i] !== '<') continue;
+    const tag = readTag(html, i);
+    if (tag && tag.closing && tag.name === 'script') return { start: i, end: tag.end };
+    if (!tag) continue;
+    i = tag.end - 1;
+  }
+  return null;
 }
 
-function attr(tag: string, name: string): string | null {
-  const re = new RegExp(`\\s${name}="([^"]*)"`);
-  const match = tag.match(re);
-  return match ? decodeHtml(match[1]) : null;
+interface FoundBlock {
+  id: string;
+  body: string;
+  inComment: boolean;
+}
+
+/**
+ * Walk the document. Script bodies are not scanned (HTML rawtext).
+ * A payload or signature block inside a comment is recorded as such.
+ */
+function scanReportBlocks(html: string): FoundBlock[] {
+  const blocks: FoundBlock[] = [];
+  let i = 0;
+  let inComment = false;
+  while (i < html.length) {
+    if (!inComment && html.startsWith('<!--', i)) {
+      inComment = true;
+      i += 4;
+      continue;
+    }
+    if (inComment && html.startsWith('-->', i)) {
+      inComment = false;
+      i += 3;
+      continue;
+    }
+    if (html[i] !== '<') {
+      i += 1;
+      continue;
+    }
+    const tag = readTag(html, i);
+    if (!tag) {
+      i += 1;
+      continue;
+    }
+    if (!tag.closing && tag.name === 'script') {
+      const close = findClosingScript(html, tag.end);
+      if (!close) {
+        throw new ReportHtmlError(2, 'report script block is not closed');
+      }
+      const id = tag.attrs.get('id') ?? '';
+      const type = (tag.attrs.get('type') ?? '').toLowerCase();
+      if (type === 'application/json' && (id === REPORT_SCRIPT_ID || id === REPORT_SIG_SCRIPT_ID)) {
+        blocks.push({ id, body: html.slice(tag.end, close.start), inComment });
+      }
+      i = close.end;
+      continue;
+    }
+    i = tag.end;
+  }
+  if (inComment) {
+    throw new ReportHtmlError(2, 'report HTML comment is not closed');
+  }
+  return blocks;
+}
+
+function requireOne(blocks: FoundBlock[], id: string, label: string): string {
+  const matched = blocks.filter((block) => block.id === id);
+  if (matched.some((block) => block.inComment)) {
+    throw new ReportHtmlError(2, `report ${label} block is inside a comment`);
+  }
+  const live = matched.filter((block) => !block.inComment);
+  if (live.length === 0) throw new ReportHtmlError(2, `report ${label} block is missing`);
+  if (live.length > 1) throw new ReportHtmlError(2, `report has more than one ${label} block`);
+  return live[0].body;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -373,69 +604,249 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-export function parseReportHtml(html: string): ExtractedReport {
-  const raw = extractScript(html, REPORT_SCRIPT_ID);
-  if (raw === null) {
-    throw new ReportHtmlError(1, 'report is missing the embedded payload (script#agent-receipt-report)');
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new ReportHtmlError(1, 'embedded report payload is malformed JSON');
-  }
-  const payload = parsePayload(parsed);
-  const canonical = canonicalReportJson(payload);
-  const payloadHash = sha256Hex(canonical);
-  const sigRaw = extractScript(html, REPORT_SIG_SCRIPT_ID);
-  let signature: SignatureDocument | null = null;
-  if (sigRaw !== null) {
-    try {
-      signature = JSON.parse(sigRaw) as SignatureDocument;
-    } catch {
-      throw new ReportHtmlError(1, 'embedded report signature is malformed JSON');
+function rejectUnknown(doc: Record<string, unknown>, allowed: readonly string[], label: string): void {
+  for (const key of Object.keys(doc)) {
+    if (!allowed.includes(key)) {
+      throw new ReportHtmlError(2, `${label} has unknown field ${key}`);
     }
   }
-  return { payload, signature, canonical, payloadHash };
+}
+
+const HEX64 = /^[0-9a-f]{64}$/;
+
+function hexOrNull(value: unknown, label: string): string | null {
+  if (value === null) return null;
+  if (typeof value === 'string' && HEX64.test(value)) return value;
+  throw new ReportHtmlError(2, `report payload ${label} is invalid`);
+}
+
+function requiredString(value: unknown, label: string): string {
+  if (typeof value !== 'string') throw new ReportHtmlError(2, `report payload ${label} is invalid`);
+  return value;
+}
+
+function parsePills(value: unknown, index: number): ReportPills {
+  const doc = asRecord(value);
+  if (!doc) throw new ReportHtmlError(2, `report payload receipts[${index}].pills is invalid`);
+  rejectUnknown(doc, ['verified', 'signature', 'trust'], `report payload receipts[${index}].pills`);
+  if (doc.verified !== 'yes' && doc.verified !== 'no') {
+    throw new ReportHtmlError(2, `report payload receipts[${index}].pills.verified is invalid`);
+  }
+  if (doc.signature !== 'VALID' && doc.signature !== 'INVALID' && doc.signature !== 'UNSIGNED') {
+    throw new ReportHtmlError(2, `report payload receipts[${index}].pills.signature is invalid`);
+  }
+  if (typeof doc.trust !== 'string' || !doc.trust) {
+    throw new ReportHtmlError(2, `report payload receipts[${index}].pills.trust is invalid`);
+  }
+  return { verified: doc.verified, signature: doc.signature, trust: doc.trust };
+}
+
+function parseRisks(value: unknown, index: number): ReportRisk[] {
+  if (!Array.isArray(value)) throw new ReportHtmlError(2, `report payload receipts[${index}].risks is invalid`);
+  return value.map((item, riskIndex) => {
+    const doc = asRecord(item);
+    if (!doc) throw new ReportHtmlError(2, `report payload receipts[${index}].risks[${riskIndex}] is invalid`);
+    rejectUnknown(doc, ['severity', 'code', 'detail'], `report payload receipts[${index}].risks[${riskIndex}]`);
+    if (typeof doc.severity !== 'string' || typeof doc.code !== 'string' || typeof doc.detail !== 'string') {
+      throw new ReportHtmlError(2, `report payload receipts[${index}].risks[${riskIndex}] is invalid`);
+    }
+    return { severity: doc.severity, code: doc.code, detail: doc.detail };
+  });
+}
+
+function parseStringList(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new ReportHtmlError(2, `report payload ${label} is invalid`);
+  }
+  return value as string[];
+}
+
+const RECEIPT_KEYS = [
+  'id',
+  'sha256',
+  'redactedSha256',
+  'parent',
+  'agent',
+  'verified',
+  'signature',
+  'fingerprint',
+  'trusted',
+  'originalFingerprint',
+  'resignedBy',
+  'signedBy',
+  'pills',
+  'timestamp',
+  'branch',
+  'head',
+  'range',
+  'message',
+  'summary',
+  'commands',
+  'files',
+  'risks',
+  'review',
+  'commits',
+  'diffs',
+] as const;
+
+function parseReceipt(value: unknown, index: number): ReportReceiptPayload {
+  const doc = asRecord(value);
+  if (!doc) throw new ReportHtmlError(2, `report payload receipts[${index}] must be an object`);
+  rejectUnknown(doc, RECEIPT_KEYS, `report payload receipts[${index}]`);
+  if (typeof doc.id !== 'string' || !doc.id) {
+    throw new ReportHtmlError(2, `report payload receipts[${index}].id is missing`);
+  }
+  if (typeof doc.sha256 !== 'string' || !HEX64.test(doc.sha256)) {
+    throw new ReportHtmlError(2, `report payload receipts[${index}].sha256 is invalid`);
+  }
+  if (doc.parent !== null && typeof doc.parent !== 'string') {
+    throw new ReportHtmlError(2, `report payload receipts[${index}].parent is invalid`);
+  }
+  if (doc.agent !== null && typeof doc.agent !== 'string') {
+    throw new ReportHtmlError(2, `report payload receipts[${index}].agent is invalid`);
+  }
+  if (typeof doc.verified !== 'boolean') {
+    throw new ReportHtmlError(2, `report payload receipts[${index}].verified is invalid`);
+  }
+  if (doc.signature !== 'valid' && doc.signature !== 'invalid' && doc.signature !== 'unsigned') {
+    throw new ReportHtmlError(2, `report payload receipts[${index}].signature is invalid`);
+  }
+  if (doc.trusted !== null && typeof doc.trusted !== 'boolean') {
+    throw new ReportHtmlError(2, `report payload receipts[${index}].trusted is invalid`);
+  }
+  return {
+    id: doc.id,
+    sha256: doc.sha256,
+    redactedSha256: hexOrNull(doc.redactedSha256, `receipts[${index}].redactedSha256`),
+    parent: doc.parent,
+    agent: doc.agent,
+    verified: doc.verified,
+    signature: doc.signature,
+    fingerprint: hexOrNull(doc.fingerprint, `receipts[${index}].fingerprint`),
+    trusted: doc.trusted,
+    originalFingerprint: hexOrNull(doc.originalFingerprint, `receipts[${index}].originalFingerprint`),
+    resignedBy: hexOrNull(doc.resignedBy, `receipts[${index}].resignedBy`),
+    signedBy: hexOrNull(doc.signedBy, `receipts[${index}].signedBy`),
+    pills: parsePills(doc.pills, index),
+    timestamp: requiredString(doc.timestamp, `receipts[${index}].timestamp`),
+    branch: requiredString(doc.branch, `receipts[${index}].branch`),
+    head: requiredString(doc.head, `receipts[${index}].head`),
+    range: requiredString(doc.range, `receipts[${index}].range`),
+    message: requiredString(doc.message, `receipts[${index}].message`),
+    summary: requiredString(doc.summary, `receipts[${index}].summary`),
+    commands: parseStringList(doc.commands, `receipts[${index}].commands`),
+    files: parseStringList(doc.files, `receipts[${index}].files`),
+    risks: parseRisks(doc.risks, index),
+    review: requiredString(doc.review, `receipts[${index}].review`),
+    commits: requiredString(doc.commits, `receipts[${index}].commits`),
+    diffs: requiredString(doc.diffs, `receipts[${index}].diffs`),
+  };
+}
+
+const PAYLOAD_KEYS = [
+  'kind',
+  'version',
+  'cliVersion',
+  'generatedAt',
+  'subject',
+  'session',
+  'manifestSha256',
+  'exposure',
+  'verdict',
+  'title',
+  'banner',
+  'unredacted',
+  'verifyCommands',
+  'tree',
+  'receipts',
+] as const;
+
+const BANNER_KEYS = ['className', 'verdict', 'signatureStatus', 'fingerprint'] as const;
+
+function parseBanner(value: unknown): ReportBanner {
+  const doc = asRecord(value);
+  if (!doc) throw new ReportHtmlError(2, 'report payload banner is invalid');
+  rejectUnknown(doc, BANNER_KEYS, 'report payload banner');
+  if (
+    doc.className !== 'verified' &&
+    doc.className !== 'failed' &&
+    doc.className !== 'unsigned' &&
+    doc.className !== 'untrusted'
+  ) {
+    throw new ReportHtmlError(2, 'report payload banner class is invalid');
+  }
+  if (doc.verdict !== 'VERIFIED' && doc.verdict !== 'FAILED' && doc.verdict !== 'UNSIGNED' && doc.verdict !== 'UNTRUSTED') {
+    throw new ReportHtmlError(2, 'report payload banner verdict is invalid');
+  }
+  if (typeof doc.signatureStatus !== 'string' || !doc.signatureStatus) {
+    throw new ReportHtmlError(2, 'report payload banner signatureStatus is invalid');
+  }
+  if (typeof doc.fingerprint !== 'string' || !doc.fingerprint) {
+    throw new ReportHtmlError(2, 'report payload banner fingerprint is invalid');
+  }
+  return {
+    className: doc.className,
+    verdict: doc.verdict,
+    signatureStatus: doc.signatureStatus,
+    fingerprint: doc.fingerprint,
+  };
+}
+
+function parseUnredacted(value: unknown): ReportUnredacted | null {
+  if (value === null) return null;
+  const doc = asRecord(value);
+  if (!doc) throw new ReportHtmlError(2, 'report payload unredacted is invalid');
+  rejectUnknown(doc, ['marker', 'detail'], 'report payload unredacted');
+  if (doc.marker !== 'UNREDACTED') throw new ReportHtmlError(2, 'report payload unredacted marker is invalid');
+  if (typeof doc.detail !== 'string' || !doc.detail) {
+    throw new ReportHtmlError(2, 'report payload unredacted detail is invalid');
+  }
+  return { marker: 'UNREDACTED', detail: doc.detail };
 }
 
 function parsePayload(value: unknown): ReportPayload {
   const doc = asRecord(value);
-  if (!doc) throw new ReportHtmlError(1, 'report payload must be an object');
+  if (!doc) throw new ReportHtmlError(2, 'report payload must be an object');
+  rejectUnknown(doc, PAYLOAD_KEYS, 'report payload');
   if (doc.kind !== REPORT_PAYLOAD_KIND) {
-    throw new ReportHtmlError(1, 'report payload kind is not agent-receipt-report');
+    throw new ReportHtmlError(2, 'report payload kind is not agent-receipt-report');
   }
   if (doc.version !== REPORT_PAYLOAD_VERSION) {
-    throw new ReportHtmlError(1, 'unsupported report payload version');
+    throw new ReportHtmlError(2, 'unsupported report payload version');
   }
   if (typeof doc.cliVersion !== 'string' || !doc.cliVersion) {
-    throw new ReportHtmlError(1, 'report payload cliVersion is missing');
+    throw new ReportHtmlError(2, 'report payload cliVersion is missing');
   }
   if (typeof doc.generatedAt !== 'string' || !doc.generatedAt) {
-    throw new ReportHtmlError(1, 'report payload generatedAt is missing');
+    throw new ReportHtmlError(2, 'report payload generatedAt is missing');
   }
   if (doc.subject !== 'receipt' && doc.subject !== 'session') {
-    throw new ReportHtmlError(1, 'report payload subject is invalid');
+    throw new ReportHtmlError(2, 'report payload subject is invalid');
   }
   if (doc.session !== null && typeof doc.session !== 'string') {
-    throw new ReportHtmlError(1, 'report payload session is invalid');
+    throw new ReportHtmlError(2, 'report payload session is invalid');
   }
-  if (doc.manifestSha256 !== null && (typeof doc.manifestSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(doc.manifestSha256))) {
-    throw new ReportHtmlError(1, 'report payload manifestSha256 is invalid');
+  if (doc.manifestSha256 !== null && (typeof doc.manifestSha256 !== 'string' || !HEX64.test(doc.manifestSha256))) {
+    throw new ReportHtmlError(2, 'report payload manifestSha256 is invalid');
   }
   if (doc.exposure !== 'redacted' && doc.exposure !== 'host' && doc.exposure !== 'unredacted') {
-    throw new ReportHtmlError(1, 'report payload exposure is invalid');
+    throw new ReportHtmlError(2, 'report payload exposure is invalid');
   }
   if (doc.verdict !== 'VERIFIED' && doc.verdict !== 'FAILED' && doc.verdict !== 'UNSIGNED' && doc.verdict !== 'UNTRUSTED') {
-    throw new ReportHtmlError(1, 'report payload verdict is invalid');
+    throw new ReportHtmlError(2, 'report payload verdict is invalid');
   }
-  if (!Array.isArray(doc.verifyCommands) || doc.verifyCommands.some((c) => typeof c !== 'string')) {
-    throw new ReportHtmlError(1, 'report payload verifyCommands is invalid');
+  if (typeof doc.title !== 'string' || !doc.title) {
+    throw new ReportHtmlError(2, 'report payload title is missing');
+  }
+  if (!Array.isArray(doc.verifyCommands) || doc.verifyCommands.length < 1 || doc.verifyCommands.some((c) => typeof c !== 'string' || !c)) {
+    throw new ReportHtmlError(2, 'report payload verifyCommands is invalid');
+  }
+  if (doc.tree !== null && typeof doc.tree !== 'string') {
+    throw new ReportHtmlError(2, 'report payload tree is invalid');
   }
   if (!Array.isArray(doc.receipts) || doc.receipts.length < 1) {
-    throw new ReportHtmlError(1, 'report payload receipts is empty');
+    throw new ReportHtmlError(2, 'report payload receipts is empty');
   }
-  const receipts = doc.receipts.map((item, index) => parseReceipt(item, index));
   return {
     kind: REPORT_PAYLOAD_KIND,
     version: REPORT_PAYLOAD_VERSION,
@@ -446,116 +857,107 @@ function parsePayload(value: unknown): ReportPayload {
     manifestSha256: doc.manifestSha256,
     exposure: doc.exposure,
     verdict: doc.verdict,
+    title: doc.title,
+    banner: parseBanner(doc.banner),
+    unredacted: parseUnredacted(doc.unredacted),
     verifyCommands: doc.verifyCommands,
-    receipts,
+    tree: doc.tree,
+    receipts: doc.receipts.map((item, index) => parseReceipt(item, index)),
   };
 }
 
-function hexOrNull(value: unknown, label: string): string | null {
+const SIG_KEYS = ['alg', 'version', 'sha256', 'fingerprint', 'signature', 'publicKey'] as const;
+
+function parseSignatureValue(value: unknown): SignatureDocument | null {
   if (value === null) return null;
-  if (typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)) return value;
-  throw new ReportHtmlError(1, `report payload ${label} is invalid`);
+  const doc = asRecord(value);
+  if (!doc) throw new ReportHtmlError(2, 'embedded report signature is malformed');
+  rejectUnknown(doc, SIG_KEYS, 'embedded report signature');
+  if (doc.alg !== 'ed25519' || doc.version !== 1) {
+    throw new ReportHtmlError(2, 'embedded report signature is malformed');
+  }
+  if (typeof doc.sha256 !== 'string' || typeof doc.fingerprint !== 'string' || typeof doc.signature !== 'string' || typeof doc.publicKey !== 'string') {
+    throw new ReportHtmlError(2, 'embedded report signature is malformed');
+  }
+  return canonicalSignature({
+    alg: 'ed25519',
+    version: 1,
+    sha256: doc.sha256,
+    fingerprint: doc.fingerprint,
+    signature: doc.signature,
+    publicKey: doc.publicKey,
+  });
 }
 
-function parseReceipt(value: unknown, index: number): ReportReceiptPayload {
-  const doc = asRecord(value);
-  if (!doc) throw new ReportHtmlError(1, `report payload receipts[${index}] must be an object`);
-  if (typeof doc.id !== 'string' || !doc.id) {
-    throw new ReportHtmlError(1, `report payload receipts[${index}].id is missing`);
+function assertDisplayAgrees(payload: ReportPayload, signature: SignatureDocument | null): void {
+  if (payload.title !== reportTitle(payload.verdict)) {
+    throw new ReportHtmlError(2, 'report title does not match the verdict');
   }
-  if (typeof doc.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(doc.sha256)) {
-    throw new ReportHtmlError(1, `report payload receipts[${index}].sha256 is invalid`);
+  if (payload.banner.verdict !== payload.verdict || payload.banner.className !== payload.verdict.toLowerCase()) {
+    throw new ReportHtmlError(2, 'report banner does not match the verdict');
   }
-  if (doc.parent !== null && typeof doc.parent !== 'string') {
-    throw new ReportHtmlError(1, `report payload receipts[${index}].parent is invalid`);
+  if (signature) {
+    if (payload.banner.fingerprint !== signature.fingerprint) {
+      throw new ReportHtmlError(2, 'report banner fingerprint does not match the signature');
+    }
+    if (!/^Report signature: present \((trusted|untrusted|no trust store)\)$/.test(payload.banner.signatureStatus)) {
+      throw new ReportHtmlError(2, 'report signature status line is invalid');
+    }
+  } else if (payload.banner.fingerprint !== 'unsigned' || payload.banner.signatureStatus !== 'Report signature: absent (unsigned)') {
+    throw new ReportHtmlError(2, 'unsigned report must say it is unsigned');
   }
-  if (doc.agent !== null && typeof doc.agent !== 'string') {
-    throw new ReportHtmlError(1, `report payload receipts[${index}].agent is invalid`);
+  if (payload.exposure === 'redacted') {
+    if (payload.unredacted !== null) throw new ReportHtmlError(2, 'redacted report has an UNREDACTED marker');
+  } else if (!payload.unredacted) {
+    throw new ReportHtmlError(2, 'report is missing the UNREDACTED marker');
   }
-  if (typeof doc.verified !== 'boolean') {
-    throw new ReportHtmlError(1, `report payload receipts[${index}].verified is invalid`);
+  if (payload.subject === 'receipt' && payload.tree !== null) {
+    throw new ReportHtmlError(2, 'receipt report tree must be null');
   }
-  if (doc.signature !== 'valid' && doc.signature !== 'invalid' && doc.signature !== 'unsigned') {
-    throw new ReportHtmlError(1, `report payload receipts[${index}].signature is invalid`);
+  if (payload.subject === 'session' && typeof payload.tree !== 'string') {
+    throw new ReportHtmlError(2, 'session report tree is missing');
   }
-  if (doc.trusted !== null && typeof doc.trusted !== 'boolean') {
-    throw new ReportHtmlError(1, `report payload receipts[${index}].trusted is invalid`);
+  for (const receipt of payload.receipts) {
+    const pills = reportPills(receipt);
+    if (
+      receipt.pills.verified !== pills.verified ||
+      receipt.pills.signature !== pills.signature ||
+      receipt.pills.trust !== pills.trust
+    ) {
+      throw new ReportHtmlError(2, `report payload pills do not match receipt ${receipt.id}`);
+    }
   }
-  return {
-    id: doc.id,
-    sha256: doc.sha256,
-    parent: doc.parent,
-    agent: doc.agent,
-    verified: doc.verified,
-    signature: doc.signature,
-    fingerprint: hexOrNull(doc.fingerprint, `receipts[${index}].fingerprint`),
-    trusted: doc.trusted,
-    originalFingerprint: hexOrNull(doc.originalFingerprint, `receipts[${index}].originalFingerprint`),
-    resignedBy: hexOrNull(doc.resignedBy, `receipts[${index}].resignedBy`),
-    signedBy: hexOrNull(doc.signedBy, `receipts[${index}].signedBy`),
-  };
+  const broken = payload.receipts.some((receipt) => !receipt.verified || receipt.signature === 'invalid');
+  if (broken && payload.verdict !== 'FAILED') {
+    throw new ReportHtmlError(2, 'report verdict does not match receipt verification');
+  }
 }
 
 /**
- * Visible fields that the payload covers must match the payload.
- * A mismatch is tampering (exit 2), even when the JSON was left intact.
+ * Find exactly one payload block and exactly one signature block, outside
+ * comments. Zero, duplicates, a block inside a comment, or a payload that
+ * is present but does not match the schema is tampering (exit 2).
+ * The signature block is JSON `null` on an unsigned report.
  */
-export function assertCoveredVisible(html: string, payload: ReportPayload, signature: SignatureDocument | null): void {
-  const expect = (name: string, value: string): void => {
-    const got = coveredText(html, name);
-    if (got === null) {
-      throw new ReportHtmlError(2, `visible ${name} is missing`);
-    }
-    if (got !== value) {
-      throw new ReportHtmlError(2, `visible ${name} does not match the signed payload`);
-    }
-  };
-  expect('verdict', payload.verdict);
-  expect('cliVersion', payload.cliVersion);
-  expect('generatedAt', payload.generatedAt);
-  expect('subject', payload.subject);
-  expect('session', payload.session ?? 'none');
-  expect('manifestSha256', payload.manifestSha256 ?? 'none');
-  expect('exposure', payload.exposure);
-  expect('reportFingerprint', signature ? signature.fingerprint : 'unsigned');
-  if (payload.exposure !== 'redacted' && !html.includes('UNREDACTED')) {
-    throw new ReportHtmlError(2, 'visible unredacted marker is missing');
+export function parseReportHtml(html: string): ExtractedReport {
+  const blocks = scanReportBlocks(html);
+  const payloadRaw = requireOne(blocks, REPORT_SCRIPT_ID, 'payload');
+  const sigRaw = requireOne(blocks, REPORT_SIG_SCRIPT_ID, 'signature');
+  let payloadJson: unknown;
+  try {
+    payloadJson = JSON.parse(payloadRaw);
+  } catch {
+    throw new ReportHtmlError(2, 'embedded report payload is malformed JSON');
   }
-  if (payload.exposure === 'redacted' && html.includes('UNREDACTED')) {
-    throw new ReportHtmlError(2, 'visible unredacted marker is not in the signed payload');
+  const payload = parsePayload(payloadJson);
+  let sigJson: unknown;
+  try {
+    sigJson = JSON.parse(sigRaw);
+  } catch {
+    throw new ReportHtmlError(2, 'embedded report signature is malformed JSON');
   }
-  const list = html.match(/<ol data-covered="verifyCommands">([\s\S]*?)<\/ol>/);
-  if (!list) throw new ReportHtmlError(2, 'visible verify commands are missing');
-  const items = [...list[1].matchAll(/<li>([^<]*)<\/li>/g)].map((m) => decodeHtml(m[1]));
-  if (items.length !== payload.verifyCommands.length || items.some((item, i) => item !== payload.verifyCommands[i])) {
-    throw new ReportHtmlError(2, 'visible verify commands do not match the signed payload');
-  }
-  const articles = [...html.matchAll(/<article\b([^>]*)>([\s\S]*?)<\/article>/g)];
-  if (articles.length !== payload.receipts.length) {
-    throw new ReportHtmlError(2, 'visible receipt count does not match the signed payload');
-  }
-  for (const receipt of payload.receipts) {
-    const article = articles.find((block) => attr(block[1], 'data-id') === receipt.id);
-    if (!article) throw new ReportHtmlError(2, `visible receipt ${receipt.id} is missing`);
-    const tag = article[1];
-    const body = article[2];
-    const sha = body.match(/data-covered="sha256">([^<]*)</);
-    if (!sha || decodeHtml(sha[1]) !== receipt.sha256) {
-      throw new ReportHtmlError(2, `visible sha256 for ${receipt.id} does not match the signed payload`);
-    }
-    const check = (name: string, expected: string): void => {
-      const got = attr(tag, name);
-      if (got !== expected) {
-        throw new ReportHtmlError(2, `visible ${name} for ${receipt.id} does not match the signed payload`);
-      }
-    };
-    check('data-sha256', receipt.sha256);
-    check('data-signature', receipt.signature);
-    check('data-fingerprint', noneHex(receipt.fingerprint));
-    check('data-trusted', receipt.trusted === null ? 'none' : String(receipt.trusted));
-    check('data-original-fingerprint', noneHex(receipt.originalFingerprint));
-    check('data-resigned-by', noneHex(receipt.resignedBy));
-    check('data-signed-by', noneHex(receipt.signedBy));
-    check('data-verified', receipt.verified ? 'true' : 'false');
-  }
+  const signature = parseSignatureValue(sigJson);
+  assertDisplayAgrees(payload, signature);
+  const canonical = canonicalReportJson(payload);
+  return { payload, signature, canonical, payloadHash: sha256Hex(canonical) };
 }
