@@ -2,6 +2,7 @@
  * Redaction helpers for safer sharing of receipts.
  * Masks high-signal secrets in Markdown/HTML bodies, then callers re-hash.
  */
+import { appendHashFooter } from './hash.js';
 
 /** True for receipt / index artifacts that may embed prior secrets. */
 export function isReceiptArtifactPath(path: string): boolean {
@@ -342,4 +343,22 @@ export function prepareRedactedBody(
   opts: { maskHost?: boolean } = {},
 ): string {
   return redactMarkdownBody(markdown, opts);
+}
+
+/**
+ * Share's publish path. Session export calls this unless `--include-host`.
+ * One function so the two cannot drift:
+ * - secret values masked (`redactSecretsInText`)
+ * - nested receipt / index diff bodies replaced with
+ *   `[REDACTED — nested receipt/index body omitted]`
+ * - Host line replaced with `[REDACTED]` unless `maskHost` is false
+ * - body re-hashed
+ * `maskHost: false` is share `--include-host` (secrets and nested bodies
+ * still go). Session export `--include-host` does not call this at all.
+ */
+export function publishRedactedReceipt(
+  markdown: string,
+  opts: { maskHost?: boolean } = {},
+): string {
+  return appendHashFooter(prepareRedactedBody(markdown, opts));
 }

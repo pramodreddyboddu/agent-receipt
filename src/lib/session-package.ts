@@ -9,8 +9,9 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { appendHashFooter, canonicalBody } from './hash.js';
+import { ByteLimitError, assertReadableSize } from './byte-limit.js';
 import { receiptsDir } from './receipt-index.js';
+import { publishRedactedReceipt } from './redact.js';
 import {
   createSignatureDocument,
   loadKeys,
@@ -73,7 +74,20 @@ export interface SessionManifestReceipt {
   /** SHA-256 of the raw receipt file bytes. */
   bytes: string;
   signed: boolean;
+  /** Fingerprint of the packaged sidecar, or null when the package copy is unsigned. */
   fingerprint: string | null;
+  /**
+   * Fingerprint of the source sidecar before this export. Null when the
+   * source receipt was unsigned. Kept even when this export re-signs.
+   */
+  originalFingerprint: string | null;
+  /**
+   * Fingerprint of the key that re-signed a receipt whose source sidecar
+   * belonged to a different key. Null when the original sidecar was copied,
+   * when the receipt stayed unsigned, or when this export signed an
+   * unsigned source. Equals `fingerprint` when set.
+   */
+  resignedBy: string | null;
   /** SHA-256 of the raw sidecar bytes. Present only when `signed` is true. */
   sigBytes?: string;
   orphan: boolean;
@@ -157,41 +171,19 @@ export function isSafeReceiptBasename(name: string): boolean {
 }
 
 /**
- * Replace an explicit Host line with `[REDACTED]` and re-hash.
- * No host line, an already masked host, or `includeHost` leaves the
- * original bytes alone so an existing sidecar still matches.
- * A rewrite drops bytes after the integrity footer (same as share).
+ * Default export runs share's redaction pipeline (`publishRedactedReceipt`):
+ * secrets, nested receipt/index bodies, and the Host line, then re-hash.
+ * `--include-host` leaves the original bytes alone so an existing sidecar
+ * still matches. `masked` is true only when the bytes changed.
  */
 export function publishSessionReceipt(
   markdown: string,
   includeHost: boolean,
 ): { markdown: string; masked: boolean } {
   if (includeHost) return { markdown, masked: false };
-  const normalized = markdown.replace(/\r\n/g, '\n');
-  const lines = normalized.split('\n');
-  let changed = false;
-  let pastIntegrity = false;
-  const out: string[] = [];
-  for (const line of lines) {
-    if (
-      !pastIntegrity &&
-      (line.startsWith('## Integrity') || line.includes('agent-receipt-sha256'))
-    ) {
-      pastIntegrity = true;
-    }
-    if (
-      !pastIntegrity &&
-      /^- \*\*Host\*\*:/.test(line) &&
-      line !== `- **Host**: ${SESSION_REDACTED_HOST}`
-    ) {
-      out.push(`- **Host**: ${SESSION_REDACTED_HOST}`);
-      changed = true;
-      continue;
-    }
-    out.push(line);
-  }
-  if (!changed) return { markdown, masked: false };
-  return { markdown: appendHashFooter(canonicalBody(out.join('\n'))), masked: true };
+  const published = publishRedactedReceipt(markdown, { maskHost: true });
+  if (published === markdown) return { markdown, masked: false };
+  return { markdown: published, masked: true };
 }
 
 export function writeSessionManifest(packageDir: string, manifest: SessionManifest): string {
@@ -434,6 +426,8 @@ function parseReceiptEntry(
     'bytes',
     'signed',
     'fingerprint',
+    'originalFingerprint',
+    'resignedBy',
     'sigBytes',
     'orphan',
     'cycle',
@@ -489,6 +483,30 @@ function parseReceiptEntry(
   if (!doc.signed && doc.fingerprint !== null) {
     throw new SessionPackageUsageError(`${label}.fingerprint must be null when signed is false`);
   }
+  if (!Object.prototype.hasOwnProperty.call(doc, 'originalFingerprint')) {
+    throw new SessionPackageUsageError(`${label}.originalFingerprint is required`);
+  }
+  if (doc.originalFingerprint !== null && !hex64(doc.originalFingerprint)) {
+    throw new SessionPackageUsageError(
+      `${label}.originalFingerprint must be 64 lowercase hex chars or null`,
+    );
+  }
+  if (!Object.prototype.hasOwnProperty.call(doc, 'resignedBy')) {
+    throw new SessionPackageUsageError(`${label}.resignedBy is required`);
+  }
+  if (doc.resignedBy !== null && !hex64(doc.resignedBy)) {
+    throw new SessionPackageUsageError(
+      `${label}.resignedBy must be 64 lowercase hex chars or null`,
+    );
+  }
+  if (doc.resignedBy !== null && doc.resignedBy !== doc.fingerprint) {
+    throw new SessionPackageUsageError(
+      `${label}.resignedBy must equal fingerprint when set`,
+    );
+  }
+  if (!doc.signed && doc.resignedBy !== null) {
+    throw new SessionPackageUsageError(`${label}.resignedBy must be null when signed is false`);
+  }
   if (doc.signed && !hex64(doc.sigBytes)) {
     throw new SessionPackageUsageError(`${label}.sigBytes is required when signed is true`);
   }
@@ -515,6 +533,8 @@ function parseReceiptEntry(
     bytes: doc.bytes,
     signed: doc.signed,
     fingerprint: doc.fingerprint,
+    originalFingerprint: doc.originalFingerprint,
+    resignedBy: doc.resignedBy,
     orphan: doc.orphan,
     cycle: doc.cycle,
     warnings,
@@ -534,11 +554,18 @@ export function isSafeReceiptRel(rel: string): boolean {
   return isSafeReceiptBasename(base);
 }
 
-export function loadSessionManifest(manifestPath: string): SessionManifest {
+export function loadSessionManifest(
+  manifestPath: string,
+  maxBytes?: number,
+): SessionManifest {
+  if (maxBytes !== undefined) {
+    assertReadableSize(manifestPath, maxBytes, 'session-manifest.json', '--max-manifest-bytes');
+  }
   let text: string;
   try {
     text = readFileSync(manifestPath, 'utf8');
   } catch (err) {
+    if (err instanceof ByteLimitError) throw err;
     const detail = err instanceof Error ? err.message : String(err);
     throw new SessionPackageUsageError(`unreadable session-manifest.json (${detail})`);
   }
@@ -555,7 +582,10 @@ export function loadSessionManifest(manifestPath: string): SessionManifest {
  * Optional `session-manifest.sig.json`. Absent is fine. A present sidecar
  * is a SignatureDocument over the UTF-8 hex SHA-256 of the manifest bytes.
  */
-export function inspectSessionManifestSignature(packageDir: string): ManifestSigReport {
+export function inspectSessionManifestSignature(
+  packageDir: string,
+  limits?: { manifest?: number; sidecar?: number },
+): ManifestSigReport {
   const sigPath = join(packageDir, SESSION_MANIFEST_SIG_NAME);
   if (!existsSync(sigPath)) {
     return { present: false, ok: null, fingerprint: null, reason: null };
@@ -569,6 +599,22 @@ export function inspectSessionManifestSignature(packageDir: string): ManifestSig
     };
   }
   const manifestPath = join(packageDir, SESSION_MANIFEST_NAME);
+  if (limits?.sidecar !== undefined) {
+    assertReadableSize(
+      sigPath,
+      limits.sidecar,
+      'session-manifest.sig.json',
+      '--max-sidecar-bytes',
+    );
+  }
+  if (limits?.manifest !== undefined) {
+    assertReadableSize(
+      manifestPath,
+      limits.manifest,
+      'session-manifest.json',
+      '--max-manifest-bytes',
+    );
+  }
   let hex: string;
   try {
     hex = sha256FileBytes(manifestPath);

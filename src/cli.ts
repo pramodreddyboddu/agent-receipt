@@ -110,6 +110,18 @@ function resolveCliLink(
   });
 }
 
+function flagByteCap(
+  flags: Record<string, string | boolean>,
+  name: string,
+): number | undefined {
+  if (flags[name] === undefined) return undefined;
+  const n = flagNumber(flags, name);
+  if (n === undefined || !Number.isInteger(n) || n < 1) {
+    throw new Error(`--${name} must be an integer number of bytes >= 1`);
+  }
+  return n;
+}
+
 function flagPositiveInt(
   flags: Record<string, string | boolean>,
   name: string,
@@ -573,15 +585,24 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         const sub = positional[0];
         if (sub === 'export' || sub === 'pack') {
           for (const key of Object.keys(flags)) {
-            if (key !== 'cwd' && key !== 'json' && key !== 'out' && key !== 'include-host') {
+            if (
+              key !== 'cwd' &&
+              key !== 'json' &&
+              key !== 'out' &&
+              key !== 'include-host' &&
+              key !== 'resign' &&
+              key !== 'max-receipt-bytes' &&
+              key !== 'max-sidecar-bytes' &&
+              key !== 'max-manifest-bytes'
+            ) {
               throw new Error(
-                `Unknown flag: --${key}. session export accepts --out <dir>, --include-host, --json, and --cwd.`,
+                `Unknown flag: --${key}. session export accepts --out <dir>, --include-host, --resign, --max-receipt-bytes, --max-sidecar-bytes, --max-manifest-bytes, --json, and --cwd.`,
               );
             }
           }
           if (positional.length > 2) {
             throw new Error(
-              'session export accepts one id. Usage: agent-receipt session export <id> [--out <dir>] [--include-host] [--json]',
+              'session export accepts one id. Usage: agent-receipt session export <id> [--out <dir>] [--include-host] [--resign] [--json]',
             );
           }
           const out = flags.out;
@@ -592,6 +613,10 @@ export async function run(argv: string[] = process.argv): Promise<number> {
             json: flagBool(flags, 'json'),
             out: typeof out === 'string' ? out : undefined,
             includeHost: flagBool(flags, 'include-host'),
+            resign: flagBool(flags, 'resign'),
+            maxReceiptBytes: flagByteCap(flags, 'max-receipt-bytes'),
+            maxSidecarBytes: flagByteCap(flags, 'max-sidecar-bytes'),
+            maxManifestBytes: flagByteCap(flags, 'max-manifest-bytes'),
           });
           return result.exitCode;
         }
@@ -603,10 +628,13 @@ export async function run(argv: string[] = process.argv): Promise<number> {
               key !== 'dry-run' &&
               key !== 'require-sig' &&
               key !== 'require-signature' &&
-              key !== 'trusted-key'
+              key !== 'trusted-key' &&
+              key !== 'max-receipt-bytes' &&
+              key !== 'max-sidecar-bytes' &&
+              key !== 'max-manifest-bytes'
             ) {
               throw new Error(
-                `Unknown flag: --${key}. session import accepts --dry-run, --json, --require-sig, --trusted-key, and --cwd.`,
+                `Unknown flag: --${key}. session import accepts --dry-run, --json, --require-sig, --trusted-key, --max-receipt-bytes, --max-sidecar-bytes, --max-manifest-bytes, and --cwd.`,
               );
             }
           }
@@ -620,6 +648,9 @@ export async function run(argv: string[] = process.argv): Promise<number> {
             dryRun: flagBool(flags, 'dry-run'),
             requireSig: flagBool(flags, 'require-sig', 'require-signature'),
             trustedKeys: flagTrustedKeys(flags),
+            maxReceiptBytes: flagByteCap(flags, 'max-receipt-bytes'),
+            maxSidecarBytes: flagByteCap(flags, 'max-sidecar-bytes'),
+            maxManifestBytes: flagByteCap(flags, 'max-manifest-bytes'),
           });
           return result.exitCode;
         }

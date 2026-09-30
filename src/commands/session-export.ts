@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { ByteLimitError, assertReadableSize, resolveByteLimits } from '../lib/byte-limit.js';
 import { color } from '../lib/color.js';
 import { verifyMarkdown } from '../lib/hash.js';
 import { parseLinkMeta, type SessionNode } from '../lib/link.js';
@@ -26,6 +27,7 @@ import { sha256FileBytes, fingerprintFromSidecar } from '../lib/share-package.js
 import {
   handoffMarkdownSignature,
   inspectReceiptSignature,
+  loadKeys,
   signaturePathFor,
 } from '../lib/sign.js';
 import { VERSION } from '../lib/version.js';
@@ -35,8 +37,24 @@ export interface SessionExportOptions {
   json?: boolean;
   /** Package directory. Default is the sibling of outDir, `<id>.session`. */
   out?: string;
-  /** Keep the Host label. Default masks it as `[REDACTED]`. */
+  /**
+   * Keep the original receipt bytes, including Host and any secrets.
+   * Default runs share's redaction pipeline (secrets, nested receipt/index
+   * bodies, and Host) and re-hashes.
+   */
   includeHost?: boolean;
+  /**
+   * Re-sign a receipt whose sidecar was produced by a different key when
+   * redaction must change the bytes. Default refuses (exit 2, nothing
+   * written). Warns on stderr when it does re-sign.
+   */
+  resign?: boolean;
+  /** Override the receipt read cap. Default 32 MiB. Stat before read. */
+  maxReceiptBytes?: number;
+  /** Override the sidecar read cap. Default 256 KiB. */
+  maxSidecarBytes?: number;
+  /** Override the manifest read cap. Default 8 MiB. Export writes the manifest; the cap is recorded for peers. */
+  maxManifestBytes?: number;
 }
 
 export interface SessionExportReceipt {
@@ -48,6 +66,8 @@ export interface SessionExportReceipt {
   sha256: string;
   signed: boolean;
   fingerprint: string | null;
+  originalFingerprint: string | null;
+  resignedBy: string | null;
   orphan: boolean;
   cycle: boolean;
   warnings: string[];
@@ -75,11 +95,16 @@ const RESIGN_TIP =
 
 /**
  * Pack every local receipt in a session into `<id>.session/` beside outDir.
- * Verifies first. A failure writes nothing. Host is masked unless
- * `--include-host`. A rewritten body is re-signed when local keys load;
- * missing keys omit the sidecar and `session-manifest.sig.json` and do
- * not exit 2. Does not append the audit log and does not edit the index.
- * Cycles and orphans are included and named in `warnings`.
+ * Verifies first. A failure writes nothing. Unless `--include-host`, each
+ * receipt goes through share's redaction pipeline (secrets, nested
+ * receipt/index bodies, and Host) and is re-hashed. `--include-host`
+ * keeps the original bytes. A rewritten body whose sidecar fingerprint is
+ * not the local key is refused unless `--resign`. An unchanged body keeps
+ * the original sidecar. A same-key rewrite is re-signed when local keys
+ * load and left unsigned when they do not. Missing keys omit
+ * `session-manifest.sig.json` and do not exit 2. Does not append the
+ * audit log and does not edit the index. Cycles and orphans are included
+ * and named in `warnings`.
  */
 export function cmdSessionExport(
   cwd: string,
@@ -87,6 +112,8 @@ export function cmdSessionExport(
   opts: SessionExportOptions = {},
 ): SessionExportReport {
   const includeHost = opts.includeHost === true;
+  const resign = opts.resign === true;
+  const limits = resolveByteLimits(opts);
   const finish = (partial: Omit<SessionExportReport, 'command' | 'version' | 'ok' | 'includeHost'> & {
     includeHost?: boolean;
   }): SessionExportReport => {
@@ -105,16 +132,17 @@ export function cmdSessionExport(
     return finish(emptyReport(
       '',
       1,
-      'session export requires an id. Usage: agent-receipt session export <id> [--out <dir>] [--include-host] [--json]',
+      'session export requires an id. Usage: agent-receipt session export <id> [--out <dir>] [--include-host] [--resign] [--json]',
     ));
   }
 
   let collected;
   try {
-    collected = collectSession(cwd, sessionId);
+    collected = collectSession(cwd, sessionId, { maxBytes: limits.maxReceiptBytes });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return finish(emptyReport(sessionId.trim(), 1, message));
+    const code = err instanceof ByteLimitError ? 2 : 1;
+    return finish(emptyReport(sessionId.trim(), code, message));
   }
 
   const session = collected.session;
@@ -159,14 +187,45 @@ export function cmdSessionExport(
     markdown: string;
     sourceSha: string;
     masked: boolean;
+    /** Valid source sidecar fingerprint, or null when the source is unsigned. */
+    sourceFingerprint: string | null;
+    /** Source sidecar was signed by a key that is not the local key. */
+    foreign: boolean;
   }> = [];
   let resignTip = false;
+  const localFp = localFingerprint(cwd);
 
   for (const node of collected.nodes) {
     let original: string;
     try {
+      assertReadableSize(
+        node.path,
+        limits.maxReceiptBytes,
+        `receipt ${basename(node.path)}`,
+        '--max-receipt-bytes',
+      );
+      const sourceSig = signaturePathFor(node.path);
+      const sigKind = sidecarKind(sourceSig);
+      if (sigKind === 'other') {
+        return finish(emptyReport(
+          session,
+          2,
+          `refusing to export: signature sidecar for ${basename(node.path)} is not a regular file`,
+        ));
+      }
+      if (sigKind === 'file') {
+        assertReadableSize(
+          sourceSig,
+          limits.maxSidecarBytes,
+          `signature sidecar ${basename(sourceSig)}`,
+          '--max-sidecar-bytes',
+        );
+      }
       original = readFileSync(node.path, 'utf8');
     } catch (err) {
+      if (err instanceof ByteLimitError) {
+        return finish(emptyReport(session, 2, err.message));
+      }
       const detail = err instanceof Error ? err.message : String(err);
       return finish(emptyReport(session, 2, `unreadable receipt ${node.path} (${detail})`));
     }
@@ -178,6 +237,14 @@ export function cmdSessionExport(
         `refusing to export: receipt failed verify: ${node.path} (${source.reason})`,
       ));
     }
+    const sidecar = inspectReceiptSignature(node.path, source.actual);
+    if (sidecar.present && sidecar.ok !== true) {
+      return finish(emptyReport(
+        session,
+        2,
+        `refusing to export: invalid signature sidecar for ${basename(node.path)} (${sidecar.reason})`,
+      ));
+    }
     const published = publishSessionReceipt(original, includeHost);
     const publishedCheck = verifyMarkdown(published.markdown);
     if (!publishedCheck.ok) {
@@ -187,23 +254,29 @@ export function cmdSessionExport(
         `refusing to export: packaged receipt failed verify: ${node.path} (${publishedCheck.reason})`,
       ));
     }
-    if (!published.masked) {
-      const sidecar = inspectReceiptSignature(node.path, source.actual);
-      if (sidecar.present && sidecar.ok !== true) {
-        return finish(emptyReport(
-          session,
-          2,
-          `refusing to export: invalid signature sidecar for ${basename(node.path)} (${sidecar.reason})`,
-        ));
-      }
-    }
+    const sourceFingerprint = sidecar.present && sidecar.ok === true ? sidecar.fingerprint : null;
+    const foreign = Boolean(sourceFingerprint && sourceFingerprint !== localFp);
     prepared.push({
       node,
       rel: relBySource.get(node.path) as string,
       markdown: published.markdown,
       sourceSha: source.actual,
       masked: published.masked,
+      sourceFingerprint,
+      foreign,
     });
+  }
+
+  const foreignRewrites = prepared.filter((item) => item.masked && item.foreign);
+  if (foreignRewrites.length && !resign) {
+    const detail = foreignRewrites
+      .map((item) => `${basename(item.node.path)} (signer ${item.sourceFingerprint})`)
+      .join(', ');
+    return finish(emptyReport(
+      session,
+      2,
+      `refusing to re-sign ${detail}: the sidecar was signed by a different key. Pass --resign to re-sign with the local key and record both fingerprints. Nothing was written.`,
+    ));
   }
 
   const tmp = partialPackageDir(packagePath);
@@ -233,6 +306,19 @@ export function cmdSessionExport(
       if (signed && !fingerprint) {
         throw new Error(`signed receipt is missing a fingerprint: ${item.rel}`);
       }
+      const resignedBy =
+        item.masked && item.sourceFingerprint && fingerprint && fingerprint !== item.sourceFingerprint
+          ? fingerprint
+          : null;
+      if (resign && item.masked && item.foreign) {
+        const next = fingerprint ?? '(unsigned — no local key)';
+        console.error(
+          `warning: --resign re-signed ${item.rel}\n` +
+            `  original signer: ${item.sourceFingerprint}\n` +
+            `  re-signer: ${next}\n` +
+            'The manifest records both fingerprints. The packaged sidecar verifies as the re-signer.',
+        );
+      }
       const entry: SessionManifestReceipt = {
         id: item.node.id,
         parent: meta.parent,
@@ -243,6 +329,8 @@ export function cmdSessionExport(
         bytes: sha256FileBytes(dest),
         signed,
         fingerprint,
+        originalFingerprint: item.sourceFingerprint,
+        resignedBy,
         orphan: item.node.orphan,
         cycle: item.node.cycle,
         warnings,
@@ -293,6 +381,26 @@ export function cmdSessionExport(
       ...emptyReport(session, 2, `session export failed (${message})`),
       packagePath: null,
     });
+  }
+}
+
+function localFingerprint(cwd: string): string | null {
+  try {
+    return loadKeys(cwd).fingerprint;
+  } catch {
+    return null;
+  }
+}
+
+/** `absent` when missing, `file` for a regular file, `other` for a symlink or directory. */
+function sidecarKind(filePath: string): 'absent' | 'file' | 'other' {
+  try {
+    const st = lstatSync(filePath);
+    if (st.isSymbolicLink()) return 'other';
+    if (st.isFile()) return 'file';
+    return 'other';
+  } catch {
+    return 'absent';
   }
 }
 
@@ -347,6 +455,8 @@ function toExportReceipt(entry: SessionManifestReceipt): SessionExportReceipt {
     sha256: entry.sha256,
     signed: entry.signed,
     fingerprint: entry.fingerprint,
+    originalFingerprint: entry.originalFingerprint,
+    resignedBy: entry.resignedBy,
     orphan: entry.orphan,
     cycle: entry.cycle,
     warnings: entry.warnings,

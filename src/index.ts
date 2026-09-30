@@ -85,6 +85,7 @@ export {
   redactSecretsInText,
   redactMarkdownBody,
   prepareRedactedBody,
+  publishRedactedReceipt,
   isReceiptArtifactPath,
 } from './lib/redact.js';
 export { markdownToHtml } from './lib/html.js';

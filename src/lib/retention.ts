@@ -33,6 +33,7 @@ import {
   type ReceiptIndex,
   type ReceiptIndexEntry,
 } from './receipt-index.js';
+import { signaturePathFor } from './sign.js';
 
 export const DISK_PRESSURE_BYTES = 20 * 1024 * 1024;
 export const DISK_PRESSURE_COUNT = 100;
@@ -340,9 +341,21 @@ function assertDeletable(cwd: string, abs: string): void {
   }
 }
 
-/** Delete planned receipts. Missing files are ignored. Throws before any partial unlink policy violation. */
+/**
+ * Delete planned receipts, their `.json` companions, and their `.sig.json`
+ * sidecars. Missing files are ignored. A symlink is refused before unlink.
+ */
 export function deletePlanned(cwd: string, planned: PruneCandidate[]): void {
   for (const item of planned) {
+    const sigAbs = signaturePathFor(item.abs);
+    let sigPresent = false;
+    try {
+      sigPresent = true;
+      lstatSync(sigAbs);
+    } catch {
+      sigPresent = false;
+    }
+    if (sigPresent) assertDeletable(cwd, sigAbs);
     if (item.jsonAbs) {
       if (existsSync(item.jsonAbs)) {
         assertDeletable(cwd, item.jsonAbs);
@@ -353,6 +366,7 @@ export function deletePlanned(cwd: string, planned: PruneCandidate[]): void {
       assertDeletable(cwd, item.abs);
       unlinkSync(item.abs);
     }
+    if (sigPresent) unlinkSync(sigAbs);
   }
 }
 

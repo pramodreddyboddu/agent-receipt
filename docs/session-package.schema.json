@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/session-package.schema.json",
   "title": "SessionPackageManifest",
-  "description": "session-manifest.json written by `agent-receipt session export` (alias `session pack`) inside a portable `<id>.session/` directory. The default directory is the sibling of outDir (`.agent-receipt/receipts` becomes `.agent-receipt/<id>.session/`). `--out` names that directory. Peers check it with `agent-receipt session import` (alias `session merge`), which also accepts this file path and resolves it to the parent directory. The directory contains receipts/<basename>.md for every receipt in the session, receipts/<basename>.sig.json when a Markdown sidecar was copied or re-signed, this manifest, and optional session-manifest.sig.json. sha256 is the verify hash of that receipt (canonical body, the same hex verify uses). bytes and sigBytes are SHA-256 of the raw file bytes. signed is true when the receipt sidecar is present. fingerprint is that sidecar's key fingerprint, or null when the Markdown is unsigned. includeHost is false when export masked Host as [REDACTED] (the default). Session, parent, and agent are kept. Optional session-manifest.sig.json (not a receipt) is the same Ed25519 SignatureDocument as docs/signature.schema.json, over the UTF-8 hex SHA-256 of these session-manifest.json bytes. It is omitted when local keys do not load. That omission does not fail export. warnings may include orphan, cycle, cross-session-parent, parent-unverified, and missing-session. Those receipts are still packed. This is not a CA. Import does not append the audit log and does not add an index row.",
+  "description": "session-manifest.json written by `agent-receipt session export` (alias `session pack`) inside a portable `<id>.session/` directory. The default directory is the sibling of outDir (`.agent-receipt/receipts` becomes `.agent-receipt/<id>.session/`). `--out` names that directory. Peers check it with `agent-receipt session import` (alias `session merge`), which also accepts this file path and resolves it to the parent directory. The directory contains receipts/<basename>.md for every receipt in the session, receipts/<basename>.sig.json when a Markdown sidecar was copied or re-signed, this manifest, and optional session-manifest.sig.json. sha256 is the verify hash of that receipt (canonical body, the same hex verify uses). bytes and sigBytes are SHA-256 of the raw file bytes. signed is true when the receipt sidecar is present. fingerprint is the packaged sidecar's key fingerprint, or null when that copy is unsigned. originalFingerprint is the source sidecar fingerprint, or null when the source was unsigned. resignedBy is the local fingerprint when this export changed the bytes and wrote a new sidecar for a different key (`--resign`); otherwise null. It equals fingerprint when set. includeHost is false when export ran share's redaction pipeline (secrets, nested receipt/index diff bodies replaced with `[REDACTED — nested receipt/index body omitted]`, and the header Host line set to [REDACTED]). includeHost is true only for `--include-host`, which keeps the original receipt bytes, including Host and secrets. Session, parent, and agent are kept. A foreign sidecar is copied when the bytes do not change. Redaction that must change a foreign sidecar is refused unless `--resign`. Optional session-manifest.sig.json (not a receipt) is the same Ed25519 SignatureDocument as docs/signature.schema.json, over the UTF-8 hex SHA-256 of these session-manifest.json bytes, so it covers originalFingerprint and resignedBy. It is omitted when local keys do not load. That omission does not fail export. warnings may include orphan, cycle, cross-session-parent, parent-unverified, and missing-session. Those receipts are still packed. Import refuses a symlink destination (exit 2), treats an unreadable or case-insensitive basename clash as a conflict, and publishes staged files without overwriting. This is not a CA. Import does not append the audit log and does not add an index row.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -41,7 +41,7 @@
     },
     "includeHost": {
       "type": "boolean",
-      "description": "True when --include-host kept the Host label. False when export masked it as [REDACTED]."
+      "description": "True when --include-host kept the original receipt bytes. False when export ran share's redaction pipeline (secrets, nested receipt/index bodies, and the Host line)."
     },
     "warnings": {
       "type": "array",
@@ -72,6 +72,8 @@
           "bytes",
           "signed",
           "fingerprint",
+          "originalFingerprint",
+          "resignedBy",
           "orphan",
           "cycle",
           "warnings"
@@ -90,7 +92,7 @@
             "anyOf": [{ "type": "string" }, { "type": "null" }]
           },
           "host": {
-            "description": "Packaged host. [REDACTED] or null when includeHost is false. The original label when --include-host was set.",
+            "description": "Packaged host. [REDACTED] or null when includeHost is false. The original label when --include-host kept the original bytes.",
             "anyOf": [{ "type": "string" }, { "type": "null" }]
           },
           "path": {
@@ -113,7 +115,21 @@
             "description": "True when receipts/<basename>.sig.json is in the package."
           },
           "fingerprint": {
-            "description": "64-hex fingerprint of the receipt sidecar, or null when unsigned.",
+            "description": "64-hex fingerprint of the packaged sidecar, or null when that copy is unsigned.",
+            "anyOf": [
+              { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              { "type": "null" }
+            ]
+          },
+          "originalFingerprint": {
+            "description": "64-hex fingerprint of the source sidecar before this export, or null when the source was unsigned. Kept when the bytes were copied and when --resign replaced the sidecar.",
+            "anyOf": [
+              { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              { "type": "null" }
+            ]
+          },
+          "resignedBy": {
+            "description": "64-hex fingerprint of the local key that re-signed a different key's receipt for this package, or null. Equals fingerprint when set. Null when the original sidecar was copied, when the source was unsigned, or when the packaged copy is unsigned.",
             "anyOf": [
               { "type": "string", "pattern": "^[0-9a-f]{64}$" },
               { "type": "null" }

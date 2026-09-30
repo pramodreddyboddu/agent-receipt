@@ -2,13 +2,20 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
+  closeSync,
   cpSync,
   existsSync,
+  ftruncateSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { verifySignature } from '../dist/lib/sign.js';
 import { listReceiptFiles } from '../dist/lib/retention.js';
 import { isInsideSessionPackage, isSessionPackageDirName } from '../dist/lib/receipt.js';
+import { cmdSessionImport } from '../dist/commands/session-import.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, 'bin', 'agent-receipt.js');
@@ -160,6 +168,48 @@ describe('v1.0.29 cross-host session merge', () => {
     return parseJson(exported.out);
   }
 
+  const NESTED_HOST = 'hostA-secret';
+  const NESTED_AWS = 'AKIAIOSFODNN7EXAMPLE';
+  const NESTED_OMIT = '[REDACTED — nested receipt/index body omitted]';
+  const GIT_CLEAN = {
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_SYSTEM: '/dev/null',
+    GIT_CONFIG_NOSYSTEM: '1',
+  };
+
+  function countHits(dir, needle) {
+    const buf = Buffer.from(needle);
+    let hits = 0;
+    const walk = (current) => {
+      for (const ent of readdirSync(current, { withFileTypes: true })) {
+        const path = join(current, ent.name);
+        if (ent.isSymbolicLink()) continue;
+        if (ent.isDirectory()) {
+          walk(path);
+          continue;
+        }
+        if (!ent.isFile()) continue;
+        const data = readFileSync(path);
+        let from = 0;
+        while (from <= data.length - buf.length) {
+          const at = data.indexOf(buf, from);
+          if (at < 0) break;
+          hits += 1;
+          from = at + buf.length;
+        }
+      }
+    };
+    walk(dir);
+    return hits;
+  }
+
+  function receiptBodies(dir) {
+    const out = join(dir, '.agent-receipt', 'receipts');
+    return readdirSync(out)
+      .filter((name) => name.endsWith('.md') && !name.endsWith('.prove.md'))
+      .map((name) => readFileSync(join(out, name), 'utf8'));
+  }
+
   it('documents 1.0.29, the session package, and no new runtime dependencies', () => {
     const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     assert.match(changelog, /## \[1\.0\.29\]/);
@@ -188,10 +238,17 @@ describe('v1.0.29 cross-host session merge', () => {
     assert.equal(schema.properties.kind.const, 'agent-receipt-session');
     assert.equal(schema.properties.version.const, 1);
     assert.equal(schema.additionalProperties, false);
+    const itemRequired = schema.properties.receipts.items.required;
+    assert.ok(itemRequired.includes('originalFingerprint'));
+    assert.ok(itemRequired.includes('resignedBy'));
+    assert.match(changelog, /--resign/);
+    assert.match(changelog, /originalFingerprint/);
+    assert.match(changelog, /nested receipt/);
     const readme = readFileSync(join(root, 'README.md'), 'utf8');
     assert.match(readme, /## Cross-host session merge/);
     assert.match(readme, /session export/);
     assert.match(readme, /session import/);
+    assert.match(readme, /originalFingerprint/);
     const business = readFileSync(join(root, 'docs', 'business.md'), 'utf8');
     assert.match(business, /### Cross-host session merge/);
     assert.match(business, /session-manifest\.sig\.json/);
@@ -214,6 +271,8 @@ describe('v1.0.29 cross-host session merge', () => {
     assert.match(help, /\*\.session/);
     assert.match(help, /--require-sig/);
     assert.match(help, /--dry-run/);
+    assert.match(help, /--resign/);
+    assert.match(help, /--max-receipt-bytes/);
     assert.match(cli(root, ['help']), /session export <id>/);
     const dir = initRepo();
     const doctor = parseJson(cli(dir, ['doctor', '--json']));
@@ -666,5 +725,449 @@ describe('v1.0.29 cross-host session merge', () => {
     const after = parseJson(cli(self, ['session', 'sess-required', '--json']));
     assert.equal(after.receipts.length, 2);
     assert.ok(after.receipts.every((row) => !String(row.path).includes('.session')));
+  });
+
+  function nestedLink(dir, session, sign) {
+    writeFileSync(join(dir, 'secret.txt'), `${NESTED_AWS}\n`);
+    const signArgs = sign ? ['--sign'] : [];
+    const wrapped = cliResult(dir, [
+      'wrap',
+      '--link',
+      '--session',
+      session,
+      '--host',
+      NESTED_HOST,
+      '--agent',
+      'parent',
+      '--message',
+      'parent',
+      ...signArgs,
+      '--',
+      process.execPath,
+      bin,
+      'wrap',
+      '--cwd',
+      dir,
+      '--full',
+      '--agent',
+      'child',
+      '--message',
+      'child',
+      ...signArgs,
+    ], GIT_CLEAN);
+    assert.equal(wrapped.code, 0, wrapped.out + wrapped.err);
+    const bodies = receiptBodies(dir);
+    const child = bodies.find((md) => field(md, 'Agent') === 'child');
+    const parent = bodies.find((md) => field(md, 'Agent') === 'parent');
+    assert.ok(child, 'child receipt');
+    assert.ok(parent, 'parent receipt');
+    assert.match(child, new RegExp(NESTED_HOST));
+    assert.match(child, new RegExp(NESTED_AWS));
+    assert.match(parent, new RegExp(NESTED_AWS));
+    return { child, parent };
+  }
+
+  it('redacts nested receipt bodies and planted secrets on default export', () => {
+    const unsigned = initRepo();
+    nestedLink(unsigned, 'sess-nested-redact', false);
+    const exported = exportSession(unsigned, 'sess-nested-redact');
+    assert.equal(countHits(exported.packagePath, NESTED_HOST), 0);
+    assert.equal(countHits(exported.packagePath, NESTED_AWS), 0);
+    const manifest = JSON.parse(readFileSync(exported.manifestPath, 'utf8'));
+    assert.equal(manifest.includeHost, false);
+    let omitted = 0;
+    for (const entry of manifest.receipts) {
+      const text = readFileSync(join(exported.packagePath, entry.path), 'utf8');
+      if (text.includes(NESTED_OMIT)) omitted += 1;
+      assert.equal(entry.originalFingerprint, null);
+      assert.equal(entry.resignedBy, null);
+      assert.equal(entry.fingerprint, null);
+      const checked = parseJson(cli(unsigned, ['verify', join(exported.packagePath, entry.path), '--json']));
+      assert.equal(checked.ok, true, checked.reason || '');
+    }
+    assert.ok(omitted >= 1);
+    const dest = initRepo();
+    const imported = cliResult(dest, ['session', 'import', exported.packagePath, '--json']);
+    assert.equal(imported.code, 0, imported.out + imported.err);
+    const body = parseJson(imported.out);
+    assert.equal(body.copied, manifest.receipts.length);
+    for (const file of body.files) {
+      assert.equal(file.action, 'copy');
+      assert.equal(file.originalFingerprint, null);
+      assert.equal(file.resignedBy, null);
+      const checked = parseJson(cli(dest, ['verify', file.to, '--json']));
+      assert.equal(checked.ok, true, checked.reason || '');
+      assert.equal(readFileSync(file.to, 'utf8').includes(NESTED_HOST), false);
+      assert.equal(readFileSync(file.to, 'utf8').includes(NESTED_AWS), false);
+    }
+
+    const signed = initRepo();
+    const keys = parseJson(cli(signed, ['keygen', '--json']));
+    nestedLink(signed, 'sess-nested-signed', true);
+    const signedPkg = exportSession(signed, 'sess-nested-signed');
+    assert.equal(countHits(signedPkg.packagePath, NESTED_HOST), 0);
+    assert.equal(countHits(signedPkg.packagePath, NESTED_AWS), 0);
+    const signedManifest = JSON.parse(readFileSync(signedPkg.manifestPath, 'utf8'));
+    const signedCheck = verifySignature(
+      JSON.parse(readFileSync(signedPkg.manifestSigPath, 'utf8')),
+      fileSha256(signedPkg.manifestPath),
+    );
+    assert.equal(signedCheck.ok, true, signedCheck.reason || '');
+    for (const entry of signedManifest.receipts) {
+      assert.equal(entry.fingerprint, keys.fingerprint);
+      assert.equal(entry.resignedBy, null);
+      const checked = parseJson(cli(signed, ['verify', join(signedPkg.packagePath, entry.path), '--require-sig', '--json']));
+      assert.equal(checked.ok, true, checked.reason || '');
+    }
+    const signedDest = initRepo();
+    const signedImport = cliResult(signedDest, [
+      'session', 'import', signedPkg.packagePath, '--require-sig', '--json',
+    ]);
+    assert.equal(signedImport.code, 0, signedImport.out + signedImport.err);
+    assert.equal(parseJson(signedImport.out).copied, signedManifest.receipts.length);
+    for (const file of parseJson(signedImport.out).files) {
+      const checked = parseJson(cli(signedDest, ['verify', file.to, '--require-sig', '--json']));
+      assert.equal(checked.ok, true, checked.reason || '');
+      assert.equal(checked.signature.fingerprint, keys.fingerprint);
+    }
+  });
+
+  it('refuses to re-sign a foreign sidecar unless --resign records both fingerprints', () => {
+    const session = 'sess-laundry';
+    const hostA = initRepo();
+    const keysA = parseJson(cli(hostA, ['keygen', '--json']));
+    const pair = sessionPair(hostA, session, NESTED_HOST);
+    cli(hostA, ['sign', pair.parent.path]);
+    cli(hostA, ['sign', pair.child.path]);
+    const parentSig = readFileSync(pair.parent.path.replace(/\.md$/, '.sig.json'));
+    const packed = exportSession(hostA, session, ['--include-host']);
+    const packedManifest = JSON.parse(readFileSync(packed.manifestPath, 'utf8'));
+    for (const entry of packedManifest.receipts) {
+      assert.equal(entry.fingerprint, keysA.fingerprint);
+      assert.equal(entry.originalFingerprint, keysA.fingerprint);
+      assert.equal(entry.resignedBy, null);
+      assert.equal(entry.host, NESTED_HOST);
+    }
+
+    const hostB = initRepo();
+    const keysB = parseJson(cli(hostB, ['keygen', '--json']));
+    assert.notEqual(keysA.fingerprint, keysB.fingerprint);
+    const imported = cliResult(hostB, ['session', 'import', packed.packagePath, '--json']);
+    assert.equal(imported.code, 0, imported.out + imported.err);
+    const importedBody = parseJson(imported.out);
+    assert.equal(importedBody.copied, 2);
+    const localSigs = importedBody.files.map((file) => ({
+      to: file.to,
+      bytes: readFileSync(file.to.replace(/\.md$/, '.sig.json')),
+    }));
+    for (const file of importedBody.files) {
+      assert.equal(file.fingerprint, keysA.fingerprint);
+      assert.equal(file.originalFingerprint, keysA.fingerprint);
+      assert.equal(file.resignedBy, null);
+    }
+    cli(hostB, ['trust', 'add', '--self']);
+    for (const file of importedBody.files) {
+      const checked = cliResult(hostB, ['verify', file.to, '--require-sig', '--json']);
+      assert.equal(checked.code, 2, checked.out + checked.err);
+      const gate = parseJson(checked.out);
+      assert.equal(gate.signature.fingerprint, keysA.fingerprint);
+      assert.equal(gate.signature.trusted, false);
+      assert.notEqual(gate.signature.fingerprint, keysB.fingerprint);
+    }
+
+    const refused = cliResult(hostB, ['session', 'export', session, '--json']);
+    assert.equal(refused.code, 2, refused.out + refused.err);
+    const refusedBody = parseJson(refused.out);
+    assert.equal(refusedBody.written, false);
+    assert.match(refusedBody.reason, /different key/);
+    assert.match(refusedBody.reason, /--resign/);
+    assert.match(refusedBody.reason, /Nothing was written/);
+    assert.equal(existsSync(join(hostB, '.agent-receipt', `${session}.session`)), false);
+    for (const sig of localSigs) {
+      assert.equal(readFileSync(sig.to.replace(/\.md$/, '.sig.json')).equals(sig.bytes), true);
+    }
+    assert.equal(readFileSync(pair.parent.path.replace(/\.md$/, '.sig.json')).equals(parentSig), true);
+
+    const resigned = cliResult(hostB, ['session', 'export', session, '--resign', '--out', 'resigned-pack', '--json']);
+    assert.equal(resigned.code, 0, resigned.out + resigned.err);
+    assert.match(resigned.err, /warning: --resign/);
+    assert.match(resigned.err, new RegExp(keysA.fingerprint));
+    assert.match(resigned.err, new RegExp(keysB.fingerprint));
+    const resignedBody = parseJson(resigned.out);
+    const resignedManifestText = readFileSync(resignedBody.manifestPath, 'utf8');
+    assert.match(resignedManifestText, /originalFingerprint/);
+    assert.match(resignedManifestText, /resignedBy/);
+    const resignedManifest = JSON.parse(resignedManifestText);
+    const resignedSig = JSON.parse(readFileSync(resignedBody.manifestSigPath, 'utf8'));
+    const covered = verifySignature(resignedSig, fileSha256(resignedBody.manifestPath));
+    assert.equal(covered.ok, true, covered.reason || '');
+    for (const entry of resignedManifest.receipts) {
+      assert.equal(entry.originalFingerprint, keysA.fingerprint);
+      assert.equal(entry.resignedBy, keysB.fingerprint);
+      assert.equal(entry.fingerprint, keysB.fingerprint);
+      const sidecar = JSON.parse(readFileSync(
+        join(resignedBody.packagePath, entry.path.replace(/\.md$/, '.sig.json')),
+        'utf8',
+      ));
+      assert.equal(sidecar.fingerprint, keysB.fingerprint);
+      assert.equal(verifySignature(sidecar, entry.sha256).ok, true);
+    }
+    for (const sig of localSigs) {
+      assert.equal(readFileSync(sig.to.replace(/\.md$/, '.sig.json')).equals(sig.bytes), true);
+    }
+    const peer = initRepo();
+    const shown = cliResult(peer, ['session', 'import', resignedBody.packagePath, '--json']);
+    assert.equal(shown.code, 0, shown.out + shown.err);
+    for (const file of parseJson(shown.out).files) {
+      assert.equal(file.originalFingerprint, keysA.fingerprint);
+      assert.equal(file.fingerprint, keysB.fingerprint);
+      assert.equal(file.resignedBy, keysB.fingerprint);
+    }
+
+    const redactedA = initRepo();
+    const redactedKeys = parseJson(cli(redactedA, ['keygen', '--json']));
+    const redactedPair = sessionPair(redactedA, 'sess-stable', 'hq-host');
+    cli(redactedA, ['sign', redactedPair.parent.path]);
+    cli(redactedA, ['sign', redactedPair.child.path]);
+    const redactedPkg = exportSession(redactedA, 'sess-stable');
+    const redactedManifest = JSON.parse(readFileSync(redactedPkg.manifestPath, 'utf8'));
+    for (const entry of redactedManifest.receipts) {
+      assert.equal(entry.fingerprint, redactedKeys.fingerprint);
+      assert.equal(entry.resignedBy, null);
+    }
+    const redactedB = initRepo();
+    const redactedBKeys = parseJson(cli(redactedB, ['keygen', '--json']));
+    const redactedImport = cliResult(redactedB, ['session', 'import', redactedPkg.packagePath, '--json']);
+    assert.equal(redactedImport.code, 0, redactedImport.out + redactedImport.err);
+    const again = cliResult(redactedB, ['session', 'export', 'sess-stable', '--out', 'b-again', '--json']);
+    if (again.code === 0) {
+      const againManifest = JSON.parse(readFileSync(parseJson(again.out).manifestPath, 'utf8'));
+      for (const entry of againManifest.receipts) {
+        assert.equal(entry.fingerprint, redactedKeys.fingerprint);
+        assert.equal(entry.originalFingerprint, redactedKeys.fingerprint);
+        assert.equal(entry.resignedBy, null);
+        assert.notEqual(entry.fingerprint, redactedBKeys.fingerprint);
+      }
+    } else {
+      assert.equal(again.code, 2, again.out + again.err);
+      assert.match(parseJson(again.out).reason, /different key/);
+      assert.equal(existsSync(join(redactedB, 'b-again')), false);
+    }
+  });
+
+  it('refuses symlink, stray, unreadable, and case-only import destinations', () => {
+    const source = initRepo();
+    sessionPair(source, 'sess-plant', 'hq-host');
+    const exported = exportSession(source, 'sess-plant');
+    const manifest = JSON.parse(readFileSync(exported.manifestPath, 'utf8'));
+    const entry = manifest.receipts[0];
+    const base = basename(entry.path);
+
+    const signedSource = initRepo();
+    cli(signedSource, ['keygen']);
+    const signedPair = sessionPair(signedSource, 'sess-plant-sig', 'hq-host');
+    cli(signedSource, ['sign', signedPair.parent.path]);
+    cli(signedSource, ['sign', signedPair.child.path]);
+    const signedPkg = exportSession(signedSource, 'sess-plant-sig');
+    const signedManifest = JSON.parse(readFileSync(signedPkg.manifestPath, 'utf8'));
+    const signedBase = basename(signedManifest.receipts[0].path);
+    const sigBase = signedBase.replace(/\.md$/, '.sig.json');
+
+    function plantDest() {
+      const dest = initRepo();
+      const out = join(dest, '.agent-receipt', 'receipts');
+      mkdirSync(out, { recursive: true });
+      return { dest, out };
+    }
+
+    const evil = mkdtempSync(join(tmpdir(), 'agent-receipt-evil-'));
+    dirs.push(evil);
+    const danglingTarget = join(evil, 'pwn.md');
+    const { dest: danglingDest, out: danglingOut } = plantDest();
+    symlinkSync(danglingTarget, join(danglingOut, base));
+    const danglingBefore = readlinkSync(join(danglingOut, base));
+    const dangling = cliResult(danglingDest, ['session', 'import', exported.packagePath, '--json']);
+    assert.equal(dangling.code, 2, dangling.out + dangling.err);
+    assert.match(parseJson(dangling.out).reason, /symlink/);
+    assert.equal(parseJson(dangling.out).written, false);
+    assert.equal(existsSync(danglingTarget), false);
+    assert.equal(lstatSync(join(danglingOut, base)).isSymbolicLink(), true);
+    assert.equal(readlinkSync(join(danglingOut, base)), danglingBefore);
+    assert.equal(readdirSync(danglingOut).some((name) => name.startsWith('.import-staging-')), false);
+
+    const external = join(evil, 'external.txt');
+    writeFileSync(external, 'external-bytes\n');
+    const externalBefore = readFileSync(external);
+    const { dest: linkDest, out: linkOut } = plantDest();
+    symlinkSync(external, join(linkOut, sigBase));
+    const linked = cliResult(linkDest, ['session', 'import', signedPkg.packagePath, '--json']);
+    assert.equal(linked.code, 2, linked.out + linked.err);
+    assert.match(parseJson(linked.out).reason, /symlink/);
+    assert.equal(parseJson(linked.out).written, false);
+    assert.equal(readFileSync(external).equals(externalBefore), true);
+    assert.equal(lstatSync(join(linkOut, sigBase)).isSymbolicLink(), true);
+    assert.equal(existsSync(join(linkOut, signedBase)), false);
+
+    const { dest: strayDest, out: strayOut } = plantDest();
+    const strayPath = join(strayOut, sigBase);
+    writeFileSync(strayPath, '{"stray":true}\n');
+    const strayBefore = readFileSync(strayPath);
+    const stray = cliResult(strayDest, ['session', 'import', signedPkg.packagePath, '--json']);
+    assert.equal(stray.code, 1, stray.out + stray.err);
+    assert.match(parseJson(stray.out).reason, /sidecar|conflict|already exists/);
+    assert.equal(parseJson(stray.out).written, false);
+    assert.equal(readFileSync(strayPath).equals(strayBefore), true);
+    assert.equal(existsSync(join(strayOut, signedBase)), false);
+
+    const { dest: modeDest, out: modeOut } = plantDest();
+    const modePath = join(modeOut, base);
+    const modeText = 'mode-0200-keep\n';
+    writeFileSync(modePath, modeText);
+    chmodSync(modePath, 0o200);
+    const mode = cliResult(modeDest, ['session', 'import', exported.packagePath, '--json']);
+    assert.equal(mode.code, 1, mode.out + mode.err);
+    assert.match(parseJson(mode.out).reason, /unreadable/);
+    assert.equal(parseJson(mode.out).written, false);
+    chmodSync(modePath, 0o644);
+    assert.equal(readFileSync(modePath, 'utf8'), modeText);
+    assert.equal(readdirSync(modeOut).filter((name) => name.endsWith('.md')).length, 1);
+
+    const { dest: caseDest, out: caseOut } = plantDest();
+    const caseName = `${base.slice(0, -3)}.MD`;
+    assert.notEqual(caseName, base);
+    const casePath = join(caseOut, caseName);
+    writeFileSync(casePath, 'case-clash\n');
+    const caseBefore = readFileSync(casePath);
+    const clash = cliResult(caseDest, ['session', 'import', exported.packagePath, '--json']);
+    assert.equal(clash.code, 1, clash.out + clash.err);
+    assert.match(parseJson(clash.out).reason, /basename|case-insensitive|different sha256/);
+    assert.equal(parseJson(clash.out).written, false);
+    assert.equal(readFileSync(casePath).equals(caseBefore), true);
+    assert.equal(existsSync(join(caseOut, base)), false);
+
+    const dup = join(source, 'case-dup.session');
+    cpSync(exported.packagePath, dup, { recursive: true });
+    const dupManifest = JSON.parse(readFileSync(join(dup, 'session-manifest.json'), 'utf8'));
+    const first = dupManifest.receipts[0];
+    const second = dupManifest.receipts[1];
+    const firstBase = basename(first.path);
+    const flippedBase = `R${firstBase.slice(1)}`;
+    assert.notEqual(flippedBase, firstBase);
+    assert.equal(flippedBase.toLowerCase(), firstBase.toLowerCase());
+    const flipped = `receipts/${flippedBase}`;
+    const flippedAbs = join(dup, flipped);
+    cpSync(join(dup, second.path), flippedAbs);
+    second.path = flipped;
+    second.bytes = fileSha256(flippedAbs);
+    writeFileSync(join(dup, 'session-manifest.json'), `${JSON.stringify(dupManifest, null, 2)}\n`);
+    const { dest: dupDest, out: dupOut } = plantDest();
+    const dupNames = readdirSync(dupOut).sort();
+    const duplicated = cliResult(dupDest, ['session', 'import', dup, '--json']);
+    assert.equal(duplicated.code, 1, duplicated.out + duplicated.err);
+    assert.match(parseJson(duplicated.out).reason, /case-insensitive duplicate/);
+    assert.equal(parseJson(duplicated.out).written, false);
+    assert.deepEqual(readdirSync(dupOut).sort(), dupNames);
+
+    const real = mkdtempSync(join(tmpdir(), 'agent-receipt-real-'));
+    dirs.push(real);
+    writeFileSync(join(real, 'already.txt'), 'safe\n');
+    const linkRoot = initRepo();
+    const outLink = join(linkRoot, '.agent-receipt', 'receipts');
+    rmSync(outLink, { recursive: true, force: true });
+    symlinkSync(real, outLink);
+    const through = cliResult(linkRoot, ['session', 'import', exported.packagePath, '--json']);
+    assert.equal(through.code, 2, through.out + through.err);
+    assert.match(parseJson(through.out).reason, /symlink/);
+    assert.equal(readFileSync(join(real, 'already.txt'), 'utf8'), 'safe\n');
+    assert.deepEqual(readdirSync(real).sort(), ['already.txt']);
+  });
+
+  it('fails closed on oversized session files and a mid-copy failure', () => {
+    const dir = initRepo();
+    const { parent } = sessionPair(dir, 'sess-huge', 'hq-host');
+    const fd = openSync(parent.path, 'w');
+    try {
+      ftruncateSync(fd, 700 * 1024 * 1024);
+    } finally {
+      closeSync(fd);
+    }
+    const huge = cliResult(dir, ['session', 'export', 'sess-huge', '--json']);
+    assert.equal(huge.code, 2, huge.out + huge.err);
+    assert.match(huge.out, /over the/);
+    assert.doesNotMatch(huge.out + huge.err, /Cannot create a string/);
+    assert.equal(parseJson(huge.out).written, false);
+    assert.equal(existsSync(join(dir, '.agent-receipt', 'sess-huge.session')), false);
+
+    const small = initRepo();
+    sessionPair(small, 'sess-cap', 'hq-host');
+    const capped = cliResult(small, [
+      'session', 'export', 'sess-cap', '--max-receipt-bytes', '64', '--json',
+    ]);
+    assert.equal(capped.code, 2, capped.out + capped.err);
+    assert.match(capped.out, /over the 64 byte limit/);
+    assert.equal(parseJson(capped.out).written, false);
+
+    const side = initRepo();
+    const sidePair = sessionPair(side, 'sess-sidecap');
+    writeFileSync(sidePair.parent.path.replace(/\.md$/, '.sig.json'), 'x'.repeat(400));
+    const sideCap = cliResult(side, [
+      'session', 'export', 'sess-sidecap', '--max-sidecar-bytes', '10', '--json',
+    ]);
+    assert.equal(sideCap.code, 2, sideCap.out + sideCap.err);
+    assert.match(sideCap.out, /over the 10 byte limit/);
+    assert.doesNotMatch(sideCap.out + sideCap.err, /Cannot create a string/);
+    assert.equal(existsSync(join(side, '.agent-receipt', 'sess-sidecap.session')), false);
+
+    const source = initRepo();
+    sessionPair(source, 'sess-manifest-cap');
+    const pkg = exportSession(source, 'sess-manifest-cap');
+    const dest = initRepo();
+    const manifestCap = cliResult(dest, [
+      'session', 'import', pkg.packagePath, '--max-manifest-bytes', '32', '--json',
+    ]);
+    assert.equal(manifestCap.code, 2, manifestCap.out + manifestCap.err);
+    assert.match(manifestCap.out, /over the 32 byte limit/);
+    assert.equal(parseJson(manifestCap.out).written, false);
+    assert.equal(existsSync(join(dest, '.agent-receipt', 'receipts')), false);
+
+    const stageDest = initRepo();
+    const out = join(stageDest, '.agent-receipt', 'receipts');
+    const before = existsSync(out) ? readdirSync(out).sort() : [];
+    const failed = cmdSessionImport(stageDest, pkg.packagePath, { failAfterStageCopies: 1 });
+    assert.equal(failed.exitCode, 2);
+    assert.match(failed.reason, /simulated mid-copy failure/);
+    assert.equal(failed.written, false);
+    const after = existsSync(out) ? readdirSync(out) : [];
+    assert.deepEqual(after.filter((name) => !name.startsWith('.import-staging-')).sort(), before);
+    assert.equal(after.some((name) => name.startsWith('.import-staging-')), false);
+  });
+
+  it('prune deletes the sidecar of each receipt it removes', () => {
+    const dir = initRepo();
+    cli(dir, ['keygen']);
+    commitFile(dir, 'one.txt', 'one\n');
+    wrapJson(dir, ['--sign', '--agent', 'a', '--message', 'one']);
+    commitFile(dir, 'two.txt', 'two\n');
+    wrapJson(dir, ['--sign', '--agent', 'b', '--message', 'two']);
+    const out = join(dir, '.agent-receipt', 'receipts');
+    const mds = readdirSync(out).filter((name) => name.endsWith('.md') && !name.endsWith('.prove.md'));
+    assert.equal(mds.length, 2);
+    for (const name of mds) {
+      assert.equal(existsSync(join(out, name.replace(/\.md$/, '.sig.json'))), true);
+    }
+    const stray = join(out, 'keep-me.txt');
+    writeFileSync(stray, 'keep\n');
+    const pruned = cliResult(dir, ['prune', '--max-count', '1', '--force', '--json']);
+    assert.equal(pruned.code, 0, pruned.out + pruned.err);
+    const body = parseJson(pruned.out);
+    assert.equal(body.deleted.length, 1);
+    const gone = basename(body.deleted[0].path);
+    assert.equal(existsSync(join(out, gone)), false);
+    assert.equal(existsSync(join(out, gone.replace(/\.md$/, '.sig.json'))), false);
+    const kept = mds.filter((name) => name !== gone);
+    assert.equal(kept.length, 1);
+    assert.equal(existsSync(join(out, kept[0])), true);
+    assert.equal(existsSync(join(out, kept[0].replace(/\.md$/, '.sig.json'))), true);
+    assert.equal(readFileSync(stray, 'utf8'), 'keep\n');
   });
 });

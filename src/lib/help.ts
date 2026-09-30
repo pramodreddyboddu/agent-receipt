@@ -535,7 +535,7 @@ Examples:
 
 Usage:
   agent-receipt session <id> [--json] [--cwd <path>]
-  agent-receipt session export <id> [--out <dir>] [--include-host] [--json]
+  agent-receipt session export <id> [--out <dir>] [--include-host] [--resign] [--json]
   agent-receipt session pack <id>                  # alias of export
   agent-receipt session import <packageDir> [--dry-run] [--json] [--require-sig]
   agent-receipt session merge <packageDir>         # alias of import
@@ -584,13 +584,27 @@ is written.
 The package contains \`session-manifest.json\`, \`receipts/<basename>.md\`
 for each receipt, and \`receipts/<basename>.sig.json\` when a sidecar was
 copied or re-signed. See \`docs/session-package.schema.json\`.
-Host is masked as \`[REDACTED]\` unless \`--include-host\`. Session, parent,
-and agent stay. A masked host re-hashes the receipt. A matching source
-sidecar is copied when the hash is unchanged. A rewrite is re-signed when
-local keys load, and left unsigned (no stale sidecar) when they do not.
-When keys load, \`session-manifest.sig.json\` is the same Ed25519
+Unless \`--include-host\`, export uses share's redaction function: secret
+values are masked, a nested receipt or index diff body is replaced with
+\`[REDACTED — nested receipt/index body omitted]\`, and the header Host
+line becomes \`[REDACTED]\`. Session, parent, and agent stay. The receipt
+is re-hashed. \`--include-host\` keeps the original bytes, including Host
+and any secrets. \`share --include-host\` still masks secrets and nested
+bodies; only session export's flag skips the pipeline.
+A valid source sidecar is copied when the bytes do not change. A rewrite
+whose sidecar fingerprint is the local key is re-signed when keys load,
+and left unsigned (no stale sidecar) when they do not. A rewrite whose
+sidecar was signed by a different key exits 2 and writes nothing.
+\`--resign\` re-signs with the local key, prints both fingerprints on
+stderr, and sets manifest \`resignedBy\`. \`originalFingerprint\` is the
+source sidecar fingerprint, or null. \`fingerprint\` is the packaged
+sidecar. When keys load, \`session-manifest.sig.json\` is the same Ed25519
 SignatureDocument as \`sign\`, over the UTF-8 hex sha256 of the manifest
-bytes. Missing keys omit that file and do not exit 2.
+bytes, including those fingerprint fields. Missing keys omit that file
+and do not exit 2.
+A receipt over 32 MiB, a sidecar over 256 KiB, or a manifest over 8 MiB
+exits 2 before the file is read. \`--max-receipt-bytes\`,
+\`--max-sidecar-bytes\`, and \`--max-manifest-bytes\` raise those caps.
 Manifest \`warnings\` may include \`orphan\`, \`cycle\`,
 \`cross-session-parent\`, \`parent-unverified\`, and \`missing-session\`.
 Those receipts are still packed. A listed receipt that fails verify
@@ -604,11 +618,22 @@ Import (\`session import\`, alias \`session merge\`):
 Verifies the package, then copies each receipt and its sidecar into
 outDir. The basename is kept when it is a safe \`*.md\` name
 (\`receipts/foo.md\` → \`foo.md\`). Same id and same canonical sha256 skips
-(idempotent). Same id, or the same basename, with a different sha256
-refuses the whole import and writes nothing. \`--dry-run\` plans the copy
-and writes nothing. \`--require-sig\` requires a valid receipt sidecar
-and a valid manifest signature. When a known-keys allowlist is active,
-those fingerprints must be trusted.
+(idempotent) and does not rewrite a sidecar. Same id, or the same
+basename compared case-insensitively, with a different sha256 refuses
+the whole import and writes nothing. A stray \`.sig.json\` is a conflict
+unless the bytes are identical. An unreadable destination, including
+mode 0200, is a conflict. A symlink at the destination or at a parent
+inside outDir, including a dangling symlink and a symlink outDir, exits
+2 and writes nothing. Files are staged in a directory inside outDir and
+published with an exclusive no-overwrite link. A name that already
+exists is left in place. A failed copy removes the stage and any file
+this import published.
+\`--dry-run\` plans the copy and writes nothing. \`--json\` files[] include
+\`fingerprint\`, \`originalFingerprint\`, and \`resignedBy\`.
+\`--require-sig\` requires a valid receipt sidecar and a valid manifest
+signature. When a known-keys allowlist is active, those fingerprints
+must be trusted. The same 32 MiB / 256 KiB / 8 MiB caps as export apply,
+and the same \`--max-*-bytes\` flags raise them. \`stat\` runs first.
 Malformed manifest (kind, version, required fields, lowercase hex) exits 1.
 A file hash mismatch, a receipt that fails verify, a canonical sha256
 that does not match the manifest, a present invalid sidecar, or an
@@ -616,8 +641,8 @@ invalid manifest signature exits 2. An absent receipt sidecar is fine
 when the entry is unsigned. An absent manifest signature is fine unless
 \`--require-sig\` is set.
 \`--json\` prints one object (command \`session-import\`) with copied,
-skipped, conflicts, files[] (action copy, skip, or conflict), and
-manifestSig. Human output prints VERIFIED or FAILED, the paths that
+skipped, conflicts, files[] (action copy, skip, conflict, or symlink),
+and manifestSig. Human output prints VERIFIED or FAILED, the paths that
 would be written or were written, and the skip and conflict counts.
 Import does not append the audit log and does not add an index row.
 \`history\` keeps using the index, so a fresh import is absent there
@@ -1139,7 +1164,8 @@ A receipt is kept only when it satisfies every limit that is set
                  (a receipt exactly N days old is kept)
 
 Both limits together: a file is kept only if it is inside the count AND
-young enough. Sibling \`<receipt>.json\` is deleted with the markdown.
+young enough. Sibling \`<receipt>.json\` and \`<receipt>.sig.json\` are
+deleted with the markdown. A symlink sidecar is refused, not followed.
 \`index.json\` is rewritten (temp file + rename) so removed paths drop out.
 Rows that already point at missing files under outDir are dropped too.
 \`audit.jsonl\` and \`SETUP.md\` are never deleted. Symlinks are skipped.
@@ -1230,8 +1256,11 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
   link          Multi-agent linking (optional). Always INFO, including
                 under --strict. Names --session, --parent, --agent, --host,
                 and wrap --link. Host stays off unless you opt in. share
-                and session export mask host unless --include-host.
+                masks secrets, nested receipt bodies, and host unless
+                --include-host. session export uses that same redaction
+                unless --include-host, which keeps the original bytes.
                 session export / session import move a whole session tree.
+                Import refuses a symlink destination.
                 Not a CA.
   git-clean     working tree clean? Dirty is a warning, not a failure
   cursor        init --cursor rule present?

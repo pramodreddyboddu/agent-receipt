@@ -632,8 +632,9 @@ function linkCheck(): DoctorCheck {
     status: 'info',
     detail:
       'multi-agent linking is opt-in (--session, --parent, --agent, --host, wrap --link). ' +
-      'Host is omitted unless --host or AGENT_RECEIPT_HOST. share and session export mask host unless --include-host. ' +
-      'session export writes a portable *.session/ package; session import merges it into outDir. Not a CA.',
+      'Host is omitted unless --host or AGENT_RECEIPT_HOST. share masks secrets, nested receipt bodies, and host unless --include-host. ' +
+      'session export uses that same redaction unless --include-host, which keeps the original bytes. ' +
+      'session export writes a portable *.session/ package; session import merges it into outDir and refuses symlink destinations. Not a CA.',
   };
 }
 

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { assertReadableSize } from '../lib/byte-limit.js';
 import { VERSION } from '../lib/version.js';
 import {
   WARN_CROSS_SESSION,
@@ -12,6 +13,7 @@ import {
   readLocalReceipt,
   receiptIntegrity,
   validateLegacySession,
+  type ReadReceiptOptions,
   type SessionNode,
 } from '../lib/link.js';
 
@@ -87,9 +89,13 @@ export interface CollectedSession {
  * fails verify adds `parent-unverified`. A parent in another local session
  * adds `cross-session-parent`.
  */
-export function collectSession(cwd: string, sessionId: string): CollectedSession {
+export function collectSession(
+  cwd: string,
+  sessionId: string,
+  opts?: ReadReceiptOptions,
+): CollectedSession {
   const session = validateLegacySession(sessionId);
-  const local = indexLocalReceipts(cwd);
+  const local = indexLocalReceipts(cwd, opts);
   const scanned: Array<{
     id: string;
     parent: string | null;
@@ -102,6 +108,9 @@ export function collectSession(cwd: string, sessionId: string): CollectedSession
   }> = [];
 
   for (const filePath of listOutDirReceipts(cwd)) {
+    if (opts?.maxBytes !== undefined) {
+      assertReadableSize(filePath, opts.maxBytes, `receipt ${filePath}`, '--max-receipt-bytes');
+    }
     let text: string;
     try {
       text = readFileSync(filePath, 'utf8');
@@ -109,7 +118,7 @@ export function collectSession(cwd: string, sessionId: string): CollectedSession
       continue;
     }
     const meta = parseLinkMeta(text);
-    const rec = readLocalReceipt(filePath);
+    const rec = readLocalReceipt(filePath, opts);
     if (!rec) continue;
     scanned.push({
       id: rec.id,
