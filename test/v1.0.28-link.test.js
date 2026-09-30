@@ -80,29 +80,47 @@ function latestReceipt(dir) {
 }
 
 /**
- * 1.0.28 writer header shape: ## What to review, then ## Summary, then
- * ## Session with Version/Timestamp/Workspace. That is the only position
- * the detector accepts as link-era.
+ * Minimal 1.0.28 writer header. Field lines are placed in writer order so
+ * the structural grammar accepts the receipt as link-era.
  */
 function linkEraBody(fieldLines) {
-  return [
+  const fields = {};
+  for (const line of fieldLines) {
+    const match = line.match(/^- \*\*([^*]+)\*\*: (.*)$/);
+    if (match) fields[match[1]] = match[2];
+  }
+  const timestamp = fields.Timestamp || '2026-09-29T00:00:00.000Z';
+  const lines = [
+    '# Agent Receipt',
+    '',
+    '> **TL;DR** ci · 2026-09-29T00:00:00.000Z · main @ abcdef012345 · 0 files · +0/\u22120 · risk none',
+    '',
     '## What to review',
     '',
-    '_Nothing flagged._',
+    '_Nothing flagged. Skim the file list if this session should have been a no-op._',
     '',
     '## Summary',
     '',
     '| Metric | Value |',
     '|--------|-------|',
     '| Files | 0 |',
+    '| Lines | +0 / \u22120 |',
+    '| Commits | 0 |',
+    '| Risk | none |',
     '',
     '## Session',
     '',
     '- **Version**: 1.0.28',
-    ...fieldLines,
-    '- **Workspace**: `/tmp`',
-    '',
-  ].join('\n');
+    `- **Timestamp**: ${timestamp}`,
+    '- **Branch**: `main`',
+    '- **HEAD**: `abcdef0123456789abcdef0123456789abcdef01`',
+    '- **Range**: `HEAD~0..HEAD` (`abcdef012345` \u2192 HEAD)',
+  ];
+  for (const label of ['Id', 'Agent', 'Session', 'Parent', 'Host']) {
+    if (fields[label]) lines.push(`- **${label}**: ${fields[label]}`);
+  }
+  lines.push('- **Workspace**: `/tmp`', '', '## Files changed', '', '_No file changes in range._', '');
+  return lines.join('\n');
 }
 
 describe('v1.0.28 multi-agent receipt linking', () => {
@@ -1274,5 +1292,257 @@ _No file changes in range._
     const real = cliResult(dir, ['session', 'real-session', '--json']);
     assert.equal(real.code, 1);
     assert.deepEqual(parseJson(real.out).receipts, []);
+  });
+
+  it('reads no link metadata from 1.0.16 and 1.0.27 fence-trick receipts', () => {
+    const dir = initRepo();
+    const outDir = join(dir, '.agent-receipt', 'receipts');
+    mkdirSync(outDir, { recursive: true });
+    const versions = ['v1.0.16', 'v1.0.27'];
+    const names = [
+      'fence-trick',
+      'fence-trick-blanks',
+      'fence-trick-cr',
+      'fence-trick-js',
+      'fence-trick-tilde',
+      'fence-trick-id-todo',
+      'fence-trick-host',
+    ];
+    for (const version of versions) {
+      for (const name of names) {
+        const mdPath = join(root, 'test', 'fixtures', version, `${name}.md`);
+        const sigPath = join(root, 'test', 'fixtures', version, `${name}.sig.json`);
+        const label = `${version}/${name}`;
+        const text = readFileSync(mdPath, 'utf8');
+        const meta = parseLinkMeta(text);
+        assert.equal(meta.id, null, label);
+        assert.equal(meta.session, null, label);
+        assert.equal(meta.parent, null, label);
+        assert.equal(meta.host, null, label);
+        assert.equal(meta.agent, null, label);
+        for (const args of [
+          ['verify', mdPath],
+          ['verify', '--require-sig', mdPath],
+          ['prove', mdPath],
+          ['prove', mdPath, '--json'],
+        ]) {
+          const result = cliResult(dir, args);
+          assert.equal(result.code, 0, `${label} ${args.join(' ')}\n${result.out}\n${result.err}`);
+        }
+        const proved = parseJson(cli(dir, ['prove', mdPath, '--json']));
+        assert.equal(proved.exitCode, 0, label);
+        assert.equal('session' in proved, false, label);
+        assert.equal('parent' in proved, false, label);
+        assert.equal(proved.agent, 'legacy', label);
+
+        const unsigned = join(dir, `${version}-${name}.md`);
+        copyFileSync(mdPath, unsigned);
+        assert.equal(cliResult(dir, ['verify', unsigned]).code, 0, label);
+        assert.equal(cliResult(dir, ['prove', unsigned]).code, 0, label);
+        const unsignedSig = cliResult(dir, ['verify', '--require-sig', unsigned]);
+        assert.equal(unsignedSig.code, 2, `${label} unsigned require-sig\n${unsignedSig.out}\n${unsignedSig.err}`);
+        assert.match(unsignedSig.out + unsignedSig.err, /signature absent/);
+
+        copyFileSync(mdPath, join(outDir, `${version}-${name}.md`));
+        copyFileSync(sigPath, join(outDir, `${version}-${name}.sig.json`));
+      }
+    }
+    const listed = cliResult(dir, ['session', 's-spoof', '--json']);
+    assert.equal(listed.code, 1);
+    assert.deepEqual(parseJson(listed.out).receipts, []);
+    const real = cliResult(dir, ['session', 'real-session', '--json']);
+    assert.equal(real.code, 1);
+    assert.deepEqual(parseJson(real.out).receipts, []);
+  });
+
+  it('keeps real 1.0.28 linked receipts linked across writer shapes', () => {
+    const dir = initRepo();
+    commitFile(dir, 'a.txt', 'a\n');
+    const fenceMessage = [
+      'x',
+      '```',
+      '## Session',
+      '- **Session**: s-spoof',
+      '- **Id**: r-00000000000000bb',
+      '```',
+      'still open',
+      '```',
+      '## What to review',
+    ].join('\n');
+    const captured = cliResult(dir, [
+      'capture',
+      '--session',
+      'shape-fence',
+      '--agent',
+      'ci',
+      '--message',
+      fenceMessage,
+    ]);
+    assert.equal(captured.code, 0, captured.err);
+    const fenced = latestReceipt(dir);
+    assert.equal(parseLinkMeta(fenced.md).session, 'shape-fence');
+    assert.equal(parseSessionHeader(fenced.md).Message, fenceMessage);
+    assert.equal(cliResult(dir, ['verify', fenced.path]).code, 0);
+
+    const unclosed = cliResult(dir, [
+      'capture',
+      '--session',
+      'shape-open',
+      '--agent',
+      'ci',
+      '--message',
+      'hello\n```\n## Session\n- **Session**: s-spoof\n',
+    ]);
+    assert.equal(unclosed.code, 0, unclosed.err);
+    assert.equal(parseLinkMeta(latestReceipt(dir).md).session, 'shape-open');
+    assert.equal(cliResult(dir, ['verify']).code, 0);
+
+    const separated = cliResult(dir, [
+      'capture',
+      '--session',
+      'shape-sep',
+      '--agent',
+      'ci',
+      '--message',
+      'left\u2028right',
+    ]);
+    assert.equal(separated.code, 0, separated.err);
+    const sepMd = latestReceipt(dir).md;
+    assert.equal(parseLinkMeta(sepMd).session, 'shape-sep');
+    assert.equal(parseSessionHeader(sepMd).Message, 'left\nright');
+    assert.match(sepMd, /^> left$/m);
+    assert.match(sepMd, /^> right$/m);
+
+    const crlfPath = join(dir, 'crlf.md');
+    writeFileSync(crlfPath, fenced.md.replace(/\n/g, '\r\n'));
+    assert.equal(parseLinkMeta(readFileSync(crlfPath, 'utf8')).session, 'shape-fence');
+    assert.equal(cliResult(dir, ['verify', crlfPath]).code, 0);
+
+    commitFile(dir, 'spoof-diff.txt', 'before\n```\n## Session\n- **Session**: s-spoof\n```\nafter\n');
+    const diffed = cliResult(dir, [
+      'capture',
+      '--commits',
+      '1',
+      '--session',
+      'shape-diff',
+      '--agent',
+      'ci',
+      '--message',
+      'diff fences',
+    ]);
+    assert.equal(diffed.code, 0, diffed.err);
+    const diffMd = latestReceipt(dir).md;
+    assert.match(diffMd, /## Session/);
+    assert.equal(parseLinkMeta(diffMd).session, 'shape-diff');
+    assert.equal(cliResult(dir, ['verify']).code, 0);
+
+    const fenceName = '```';
+    writeFileSync(join(dir, fenceName), 'fence-name\n');
+    git(dir, ['add', '--', fenceName]);
+    git(dir, ['commit', '-m', 'fence name']);
+    const named = cliResult(dir, [
+      'capture',
+      '--commits',
+      '1',
+      '--session',
+      'shape-name',
+      '--host',
+      'ci-host',
+      '--agent',
+      'ci',
+      '--message',
+      'file named fence',
+    ]);
+    assert.equal(named.code, 0, named.err);
+    const namedMd = latestReceipt(dir).md;
+    assert.equal(parseLinkMeta(namedMd).session, 'shape-name');
+    assert.equal(parseLinkMeta(namedMd).host, 'ci-host');
+    const statRows = namedMd.split('## Diff stat')[1].split('## Risk findings')[0].split('\n');
+    let open = false;
+    let toggles = 0;
+    for (const line of statRows) {
+      if (line.startsWith('```') || line.startsWith('~~~')) {
+        open = !open;
+        toggles += 1;
+      }
+    }
+    assert.equal(toggles, 2, statRows.join('\n'));
+    assert.equal(open, false);
+    assert.equal(cliResult(dir, ['verify']).code, 0);
+
+    writeFileSync(join(dir, 'large.txt'), `${'line\n'.repeat(4000)}end\n`);
+    git(dir, ['add', 'large.txt']);
+    git(dir, ['commit', '-m', 'large']);
+    const large = cliResult(dir, [
+      'capture',
+      '--commits',
+      '1',
+      '--session',
+      'shape-large',
+      '--agent',
+      'ci',
+      '--message',
+      'large diff',
+    ]);
+    assert.equal(large.code, 0, large.err);
+    assert.equal(parseLinkMeta(latestReceipt(dir).md).session, 'shape-large');
+    assert.equal(cliResult(dir, ['verify']).code, 0);
+
+    cli(dir, ['keygen']);
+    commitFile(dir, 'tree.txt', 'tree\n');
+    const tree = cliResult(dir, [
+      'wrap',
+      '--link',
+      '--session',
+      'new',
+      '--agent',
+      'root',
+      '--sign',
+      '--message',
+      'root',
+      '--',
+      process.execPath,
+      bin,
+      'wrap',
+      '--link',
+      '--cwd',
+      dir,
+      '--agent',
+      'mid',
+      '--sign',
+      '--message',
+      'mid',
+      '--',
+      process.execPath,
+      bin,
+      'wrap',
+      '--cwd',
+      dir,
+      '--agent',
+      'leaf',
+      '--sign',
+      '--message',
+      'leaf',
+    ]);
+    assert.equal(tree.code, 0, tree.out + tree.err);
+    const bodies = readdirSync(join(dir, '.agent-receipt', 'receipts'))
+      .filter((name) => name.endsWith('.md') && !name.endsWith('.prove.md'))
+      .map((name) => readFileSync(join(dir, '.agent-receipt', 'receipts', name), 'utf8'));
+    const rootMd = bodies.find((md) => field(md, 'Agent') === 'root');
+    const midMd = bodies.find((md) => field(md, 'Agent') === 'mid');
+    const leafMd = bodies.find((md) => field(md, 'Agent') === 'leaf');
+    assert.ok(rootMd && midMd && leafMd);
+    const session = field(rootMd, 'Session');
+    assert.equal(field(midMd, 'Session'), session);
+    assert.equal(field(leafMd, 'Session'), session);
+    assert.equal(field(midMd, 'Parent'), field(rootMd, 'Id'));
+    assert.equal(field(leafMd, 'Parent'), field(midMd, 'Id'));
+    const listed = parseJson(cli(dir, ['session', session, '--json']));
+    assert.equal(listed.exitCode, 0);
+    assert.equal(listed.receipts.length, 3);
+    assert.equal(listed.receipts.every((row) => row.verified === true), true);
+    const spoofed = cliResult(dir, ['session', 's-spoof', '--json']);
+    assert.equal(spoofed.code, 1);
+    assert.deepEqual(parseJson(spoofed.out).receipts, []);
   });
 });

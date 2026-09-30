@@ -7,15 +7,12 @@
  *
  * These fields are written into the hashed Markdown body, inside the
  * `## Session` block the writer already emits. A receipt is 1.0.28+ only
- * when the file has exactly one unfenced writer block and that block sits
- * where this writer puts it. A writer block is a `## Session` whose previous
- * unfenced heading is `## Summary`, with Version, Timestamp, and Workspace
- * in that section. The canonical position is the heading before that
- * `## Summary` being `## What to review`. Zero blocks, two or more, or one
- * block anywhere else are pre-1.0.28: no link metadata, and verify uses
- * 1.0.27 rules. The 1.0.28 writer quotes every message line in the TL;DR
- * and indents every header continuation, so a message cannot add a second
- * block. Nothing is written when no link flag and no
+ * when the bytes from the title line through the end of that block match
+ * `matchV1028WriterSession` — the 1.0.28 writer grammar, with fence
+ * awareness off. Anything else is pre-1.0.28: no link metadata, and verify
+ * uses 1.0.27 rules. The 1.0.28 writer quotes every message line in the
+ * TL;DR and indents every header continuation, so a message cannot put a
+ * raw heading in that region. Nothing is written when no link flag and no
  * AGENT_RECEIPT_SESSION / PARENT / AGENT / HOST env is set.
  *
  * `--agent` stays the 1.0.27 free-form label (spaces allowed). `--session`
@@ -231,87 +228,199 @@ export function listOutDirReceipts(cwd: string): string[] {
     });
 }
 
-interface HeadingAt {
-  index: number;
-  text: string;
-}
-
 function markdownLines(markdown: string): string[] {
   return markdown.replace(/\r\n/g, '\n').split('\n');
 }
 
-/** Headings outside fenced code blocks. Diff bodies live inside fences. */
-function unfencedHeadings(lines: string[]): HeadingAt[] {
-  const headings: HeadingAt[] = [];
-  let fence = false;
-  for (let i = 0; i < lines.length; i++) {
+const NOTHING_FLAGGED =
+  '_Nothing flagged. Skim the file list if this session should have been a no-op._';
+/** Inserted by redact into the session block, after Workspace. */
+const REDACTED_NOTICE =
+  '- **Redacted**: yes — high/secret findings masked for safer sharing';
+const NEXT_WRITER_HEADINGS = new Set([
+  '## Notable changes',
+  '## Commits',
+  '## Files changed',
+]);
+
+// `s` so a CR or U+2028 inside one physical line still matches. Those are
+// not line endings here; lines were already split on LF.
+const REVIEW_ITEM_RE =
+  /^(\d+)\. \*\*(high|medium|notable)\*\* `[^`]+` \u2014 .*$/s;
+const FILES_ROW_RE = /^\| Files \| \d+( \([^)\n]+\))? \|$/;
+const LINES_ROW_RE = /^\| Lines \| \+\d+ \/ \u2212\d+ \|$/;
+const COMMITS_ROW_RE = /^\| Commits \| \d+ \|$/;
+const RISK_ROW_RE =
+  /^\| Risk \| (?:none|\d+ \(high \d+, medium \d+, low \d+\)) \|$/;
+const MAX_SEV_ROW_RE = /^\| Max severity \| \*\*(?:high|medium|low)\*\* \|$/;
+const VERSION_RE = /^- \*\*Version\*\*: \d+\.\d+\.\d+$/;
+const TIMESTAMP_RE = /^- \*\*Timestamp\*\*: \S.*$/s;
+const BRANCH_RE = /^- \*\*Branch\*\*: `[^`]*`$/;
+const HEAD_RE = /^- \*\*HEAD\*\*: `[^`]*`$/;
+const REMOTE_RE = /^- \*\*Remote\*\*: .+$/s;
+const RANGE_COMMITTED_RE =
+  /^- \*\*Range\*\*: `[^`]*` \(`[^`]*` \u2192 HEAD\)$/;
+const RANGE_DIRTY_RE =
+  /^- \*\*Range\*\*: `[^`]*` _\(working tree; not committed\)_$/;
+const SNAPSHOT_RE =
+  /^- \*\*Snapshot\*\*: \*\*uncommitted\*\* \(staged \+ unstaged \+ untracked\)$/;
+const ID_RE = /^- \*\*Id\*\*: .+$/s;
+const AGENT_RE = /^- \*\*Agent\*\*: .+$/s;
+const SESSION_RE = /^- \*\*Session\*\*: .+$/s;
+const PARENT_RE = /^- \*\*Parent\*\*: .+$/s;
+const HOST_RE = /^- \*\*Host\*\*: .+$/s;
+const MESSAGE_RE = /^- \*\*Message\*\*: .*$/s;
+const WORKSPACE_RE = /^- \*\*Workspace\*\*: `[^`]*`$/;
+
+/**
+ * Split a receipt the way the 1.0.28 writer ended lines.
+ *
+ * The writer joins with `\n`. A file that is entirely CRLF is that same
+ * document with the line ending translated, so those pairs become `\n`.
+ * A bare CR (CR-only file, or a CR that is not part of a CRLF pair mixed
+ * with real CRLF) is not that writer. A single `\r\n` inside an otherwise
+ * LF file is the `## What to review\r` message trick: reject it here so
+ * the heading does not become a clean `## What to review` after a global
+ * CRLF strip. An embedded CR that is not a line ending (a 1.0.27 agent
+ * value `pre\rmid`) stays inside its LF line.
+ */
+function writerGrammarLines(markdown: string): string[] | null {
+  const hasCrlf = markdown.includes('\r\n');
+  const hasLoneCr = /\r(?!\n)/.test(markdown);
+  const hasLoneLf = /(^|[^\r])\n/.test(markdown);
+  if (hasLoneCr) {
+    if (!markdown.includes('\n') || hasCrlf) return null;
+    return markdown.split('\n');
+  }
+  if (hasCrlf) {
+    if (hasLoneLf) return null;
+    return markdown.replace(/\r\n/g, '\n').split('\n');
+  }
+  return markdown.split('\n');
+}
+
+/**
+ * Session-field lines of a 1.0.28 writer header, or null when the file is
+ * not that header.
+ *
+ * Fence awareness is deliberately off from the title line through the end
+ * of `## Session`. A 1.0.16/1.0.27 writer quotes only the first message
+ * line and emits the rest raw, so a message can carry a fake
+ * `## What to review` / `## Summary` / `## Session` whose trailing ```
+ * opens a fence. That fence hides the real header and the second copy of
+ * the message; the second copy's ``` closes it. A fence-aware scan then
+ * sees exactly one block in the writer's position and links the receipt.
+ * Tracking fences would accept that spoof. This function does not track
+ * them. It requires the exact bytes `formatMarkdown` emits: the title,
+ * only TL;DR quotes and blank lines, the first `## What to review` with
+ * the writer's review body, `## Summary` with the writer's metric table,
+ * `## Session` fields in writer order, then the heading the writer emits
+ * next (`## Notable changes`, `## Commits`, or `## Files changed`). A raw
+ * line, a fence (` ``` ` or `~~~`, any info string), an extra heading, a
+ * CR-only or mixed line ending, or an out-of-order field means
+ * pre-1.0.28: no link metadata. The 1.0.28 writer quotes every message
+ * line, so its own header satisfies this and a message cannot insert a
+ * raw heading in the region. Older writers always leave those raw lines,
+ * so they cannot satisfy it.
+ */
+export function matchV1028WriterSession(markdown: string): string[] | null {
+  const lines = writerGrammarLines(markdown);
+  if (!lines) return null;
+  let i = 0;
+  if (lines[i] !== '# Agent Receipt') return null;
+  i += 1;
+  while (lines[i] === '') i += 1;
+  if (!/^> \*\*TL;DR\*\* \S/.test(lines[i] ?? '')) return null;
+  while (i < lines.length && lines[i] !== '## What to review') {
     const line = lines[i];
-    if (line.startsWith('```')) {
-      fence = !fence;
+    // `>` is the writer's blank quote. `> ` is a TL;DR or message line.
+    if (line === '' || line === '>' || line.startsWith('> ')) {
+      i += 1;
       continue;
     }
-    if (fence) continue;
-    if (line.startsWith('## ')) headings.push({ index: i, text: line });
+    return null;
   }
-  return headings;
-}
-
-function sectionBody(lines: string[], start: number, headings: HeadingAt[]): string[] {
-  const next = headings.find((heading) => heading.index > start);
-  const end = next ? next.index : lines.length;
-  return lines.slice(start + 1, end);
-}
-
-function hasWriterMarkers(body: string[]): boolean {
-  const has = (prefix: string) => body.some((line) => line.startsWith(prefix));
-  return has('- **Version**:') && has('- **Timestamp**:') && has('- **Workspace**:');
-}
-
-interface WriterBlock {
-  summaryIndex: number;
-  body: string[];
-}
-
-/**
- * Every unfenced `## Summary` → `## Session` section that carries Version,
- * Timestamp, and Workspace. Fenced lines (diffs, a closed fence) are not
- * blocks. The scan is the whole file, not the first hit.
- */
-function findWriterBlocks(lines: string[], headings: HeadingAt[]): WriterBlock[] {
-  const blocks: WriterBlock[] = [];
-  for (const heading of headings) {
-    if (heading.text !== '## Session') continue;
-    const previous = [...headings].reverse().find((item) => item.index < heading.index);
-    if (previous?.text !== '## Summary') continue;
-    const body = sectionBody(lines, heading.index, headings);
-    if (!hasWriterMarkers(body)) continue;
-    blocks.push({ summaryIndex: previous.index, body });
+  if (lines[i] !== '## What to review') return null;
+  i += 1;
+  if (lines[i] !== '') return null;
+  i += 1;
+  if (lines[i] === NOTHING_FLAGGED) {
+    i += 1;
+  } else {
+    let n = 1;
+    while (REVIEW_ITEM_RE.test(lines[i] ?? '')) {
+      if (Number((lines[i].match(/^(\d+)/) ?? [])[1]) !== n) return null;
+      n += 1;
+      i += 1;
+    }
+    if (n === 1) return null;
   }
-  return blocks;
+  if (lines[i] !== '') return null;
+  i += 1;
+  if (lines[i] !== '## Summary') return null;
+  i += 1;
+  if (lines[i] !== '') return null;
+  i += 1;
+  if (lines[i] !== '| Metric | Value |') return null;
+  i += 1;
+  if (lines[i] !== '|--------|-------|') return null;
+  i += 1;
+  if (!FILES_ROW_RE.test(lines[i] ?? '')) return null;
+  i += 1;
+  if (!LINES_ROW_RE.test(lines[i] ?? '')) return null;
+  i += 1;
+  if (!COMMITS_ROW_RE.test(lines[i] ?? '')) return null;
+  i += 1;
+  if (!RISK_ROW_RE.test(lines[i] ?? '')) return null;
+  i += 1;
+  if (MAX_SEV_ROW_RE.test(lines[i] ?? '')) i += 1;
+  if (lines[i] !== '') return null;
+  i += 1;
+  if (lines[i] !== '## Session') return null;
+  i += 1;
+  if (lines[i] !== '') return null;
+  i += 1;
+
+  const bodyStart = i;
+  const take = (re: RegExp): boolean => {
+    if (re.test(lines[i] ?? '')) {
+      i += 1;
+      return true;
+    }
+    return false;
+  };
+  if (!take(VERSION_RE) || !take(TIMESTAMP_RE) || !take(BRANCH_RE) || !take(HEAD_RE)) {
+    return null;
+  }
+  take(REMOTE_RE);
+  if (take(RANGE_DIRTY_RE)) {
+    if (!take(SNAPSHOT_RE)) return null;
+  } else if (!take(RANGE_COMMITTED_RE)) {
+    return null;
+  }
+  take(ID_RE);
+  take(AGENT_RE);
+  take(SESSION_RE);
+  take(PARENT_RE);
+  take(HOST_RE);
+  if (take(MESSAGE_RE)) {
+    while ((lines[i] ?? '').startsWith('  ')) i += 1;
+  }
+  if (!take(WORKSPACE_RE)) return null;
+  if (lines[i] === REDACTED_NOTICE) i += 1;
+  if (lines[i] !== '') return null;
+  i += 1;
+  if (!NEXT_WRITER_HEADINGS.has(lines[i] ?? '')) return null;
+  return lines.slice(bodyStart, i - 1);
 }
 
 /**
- * The 1.0.28 writer emits `## What to review`, then `## Summary`, then
- * `## Session`. A block anywhere else was not written by that writer.
- */
-function isCanonicalWriterBlock(headings: HeadingAt[], block: WriterBlock): boolean {
-  const before = [...headings].reverse().find((item) => item.index < block.summaryIndex);
-  return before?.text === '## What to review';
-}
-
-/**
- * Body of the writer `## Session` block (heading excluded, next heading
- * excluded). Returned only when the file has exactly one writer block and
- * that block is in the 1.0.28 writer's position. Otherwise null, which
- * callers treat as pre-1.0.28: no link metadata.
+ * Body of the writer `## Session` block when the header matches the 1.0.28
+ * writer grammar. Otherwise null, which callers treat as pre-1.0.28: no
+ * link metadata.
  */
 export function sessionHeaderLines(markdown: string): string[] | null {
-  const lines = markdownLines(markdown);
-  const headings = unfencedHeadings(lines);
-  const blocks = findWriterBlocks(lines, headings);
-  if (blocks.length !== 1) return null;
-  if (!isCanonicalWriterBlock(headings, blocks[0])) return null;
-  return blocks[0].body;
+  return matchV1028WriterSession(markdown);
 }
 
 /**
@@ -356,10 +465,9 @@ function headerFieldMap(body: string[]): Map<string, string> {
 }
 
 /**
- * Link rules apply only to the single canonical writer block. Version is
- * read from that block only. 1.0.28+ is `1.0.28` and any newer
- * major.minor.patch. Any other shape is not link-era, even if some line
- * says `1.0.28`.
+ * Link rules apply only when the writer grammar matched. Version is read
+ * from that block only. 1.0.28+ is `1.0.28` and any newer major.minor.patch.
+ * Any other shape is not link-era, even if some line says `1.0.28`.
  */
 export function isLinkEraVersion(version: string | null | undefined): boolean {
   if (!version) return false;
@@ -406,11 +514,15 @@ export function parseLinkMeta(markdown: string): LinkMeta {
 
 /**
  * True when the markdown is an agent-receipt document, not an arbitrary file.
- * Requires the Session header plus either the writer title or an embedded sha256.
+ * Requires a Session heading and a Version line, plus either the writer title
+ * or an embedded sha256. This is not the link-era grammar: a 1.0.27 receipt
+ * whose message split the header is still a receipt.
  */
 export function isReceiptDocument(markdown: string): boolean {
-  if (!sessionHeaderLines(markdown)) return false;
-  if (markdownLines(markdown).some((line) => line === '# Agent Receipt')) return true;
+  const lines = markdownLines(markdown).map((line) => line.replace(/\r$/, ''));
+  if (!lines.includes('## Session')) return false;
+  if (!lines.some((line) => line.startsWith('- **Version**:'))) return false;
+  if (lines.includes('# Agent Receipt')) return true;
   const embedded = extractEmbeddedHash(markdown);
   return Boolean(embedded && SHA256_RE.test(embedded));
 }

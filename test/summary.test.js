@@ -37,6 +37,27 @@ describe('summary + risk table', () => {
     assert.match(text, /Bin/);
   });
 
+  it('does not let a fence-like file name close the diff-stat block', () => {
+    const lines = formatDiffStatTable([
+      { path: '```', status: 'A', insertions: 1, deletions: 0, binary: false },
+      { path: '```odd.js', status: 'M', insertions: 2, deletions: 1, binary: false },
+      { path: '~~~', status: 'M', insertions: 1, deletions: 0, binary: false },
+      { path: 'src/ok.ts', status: 'M', insertions: 1, deletions: 0, binary: false },
+    ]);
+    let open = false;
+    for (const line of lines) {
+      if (line.startsWith('```') || line.startsWith('~~~')) open = !open;
+    }
+    assert.equal(open, false);
+    const rows = lines.slice(1, -1);
+    assert.equal(rows.length, 5);
+    for (const row of rows.slice(0, -1)) {
+      assert.equal(row.startsWith('```') || row.startsWith('~~~'), false);
+    }
+    assert.match(rows[0], /```/);
+    assert.match(rows[2], /~~~/);
+  });
+
   it('markdown includes risk table and notable section', () => {
     const md = formatMarkdown(
       {
