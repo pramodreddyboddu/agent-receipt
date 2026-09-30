@@ -255,7 +255,9 @@ describe('v1.0.30 signed one-page report', () => {
     assert.match(changelog, /page content does not match signed payload/);
     assert.match(changelog, /88dad95/);
     assert.match(changelog, /985e363/);
-    assert.match(changelog, /on disk differs from the signed payload/);
+    assert.match(changelog, /differs from the signed payload/);
+    assert.match(changelog, /VERIFIED_PAYLOAD_ONLY/);
+    assert.match(changelog, /planted copy/);
     const mirror = readFileSync(join(root, 'docs', 'github-actions-ci.yml'), 'utf8');
     assert.match(mirror, /1\.0\.30/);
     assert.match(mirror, /# v1\.0\.29:/);
@@ -273,8 +275,12 @@ describe('v1.0.30 signed one-page report', () => {
     assert.match(help, /page content does not match signed payload/);
     assert.doesNotMatch(help, /does not cover CSS/);
     assert.match(help, /UNREDACTED/);
-    assert.match(help, /on disk differs from the signed payload/);
-    assert.match(help, /not found locally/);
+    assert.match(help, /differs from the signed payload/);
+    assert.match(help, /VERIFIED_PAYLOAD_ONLY/);
+    assert.match(help, /fails integrity/);
+    assert.match(help, /is a symlink/);
+    assert.match(help, /page has CR line endings/);
+    assert.match(help, /UTF-8 BOM/);
     assert.match(help, /core\.autocrlf/);
     assert.match(help, /renderVersion/);
     assert.match(help, /any valid self-signed page/);
@@ -1161,7 +1167,8 @@ describe('v1.0.30 signed one-page report', () => {
     assert.equal(cliResult(dir, ['verify', receipt]).code, 2);
     const checked = cliResult(dir, ['report', 'verify', made.htmlPath]);
     assert.equal(checked.code, 2, checked.out + checked.err);
-    assert.match(checked.err, new RegExp(`receipt ${id} on disk differs from the signed payload`));
+    assert.ok(checked.err.includes(`receipt ${id} at ${receipt} fails integrity`), checked.err);
+    assert.match(checked.out, /failed: [1-9]/);
     assert.doesNotMatch(checked.out, /^VERIFIED/m);
     assert.match(checked.out, /^FAILED  report verify/m);
     const json = cliResult(dir, ['report', 'verify', made.htmlPath, '--json']);
@@ -1176,13 +1183,13 @@ describe('v1.0.30 signed one-page report', () => {
     assert.equal(cliResult(dir, ['verify', receipt]).code, 0);
     const checked = cliResult(dir, ['report', 'verify', made.htmlPath, '--json']);
     assert.equal(checked.code, 2, checked.out + checked.err);
-    assert.match(parseJson(checked.out).reason, new RegExp(`receipt ${id} on disk differs from the signed payload`));
+    assert.ok(parseJson(checked.out).reason.includes(`receipt ${id} at ${receipt} differs from the signed payload`), checked.out);
     assert.equal(parseJson(checked.out).verdict, 'FAILED');
     const text = cliResult(dir, ['report', 'verify', made.htmlPath]);
     assert.doesNotMatch(text.out, /^VERIFIED/m);
   });
 
-  it('exits 2 when --receipts is missing a referenced receipt and warns when it is only absent locally', () => {
+  it('exits 2 when --receipts is missing a referenced receipt and when a deleted receipt is still listed', () => {
     const { dir, made, receipt, id } = signedGrandchild();
     const copyDir = join(dir, 'receipts-copy');
     mkdirSync(copyDir);
@@ -1198,18 +1205,17 @@ describe('v1.0.30 signed one-page report', () => {
     assert.equal(parseJson(stillThere.out).checked, 1);
 
     rmSync(receipt);
-    const skipped = cliResult(dir, ['report', 'verify', made.htmlPath, '--json']);
-    assert.equal(skipped.code, 0, skipped.out + skipped.err);
-    const body = parseJson(skipped.out);
-    assert.equal(body.verdict, 'VERIFIED');
-    assert.equal(body.skipped, 1);
-    assert.equal(body.warning, 'skipped 1 (not found locally)');
-    assert.match(skipped.err, /skipped 1 \(not found locally\)/);
+    const removed = cliResult(dir, ['report', 'verify', made.htmlPath, '--json']);
+    assert.equal(removed.code, 2, removed.out + removed.err);
+    const body = parseJson(removed.out);
+    assert.equal(body.verdict, 'FAILED');
+    assert.ok(body.failed >= 1);
+    assert.match(body.reason, new RegExp(`receipt ${id} is missing but the store index or audit log still lists it`));
+    assert.notEqual(body.verdict, 'VERIFIED');
     const text = cliResult(dir, ['report', 'verify', made.htmlPath]);
-    assert.equal(text.code, 0, text.out + text.err);
-    assert.match(text.out, /^VERIFIED  report verify/m);
-    assert.match(text.out, /skipped 1 \(not found locally\)/);
-    assert.match(text.err, /skipped 1 \(not found locally\)/);
+    assert.equal(text.code, 2, text.out + text.err);
+    assert.doesNotMatch(text.out, /^VERIFIED/m);
+    assert.match(text.out, /failed: [1-9]/);
   });
 
   it('exits 2 when --receipts points at a copied directory with one edited receipt', () => {
@@ -1221,7 +1227,8 @@ describe('v1.0.30 signed one-page report', () => {
     editGrandchild(copy);
     const checked = cliResult(dir, ['report', 'verify', made.htmlPath, '--receipts', copyDir]);
     assert.equal(checked.code, 2, checked.out + checked.err);
-    assert.match(checked.err, new RegExp(`receipt ${id} on disk differs from the signed payload`));
+    assert.ok(checked.err.includes(`receipt ${id} at ${copy} fails integrity`), checked.err);
+    assert.match(checked.out, /failed: [1-9]/);
     assert.doesNotMatch(checked.out, /^VERIFIED/m);
     const untouched = cliResult(dir, ['report', 'verify', made.htmlPath, '--json']);
     assert.equal(untouched.code, 0, untouched.out + untouched.err);
@@ -1250,7 +1257,8 @@ describe('v1.0.30 signed one-page report', () => {
     editGrandchild(target);
     const checked = cliResult(dir, ['report', 'verify', body.htmlPath, '--receipts', exported.packagePath]);
     assert.equal(checked.code, 2, checked.out + checked.err);
-    assert.match(checked.err, new RegExp(`receipt ${id} on disk differs from the signed payload`));
+    assert.ok(checked.err.includes(`receipt ${id} at ${target} fails integrity`), checked.err);
+    assert.match(checked.out, /failed: [1-9]/);
     assert.doesNotMatch(checked.out, /^VERIFIED/m);
   });
 
@@ -1273,7 +1281,8 @@ describe('v1.0.30 signed one-page report', () => {
     writeFileSync(lonePath, html.replace('CLI', 'CLI\r'));
     const lone = cliResult(dir, ['report', 'verify', lonePath, '--json']);
     assert.equal(lone.code, 2);
-    assert.match(parseJson(lone.out).reason, /page has CRLF line endings/);
+    assert.match(parseJson(lone.out).reason, /page has CR line endings/);
+    assert.doesNotMatch(parseJson(lone.out).reason, /CRLF/);
   });
 
   it('exits 2 when a U+FFFD byte is replaced with 0xFF', () => {
@@ -1366,5 +1375,330 @@ describe('v1.0.30 signed one-page report', () => {
     assert.match(visible, /qa\\u202E\\u202A\\u2066\\u200E\\u200Fname/);
     assert.match(visible, /agent=qa\\u202E/);
     assert.equal(cliResult(dir, ['report', 'verify', made.htmlPath]).code, 0);
+  });
+
+  function copyReceiptPair(src, dest) {
+    mkdirSync(dirname(dest), { recursive: true });
+    copyFileSync(src, dest);
+    const sig = src.replace(/\.md$/i, '.sig.json');
+    if (existsSync(sig)) copyFileSync(sig, dest.replace(/\.md$/i, '.sig.json'));
+  }
+
+  function assertCandidateRejected(dir, htmlPath, needle, extraArgs = []) {
+    const text = cliResult(dir, ['report', 'verify', htmlPath, ...extraArgs]);
+    assert.equal(text.code, 2, `${needle}\n${text.out}\n${text.err}`);
+    assert.ok(text.err.includes(needle), text.err);
+    assert.match(text.out, /failed: [1-9]/);
+    assert.doesNotMatch(text.out, /^VERIFIED/m);
+    const json = cliResult(dir, ['report', 'verify', htmlPath, ...extraArgs, '--json']);
+    assert.equal(json.code, 2, json.out + json.err);
+    const body = parseJson(json.out);
+    assert.equal(body.verdict, 'FAILED');
+    assert.ok(body.failed >= 1, JSON.stringify(body));
+    assert.ok(body.checked + body.skipped + body.failed >= 1);
+    assert.ok(body.reason.includes(needle), body.reason);
+    return body;
+  }
+
+  it('rejects an edited original hidden by an aaa-copy with the same id', () => {
+    const { dir, made, receipt, id } = signedGrandchild();
+    const copy = join(dirname(receipt), 'aaa-copy.md');
+    copyReceiptPair(receipt, copy);
+    const clean = cliResult(dir, ['report', 'verify', made.htmlPath, '--json']);
+    assert.equal(clean.code, 0, clean.out + clean.err);
+    assert.equal(parseJson(clean.out).verdict, 'VERIFIED');
+    assert.equal(parseJson(clean.out).checked, 1);
+    editGrandchild(receipt);
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${id} at ${receipt} fails integrity`);
+  });
+
+  it('rejects an edited original hidden by a zzz-copy with the same id', () => {
+    const { dir, made, receipt, id } = signedGrandchild();
+    copyReceiptPair(receipt, join(dirname(receipt), 'zzz-copy.md'));
+    editGrandchild(receipt);
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${id} at ${receipt} fails integrity`);
+  });
+
+  it('rejects an edited original hidden by a same-id copy in a subdirectory', () => {
+    const { dir, made, receipt, id } = signedGrandchild();
+    copyReceiptPair(receipt, join(dirname(receipt), 'sub', 'aaa-copy.md'));
+    editGrandchild(receipt);
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${id} at ${receipt} fails integrity`);
+  });
+
+  it('rejects --receipts that contains both a genuine file and an edited copy', () => {
+    const { dir, made, receipt, id } = signedGrandchild();
+    const both = join(dir, 'both-receipts');
+    const genuine = join(both, 'genuine.md');
+    const edited = join(both, 'edited.md');
+    copyReceiptPair(receipt, genuine);
+    copyReceiptPair(receipt, edited);
+    editGrandchild(edited);
+    assertCandidateRejected(
+      dir,
+      made.htmlPath,
+      `receipt ${id} at ${edited} fails integrity`,
+      ['--receipts', both],
+    );
+  });
+
+  it('rejects a stray edited same-id copy in a subdirectory', () => {
+    const { dir, made, receipt, id } = signedGrandchild();
+    const stray = join(dirname(receipt), 'nested', 'stray.md');
+    copyReceiptPair(receipt, stray);
+    editGrandchild(stray);
+    assert.equal(cliResult(dir, ['verify', receipt]).code, 0);
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${id} at ${stray} fails integrity`);
+  });
+
+  it('rejects a same-id receipt from another session', () => {
+    const { dir, made, receipt, id } = signedGrandchild();
+    const other = join(dirname(receipt), 'other-session.md');
+    const text = readFileSync(receipt, 'utf8').replace(/^- \*\*Session\*\*: .+$/m, '- **Session**: s-other');
+    assert.notEqual(text, readFileSync(receipt, 'utf8'));
+    writeFileSync(other, sealReceipt(text));
+    assert.equal(cliResult(dir, ['verify', other]).code, 0);
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${id} at ${other} differs from the signed payload`);
+  });
+
+  function secretReport(extraReportArgs = []) {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', `aws ${AWS}\n`);
+    cli(dir, ['keygen']);
+    cli(dir, ['wrap', '--sign', '--session', 's-secret', '--agent', 'qa', '--host', 'hostA-secret', '--message', `token ${AWS}`]);
+    const made = parseJson(cli(dir, ['report', 'last', ...extraReportArgs, '--json']));
+    const receipt = latestReceipt(dir);
+    const text = readFileSync(receipt, 'utf8');
+    assert.match(text, /^- \*\*Host\*\*: hostA-secret$/m);
+    assert.ok(text.includes(AWS), 'expected the AWS key in the receipt');
+    const id = payloadOf(readFileSync(made.htmlPath, 'utf8')).receipts[0].id;
+    assert.equal(cliResult(dir, ['report', 'verify', made.htmlPath]).code, 0);
+    return { dir, made, receipt, id };
+  }
+
+  function replaceOnce(file, from, to) {
+    const text = readFileSync(file, 'utf8');
+    assert.ok(text.includes(from), `missing ${from} in ${file}`);
+    const next = text.replace(from, to);
+    assert.notEqual(next, text);
+    writeFileSync(file, next);
+  }
+
+  it('rejects a host edit that redaction would hide', () => {
+    const { dir, made, receipt, id } = secretReport();
+    replaceOnce(receipt, '- **Host**: hostA-secret', '- **Host**: attacker-box');
+    assert.equal(cliResult(dir, ['verify', receipt]).code, 2);
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${id} at ${receipt} fails integrity`);
+  });
+
+  it('rejects an AWS key edit that redaction would hide', () => {
+    const { dir, made, receipt, id } = secretReport();
+    replaceOnce(receipt, AWS, 'AKIAIOSFODNN7EXAMPLZ');
+    assert.equal(cliResult(dir, ['verify', receipt]).code, 2);
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${id} at ${receipt} fails integrity`);
+  });
+
+  it('rejects a host edit on an --include-host report', () => {
+    const { dir, made, receipt, id } = secretReport(['--include-host', '--out', 'host-kept.report.html']);
+    assert.equal(payloadOf(readFileSync(made.htmlPath, 'utf8')).exposure, 'host');
+    replaceOnce(receipt, '- **Host**: hostA-secret', '- **Host**: attacker-box');
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${id} at ${receipt} fails integrity`);
+  });
+
+  it('rejects a host edit on a --no-redact report', () => {
+    const { dir, made, receipt, id } = secretReport(['--no-redact', '--out', 'open.report.html']);
+    assert.equal(payloadOf(readFileSync(made.htmlPath, 'utf8')).exposure, 'unredacted');
+    replaceOnce(receipt, '- **Host**: hostA-secret', '- **Host**: attacker-box');
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${id} at ${receipt} fails integrity`);
+  });
+
+  it('rejects a host edit on a session report', () => {
+    const dir = initRepo();
+    cli(dir, ['keygen']);
+    commitFile(dir, 'parent.txt', 'parent\n');
+    const parent = parseJson(cli(dir, ['wrap', '--sign', '--session', 's-sechost', '--agent', 'parent', '--host', 'hostA-secret', '--message', 'parent', '--json']));
+    commitFile(dir, 'child.txt', 'child\n');
+    cli(dir, ['wrap', '--sign', '--session', 's-sechost', '--parent', parent.path, '--agent', 'child', '--message', 'child']);
+    const made = parseJson(cli(dir, ['report', '--session', 's-sechost', '--json']));
+    assert.equal(made.verdict, 'VERIFIED');
+    const payload = payloadOf(readFileSync(made.htmlPath, 'utf8'));
+    assert.equal(payload.manifestSha256, null);
+    const hostReceipt = payload.receipts.find((item) => item.id && readFileSync(parent.path, 'utf8').includes(item.id));
+    assert.ok(hostReceipt);
+    replaceOnce(parent.path, '- **Host**: hostA-secret', '- **Host**: attacker-box');
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${hostReceipt.id} at ${parent.path} fails integrity`);
+  });
+
+  it('rejects a host edit when --receipts is the local store', () => {
+    const { dir, made, receipt, id } = secretReport();
+    replaceOnce(receipt, '- **Host**: hostA-secret', '- **Host**: attacker-box');
+    const store = join(dir, '.agent-receipt', 'receipts');
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${id} at ${receipt} fails integrity`, ['--receipts', store]);
+  });
+
+  it('rejects a host edit in a package checked with --receipts', () => {
+    const { dir, id } = secretReport();
+    const exported = parseJson(cli(dir, ['session', 'export', 's-secret', '--json']));
+    const packaged = parseJson(cli(dir, ['report', exported.packagePath, '--json']));
+    const files = [];
+    const walk = (current) => {
+      for (const name of readdirSync(current)) {
+        const filePath = join(current, name);
+        const st = lstatSync(filePath);
+        if (st.isSymbolicLink()) continue;
+        if (st.isDirectory()) walk(filePath);
+        else if (name.endsWith('.md')) files.push(filePath);
+      }
+    };
+    walk(exported.packagePath);
+    const target = files.find((file) => readFileSync(file, 'utf8').includes('- **Host**: [REDACTED]'));
+    assert.ok(target, 'packaged receipt missing the redacted host line');
+    replaceOnce(target, '- **Host**: [REDACTED]', '- **Host**: attacker-box');
+    assertCandidateRejected(
+      dir,
+      packaged.htmlPath,
+      `receipt ${id} at ${target} fails integrity`,
+      ['--receipts', exported.packagePath],
+    );
+  });
+
+  it('rejects a re-hashed host edit when the sidecar no longer verifies', () => {
+    const { dir, made, receipt, id } = secretReport();
+    replaceOnce(receipt, '- **Host**: hostA-secret', '- **Host**: attacker-box');
+    writeFileSync(receipt, sealReceipt(readFileSync(receipt, 'utf8')));
+    assert.equal(cliResult(dir, ['verify', receipt]).code, 0);
+    assert.equal(cliResult(dir, ['verify', '--require-sig', receipt]).code, 2);
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${id} at ${receipt} signature mismatch`, ['--require-sig']);
+  });
+
+  it('prints VERIFIED payload-only when this store never listed the receipt', () => {
+    const { made } = signedGrandchild();
+    const other = initRepo();
+    const html = join(other, 'moved.report.html');
+    copyFileSync(made.htmlPath, html);
+    assert.ok(made.sigPath);
+    copyFileSync(made.sigPath, `${html}.sig.json`);
+    const text = cliResult(other, ['report', 'verify', html]);
+    assert.equal(text.code, 0, text.out + text.err);
+    assert.match(text.out, /^VERIFIED \(payload only; 1 receipts not checked\)  report verify/m);
+    assert.doesNotMatch(text.out, /^VERIFIED  report verify/m);
+    const json = cliResult(other, ['report', 'verify', html, '--json']);
+    assert.equal(json.code, 0, json.out + json.err);
+    const body = parseJson(json.out);
+    assert.equal(body.verdict, 'VERIFIED_PAYLOAD_ONLY');
+    assert.equal(body.notChecked, 1);
+    assert.equal(body.skipped, 1);
+    assert.equal(body.failed, 0);
+    assert.notEqual(body.verdict, 'VERIFIED');
+  });
+
+  it('exits 2 when a session report root was deleted but the store still lists it', () => {
+    const dir = initRepo();
+    commitFile(dir, 'parent.txt', 'parent\n');
+    const parent = parseJson(cli(dir, ['wrap', '--session', 's-delroot', '--agent', 'parent', '--message', 'parent', '--json']));
+    commitFile(dir, 'child.txt', 'child\n');
+    cli(dir, ['wrap', '--session', 's-delroot', '--parent', parent.path, '--agent', 'child', '--message', 'child']);
+    cli(dir, ['keygen']);
+    const made = parseJson(cli(dir, ['report', '--session', 's-delroot', '--json']));
+    assert.equal(made.verdict, 'VERIFIED');
+    const payload = payloadOf(readFileSync(made.htmlPath, 'utf8'));
+    const root = payload.receipts.find((item) => !item.parent);
+    assert.ok(root);
+    rmSync(parent.path);
+    const checked = cliResult(dir, ['report', 'verify', made.htmlPath, '--json']);
+    assert.equal(checked.code, 2, checked.out + checked.err);
+    const body = parseJson(checked.out);
+    assert.equal(body.verdict, 'FAILED');
+    assert.match(body.reason, new RegExp(`receipt ${root.id} is missing but the store index or audit log still lists it`));
+    assert.ok(body.failed >= 1);
+    const text = cliResult(dir, ['report', 'verify', made.htmlPath]);
+    assert.doesNotMatch(text.out, /^VERIFIED/m);
+    assert.match(text.out, /failed: [1-9]/);
+  });
+
+  it('rejects a symlink swapped in for a receipt', () => {
+    const { dir, made, receipt, id } = signedGrandchild();
+    const target = join(dirname(receipt), 'symlink-target.md');
+    copyReceiptPair(receipt, target);
+    rmSync(receipt);
+    symlinkSync(target, receipt);
+    assert.equal(lstatSync(receipt).isSymbolicLink(), true);
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${id} at ${receipt} is a symlink`);
+  });
+
+  it('treats a .MD case rename as a candidate', () => {
+    const { dir, made, receipt, id } = signedGrandchild();
+    const upper = receipt.replace(/\.md$/, '.MD');
+    assert.notEqual(upper, receipt);
+    renameSync(receipt, upper);
+    const clean = cliResult(dir, ['report', 'verify', made.htmlPath, '--json']);
+    assert.equal(clean.code, 0, clean.out + clean.err);
+    assert.equal(parseJson(clean.out).verdict, 'VERIFIED');
+    assert.equal(parseJson(clean.out).checked, 1);
+    assert.equal(parseJson(clean.out).skipped, 0);
+    editGrandchild(upper);
+    assertCandidateRejected(dir, made.htmlPath, `receipt ${id} at ${upper} fails integrity`);
+  });
+
+  it('verifies an imported package report against the imported receipt', () => {
+    const src = initRepo();
+    commitFile(src, 'note.txt', `host ${HOST}\n`);
+    cli(src, ['keygen']);
+    cli(src, ['wrap', '--session', 's-import', '--agent', 'exporter', '--host', HOST, '--message', 'importer body']);
+    const exported = parseJson(cli(src, ['session', 'export', 's-import', '--json']));
+    const packaged = parseJson(cli(src, ['report', exported.packagePath, '--json']));
+    assert.equal(packaged.verdict, 'VERIFIED');
+    const dest = initRepo();
+    const imported = cliResult(dest, ['session', 'import', exported.packagePath]);
+    assert.equal(imported.code, 0, imported.out + imported.err);
+    const checked = cliResult(dest, ['report', 'verify', packaged.htmlPath, '--json']);
+    assert.equal(checked.code, 0, checked.out + checked.err);
+    const body = parseJson(checked.out);
+    assert.equal(body.verdict, 'VERIFIED');
+    assert.equal(body.checked, 1);
+    assert.equal(body.skipped, 0);
+    assert.equal(body.failed, 0);
+  });
+
+  it('verifies a portable package with --receipts and payload-only without it', () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', `host ${HOST}\n`);
+    cli(dir, ['keygen']);
+    cli(dir, ['wrap', '--session', 's-port', '--agent', 'exporter', '--host', HOST, '--message', 'portable body']);
+    const exported = parseJson(cli(dir, ['session', 'export', 's-port', '--json']));
+    const packaged = parseJson(cli(dir, ['report', exported.packagePath, '--json']));
+    const away = initRepo();
+    const withPkg = cliResult(away, ['report', 'verify', packaged.htmlPath, '--receipts', exported.packagePath, '--json']);
+    assert.equal(withPkg.code, 0, withPkg.out + withPkg.err);
+    assert.equal(parseJson(withPkg.out).verdict, 'VERIFIED');
+    assert.equal(parseJson(withPkg.out).checked, 1);
+    const html = join(away, 'portable.report.html');
+    copyFileSync(packaged.htmlPath, html);
+    assert.ok(packaged.sigPath);
+    copyFileSync(packaged.sigPath, `${html}.sig.json`);
+    const alone = cliResult(away, ['report', 'verify', html, '--json']);
+    assert.equal(alone.code, 0, alone.out + alone.err);
+    const body = parseJson(alone.out);
+    assert.equal(body.verdict, 'VERIFIED_PAYLOAD_ONLY');
+    assert.equal(body.notChecked, 1);
+    const text = cliResult(away, ['report', 'verify', html]);
+    assert.match(text.out, /^VERIFIED \(payload only; 1 receipts not checked\)  report verify/m);
+    assert.doesNotMatch(text.out, /^VERIFIED  report verify/m);
+  });
+
+  it('rejects a leading UTF-8 BOM', () => {
+    const dir = initRepo();
+    commitFile(dir, 'note.txt', 'bom\n');
+    cli(dir, ['wrap', '--agent', 'ci', '--message', 'bom page']);
+    const htmlPath = parseJson(cli(dir, ['report', 'last', '--json'])).htmlPath;
+    const bomPath = join(dir, 'bom.report.html');
+    writeFileSync(bomPath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), readFileSync(htmlPath)]));
+    const checked = cliResult(dir, ['report', 'verify', bomPath, '--json']);
+    assert.equal(checked.code, 2, checked.out + checked.err);
+    assert.match(parseJson(checked.out).reason, /page starts with a UTF-8 BOM/);
+    assert.notEqual(parseJson(checked.out).verdict, 'VERIFIED');
+    const text = cliResult(dir, ['report', 'verify', bomPath]);
+    assert.equal(text.code, 2);
+    assert.doesNotMatch(text.out, /^VERIFIED/m);
   });
 });

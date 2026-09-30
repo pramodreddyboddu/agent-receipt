@@ -37,6 +37,12 @@ export const PAGE_MISMATCH_MESSAGE = 'page content does not match signed payload
 export const CRLF_PAGE_MESSAGE =
   'page has CRLF line endings — was it checked out with core.autocrlf? add `*.report.html -text` to .gitattributes';
 
+/** A bare CR. CRLF (`\r\n`) keeps CRLF_PAGE_MESSAGE. */
+export const CR_PAGE_MESSAGE = 'page has CR line endings';
+
+/** Leading EF BB BF. TextDecoder is created with ignoreBOM so this is not stripped. */
+export const BOM_PAGE_MESSAGE = 'page starts with a UTF-8 BOM';
+
 export const INVALID_UTF8_MESSAGE = 'report page is not valid UTF-8';
 
 export type ReportVerdict = 'VERIFIED' | 'FAILED' | 'UNSIGNED' | 'UNTRUSTED';
@@ -75,9 +81,9 @@ export interface ReportRisk {
  * One receipt as the page shows it, plus the hashes verify may re-check.
  * `sha256` is the canonical hash of the file the report was built from.
  * `redactedSha256` is the canonical hash of the default redacted body when
- * that hash differs. Verify checks a file whose bytes match either hash.
- * A same-id file is also checked when its redacted form matches. Anything
- * else with that id fails verify.
+ * that hash differs. A local-store report accepts only a raw `sha256` match.
+ * A session-package report may also accept a redacted form that hashes to
+ * `sha256` or `redactedSha256`.
  */
 export interface ReportReceiptPayload {
   id: string;
@@ -312,7 +318,7 @@ article{margin:16px 0;padding-top:4px}
 `.trim();
 
 const COVERAGE_NOTE =
-  'The Ed25519 signature covers the canonical JSON payload embedded in this file (sorted keys, no whitespace). report verify re-renders this page from that payload and the signature block and requires the same bytes. A single missing trailing newline is ignored. Any other difference, including this sentence, the banner, the pills, the narrative, and the exposure marker, fails verify. renderVersion selects this HTML renderer. A receipt file whose canonical sha256 or recorded redacted sha256 matches is checked. A same-id file that still differs after redaction fails verify. originalFingerprint, resignedBy, and signedBy are the manifest signer\'s claims when they come from a session package. This is not a certificate authority.';
+  'The Ed25519 signature covers the canonical JSON payload embedded in this file (sorted keys, no whitespace). report verify re-renders this page from that payload and the signature block and requires the same bytes. A single missing trailing newline is ignored. Any other difference, including this sentence, the banner, the pills, the narrative, and the exposure marker, fails verify. renderVersion selects this HTML renderer. Every same-id file, and every file whose raw or embedded hash is the recorded sha256 or redactedSha256, must pass integrity. A local-store report requires the raw sha256. A session-package report may match the redacted form. A symlink fails verify. originalFingerprint, resignedBy, and signedBy are the manifest signer\'s claims when they come from a session package. This is not a certificate authority.';
 
 /**
  * Bidi controls are rendered as \\uXXXX so a receipt cannot reorder the page.

@@ -22,6 +22,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { auditLogPath, loadAuditEvents } from '../lib/audit.js';
 import { color } from '../lib/color.js';
 import { canonicalBody, extractEmbeddedHash, sha256Hex } from '../lib/hash.js';
 import {
@@ -35,10 +36,12 @@ import {
 } from '../lib/link.js';
 import { defangUrls } from '../lib/prove-html.js';
 import { isHighSecretRiskCode, publishRedactedReceipt, redactSecretsInText } from '../lib/redact.js';
-import { receiptsDir } from '../lib/receipt-index.js';
+import { readIndexStrict, receiptsDir } from '../lib/receipt-index.js';
 import { loadResignProvenance, type ResignClaim } from '../lib/resign-provenance.js';
 import {
   assertRenderedPage,
+  BOM_PAGE_MESSAGE,
+  CR_PAGE_MESSAGE,
   CRLF_PAGE_MESSAGE,
   decideVerdict,
   INVALID_UTF8_MESSAGE,
@@ -124,18 +127,23 @@ export interface ReportCommandResult {
   reason: string | null;
 }
 
+export type ReportVerifyVerdict = ReportVerdict | 'VERIFIED_PAYLOAD_ONLY';
+
 export interface ReportVerifyResult {
   ok: boolean;
   command: 'report-verify';
   version: string;
   exitCode: 0 | 1 | 2;
-  verdict: ReportVerdict | null;
+  verdict: ReportVerifyVerdict | null;
   signed: boolean;
   fingerprint: string | null;
   trusted: boolean | null;
   receiptCount: number;
   checked: number;
   skipped: number;
+  failed: number;
+  /** Referenced receipts with no candidate and no store listing. */
+  notChecked: number;
   reason: string | null;
 }
 
@@ -739,6 +747,11 @@ export function cmdReport(
   return emitReport(result, Boolean(opts.json));
 }
 
+/** `.md` is case-insensitive. `.prove.md` is not a receipt. */
+function isReceiptMarkdownName(name: string): boolean {
+  return /\.md$/i.test(name) && !/\.prove\.md$/i.test(name);
+}
+
 function collectMarkdown(dir: string, out: string[], depth: number): void {
   if (depth > 4 || !existsSync(dir)) return;
   let st;
@@ -763,9 +776,12 @@ function collectMarkdown(dir: string, out: string[], depth: number): void {
     } catch {
       continue;
     }
-    if (child.isSymbolicLink()) continue;
+    if (child.isSymbolicLink()) {
+      if (isReceiptMarkdownName(name)) out.push(filePath);
+      continue;
+    }
     if (child.isDirectory()) collectMarkdown(filePath, out, depth + 1);
-    else if (child.isFile() && name.endsWith('.md') && !name.endsWith('.prove.md')) out.push(filePath);
+    else if (child.isFile() && isReceiptMarkdownName(name)) out.push(filePath);
   }
 }
 
@@ -778,10 +794,19 @@ interface IndexedReceipt {
   embedded: string | null;
   verified: boolean;
   signature: ReportSignatureState;
+  fingerprint: string | null;
   text: string;
+  /** The path itself is a symlink. The target bytes are not trusted. */
+  symlink: boolean;
 }
 
 function indexedReceipt(filePath: string): IndexedReceipt | null {
+  let symlink = false;
+  try {
+    symlink = lstatSync(filePath).isSymbolicLink();
+  } catch {
+    return null;
+  }
   let text: string;
   try {
     text = readFileSync(filePath, 'utf8');
@@ -801,28 +826,118 @@ function indexedReceipt(filePath: string): IndexedReceipt | null {
     embedded,
     verified: integrity.ok,
     signature,
+    fingerprint: sig.fingerprint,
     text,
+    symlink,
   };
 }
 
-function hashMatches(hash: string, accepted: Set<string>): boolean {
-  return accepted.has(hash);
+interface LocalCheck {
+  checked: number;
+  skipped: number;
+  failed: number;
+  notChecked: number;
+  reason: string | null;
 }
 
 /**
- * Index candidate receipts by computed sha256 and by parsed id.
- * `--receipts` is the whole candidate set when it is set. Otherwise outDir.
- * A byte match (sha256 or redactedSha256) is checked.
- * A same-id file, or a file whose footer still names that hash, is checked
- * when its redacted form matches. Otherwise that file exits 2.
- * With `--receipts`, a payload receipt that is absent exits 2.
- * Without it, absence is a skip.
+ * A session-package report records `manifestSha256`. Local-store reports leave
+ * it null. The redacted-form match is allowed only for the package report:
+ * export writes `publishRedactedReceipt` bytes, so `sha256` is that hash and
+ * `redactedSha256` is null when the second pass does not change them.
+ */
+function isPackageReport(payload: ReportPayload): boolean {
+  return typeof payload.manifestSha256 === 'string' && HEX64.test(payload.manifestSha256);
+}
+
+function acceptedHashes(receipt: ReportReceiptPayload): Set<string> {
+  const accepted = new Set<string>([receipt.sha256]);
+  if (receipt.redactedSha256) accepted.add(receipt.redactedSha256);
+  return accepted;
+}
+
+/** Redacted body equals the packaged hash (`sha256`) or a recorded `redactedSha256`. */
+function redactedFormMatches(item: IndexedReceipt, receipt: ReportReceiptPayload): boolean {
+  const redacted = redactedFormHash(item.text);
+  if (redacted === receipt.sha256) return true;
+  return Boolean(receipt.redactedSha256 && redacted === receipt.redactedSha256);
+}
+
+/**
+ * Raw-hash candidates must carry the payload's signature status and fingerprint.
+ * A redacted-form candidate is a different byte string (the unredacted original).
+ * Its sidecar, when present, must verify against itself. Export may sign only
+ * the package, so an absent sidecar is not a mismatch on that path.
+ */
+function signatureMismatch(item: IndexedReceipt, receipt: ReportReceiptPayload, rawMatch: boolean): boolean {
+  if (item.signature === 'invalid') return true;
+  if (!rawMatch) return false;
+  if (item.signature !== receipt.signature) return true;
+  return (item.fingerprint ?? null) !== (receipt.fingerprint ?? null);
+}
+
+function unacceptableReason(
+  item: IndexedReceipt,
+  receipt: ReportReceiptPayload,
+  packageReport: boolean,
+): string | null {
+  const where = `receipt ${receipt.id} at ${item.path}`;
+  if (item.symlink) return `${where} is a symlink`;
+  if (!item.verified) return `${where} fails integrity`;
+  const rawMatch = item.sha256 === receipt.sha256;
+  if (signatureMismatch(item, receipt, rawMatch)) return `${where} signature mismatch`;
+  if (rawMatch) return null;
+  if (packageReport && redactedFormMatches(item, receipt)) return null;
+  return `${where} differs from the signed payload`;
+}
+
+function storeListsReceipt(cwd: string, receipt: ReportReceiptPayload): { listed: boolean; unreadable: boolean } {
+  const hashes = acceptedHashes(receipt);
+  let listed = false;
+  let unreadable = false;
+  try {
+    const { index, existed } = readIndexStrict(cwd);
+    if (existed) {
+      for (const entry of index.receipts) {
+        if (!entry) continue;
+        if (typeof entry.sha256 === 'string' && hashes.has(entry.sha256)) listed = true;
+        if (typeof entry.path === 'string' && entry.path.includes(receipt.id)) listed = true;
+      }
+    }
+  } catch {
+    unreadable = true;
+  }
+  if (existsSync(auditLogPath(cwd))) {
+    try {
+      for (const event of loadAuditEvents(cwd)) {
+        if (event.sha256 && hashes.has(event.sha256)) listed = true;
+        if (event.path && event.path.includes(receipt.id)) listed = true;
+      }
+    } catch {
+      unreadable = true;
+    }
+  }
+  return { listed, unreadable };
+}
+
+/**
+ * Every candidate for a payload receipt must be acceptable.
+ * Candidates are every file in the search scope whose parsed id matches,
+ * plus every file whose raw sha256 or embedded hash is in the accepted set.
+ * Names, subdirectories, and sessions do not narrow the set. `.MD` counts.
+ * A symlink candidate is never acceptable.
+ * A local-store report requires a raw sha256 match. A session-package report
+ * may instead match the redacted form.
+ * `--receipts` with no candidate exits 2. Without it, a receipt the store
+ * index or audit log still lists exits 2 (deleted in place). Otherwise it
+ * is not checked.
  */
 function checkLocalReceipts(
+  cwd: string,
   payload: ReportPayload,
   dirs: string[],
   explicitReceipts: boolean,
-): { checked: number; skipped: number; reason: string | null } {
+): LocalCheck {
   const files: string[] = [];
   const seen = new Set<string>();
   for (const dir of dirs) {
@@ -830,89 +945,93 @@ function checkLocalReceipts(
     seen.add(dir);
     collectMarkdown(dir, files, 0);
   }
-  const bySha = new Map<string, IndexedReceipt>();
+  const indexed: IndexedReceipt[] = [];
   const byId = new Map<string, IndexedReceipt[]>();
-  const byEmbedded = new Map<string, IndexedReceipt[]>();
   for (const file of files) {
     const item = indexedReceipt(file);
     if (!item) continue;
-    if (!bySha.has(item.sha256)) bySha.set(item.sha256, item);
+    indexed.push(item);
     const idList = byId.get(item.id);
     if (idList) idList.push(item);
     else byId.set(item.id, [item]);
-    if (item.embedded) {
-      const embeddedList = byEmbedded.get(item.embedded);
-      if (embeddedList) embeddedList.push(item);
-      else byEmbedded.set(item.embedded, [item]);
-    }
   }
+  const packageReport = isPackageReport(payload);
   let checked = 0;
   let skipped = 0;
+  let failed = 0;
+  let notChecked = 0;
+  let reason: string | null = null;
+  const note = (next: string): void => {
+    if (!reason) reason = next;
+  };
   for (const receipt of payload.receipts) {
-    const accepted = new Set<string>([receipt.sha256]);
-    if (receipt.redactedSha256) accepted.add(receipt.redactedSha256);
-    const byBytes = bySha.get(receipt.sha256) ?? (receipt.redactedSha256 ? bySha.get(receipt.redactedSha256) : undefined);
-    if (byBytes && hashMatches(byBytes.sha256, accepted)) {
-      checked += 1;
-      if (byBytes.sha256 === receipt.sha256) {
-        if (byBytes.verified !== receipt.verified || byBytes.signature !== receipt.signature) {
-          return { checked, skipped, reason: `receipt ${receipt.id} no longer matches the signed payload` };
-        }
-        if (!byBytes.verified || byBytes.signature === 'invalid') {
-          return { checked, skipped, reason: `receipt ${receipt.id} failed verify` };
-        }
-      } else if (!byBytes.verified || byBytes.signature === 'invalid') {
-        return { checked, skipped, reason: `receipt ${receipt.id} redacted copy failed verify` };
-      }
-      continue;
-    }
+    const accepted = acceptedHashes(receipt);
     const identity = new Map<string, IndexedReceipt>();
     for (const item of byId.get(receipt.id) ?? []) identity.set(item.path, item);
-    for (const hash of accepted) {
-      for (const item of byEmbedded.get(hash) ?? []) identity.set(item.path, item);
-    }
-    if (identity.size) {
-      let redactedOk = false;
-      for (const item of identity.values()) {
-        if (hashMatches(redactedFormHash(item.text), accepted)) {
-          redactedOk = true;
-          break;
-        }
+    for (const item of indexed) {
+      if (accepted.has(item.sha256) || (item.embedded !== null && accepted.has(item.embedded))) {
+        identity.set(item.path, item);
       }
-      if (redactedOk) {
-        checked += 1;
+    }
+    const candidates = [...identity.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    if (!candidates.length) {
+      if (explicitReceipts) {
+        failed += 1;
+        note(`receipt ${receipt.id} referenced by report not found in --receipts`);
         continue;
       }
-      return { checked, skipped, reason: `receipt ${receipt.id} on disk differs from the signed payload` };
+      const catalog = storeListsReceipt(cwd, receipt);
+      if (catalog.listed) {
+        failed += 1;
+        note(`receipt ${receipt.id} is missing but the store index or audit log still lists it`);
+        continue;
+      }
+      if (catalog.unreadable) {
+        failed += 1;
+        note(`receipt ${receipt.id} is missing and the store index or audit log could not be read`);
+        continue;
+      }
+      skipped += 1;
+      notChecked += 1;
+      continue;
     }
-    if (explicitReceipts) {
-      return {
-        checked,
-        skipped,
-        reason: `receipt ${receipt.id} referenced by report not found in --receipts`,
-      };
+    const problems: string[] = [];
+    for (const item of candidates) {
+      const problem = unacceptableReason(item, receipt, packageReport);
+      if (problem) problems.push(problem);
     }
-    skipped += 1;
+    if (problems.length) {
+      failed += 1;
+      note(problems.join('; '));
+      continue;
+    }
+    checked += 1;
   }
-  return { checked, skipped, reason: null };
+  return { checked, skipped, failed, notChecked, reason };
 }
 
 /** A non-zero exit never reports VERIFIED. The page's claim is not a pass. */
-function shownVerdict(result: ReportVerifyResult): ReportVerdict | null {
-  if (result.exitCode !== 0 && result.verdict === 'VERIFIED') return 'FAILED';
+function shownVerdict(result: ReportVerifyResult): ReportVerifyVerdict | null {
+  if (
+    result.exitCode !== 0 &&
+    (result.verdict === 'VERIFIED' || result.verdict === 'VERIFIED_PAYLOAD_ONLY')
+  ) {
+    return 'FAILED';
+  }
   return result.verdict;
 }
 
-function skipWarning(skipped: number): string | null {
-  return skipped > 0 ? `skipped ${skipped} (not found locally)` : null;
+function verdictLabel(verdict: ReportVerifyVerdict | null, notChecked: number): string {
+  if (verdict === 'VERIFIED_PAYLOAD_ONLY') {
+    return `VERIFIED (payload only; ${notChecked} receipts not checked)`;
+  }
+  return verdict ?? 'FAILED';
 }
 
 function emitVerify(result: ReportVerifyResult, json: boolean): 0 | 1 | 2 {
   const verdict = shownVerdict(result);
-  const warning = skipWarning(result.skipped);
-  const printed = { ...result, verdict, warning };
+  const printed = { ...result, verdict, warning: null as string | null };
   if (json) {
-    if (warning) console.error(warning);
     console.log(JSON.stringify(printed));
     return result.exitCode;
   }
@@ -920,14 +1039,36 @@ function emitVerify(result: ReportVerifyResult, json: boolean): 0 | 1 | 2 {
     console.error(color.red('Error:') + ` ${result.reason ?? 'report verify failed'}`);
     return 1;
   }
-  const label = verdict ?? 'FAILED';
-  const paint = result.exitCode === 0 && label === 'VERIFIED' ? color.green : result.exitCode === 0 ? color.yellow : color.red;
+  const label = verdictLabel(verdict, result.notChecked);
+  const paint =
+    result.exitCode === 0 && verdict === 'VERIFIED' ? color.green : result.exitCode === 0 ? color.yellow : color.red;
   console.log(`${paint(label)}  report verify`);
   if (result.fingerprint) console.log(`  fingerprint: ${result.fingerprint}`);
   if (result.reason) console.error(result.reason);
-  if (warning) console.error(warning);
-  console.log(warning ? `  checked: ${result.checked}  ${warning}` : `  checked: ${result.checked}  skipped: ${result.skipped}`);
+  const examined = result.checked + result.skipped + result.failed;
+  if (examined > 0) {
+    console.log(`  checked: ${result.checked}  skipped: ${result.skipped}  failed: ${result.failed}`);
+  }
   return result.exitCode;
+}
+
+/** CRLF only when a CR is followed by LF. A bare CR is named on its own. */
+function lineEndingError(bytes: Buffer): string | null {
+  let crlf = false;
+  let lone = false;
+  for (let i = 0; i < bytes.length; i += 1) {
+    if (bytes[i] !== 0x0d) continue;
+    if (i + 1 < bytes.length && bytes[i + 1] === 0x0a) {
+      crlf = true;
+      i += 1;
+    } else {
+      lone = true;
+    }
+  }
+  if (lone && crlf) return `${CR_PAGE_MESSAGE}; ${CRLF_PAGE_MESSAGE}`;
+  if (lone) return CR_PAGE_MESSAGE;
+  if (crlf) return CRLF_PAGE_MESSAGE;
+  return null;
 }
 
 function readSignatureFile(sigPath: string): { doc: SignatureDocument | null; reason: string | null } {
@@ -1008,10 +1149,12 @@ function receiptsDirError(cwd: string, dir: string | undefined): string | null {
  *    `--require-sig` exits 2. The printed verdict is never VERIFIED on a
  *    non-zero exit.
  * Candidate files are outDir, or `--receipts` when that flag is set.
- * A file whose bytes match sha256 or redactedSha256 is checked. A same-id
- * file that still differs after redaction exits 2. `--receipts` requires
- * every referenced receipt. Without it, a missing receipt is skipped and
- * named on stderr and in the output.
+ * Every same-id file, and every file whose raw or embedded hash is recorded,
+ * must pass. A local-store report requires the raw sha256. A session-package
+ * report may match the redacted form. A symlink exits 2. `--receipts`
+ * requires every referenced receipt. Without it, a receipt the store index
+ * or audit log still lists exits 2. A receipt the store does not list is
+ * not checked, and a VERIFIED page is reported as VERIFIED_PAYLOAD_ONLY.
  */
 function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions): 0 | 1 | 2 {
   const json = Boolean(opts.json);
@@ -1029,6 +1172,8 @@ function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions
         receiptCount: extra.receiptCount ?? 0,
         checked: extra.checked ?? 0,
         skipped: extra.skipped ?? 0,
+        failed: extra.failed ?? 0,
+        notChecked: extra.notChecked ?? 0,
         reason,
       },
       json,
@@ -1044,10 +1189,14 @@ function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions
     const detail = err instanceof Error ? err.message : String(err);
     return fail(1, `unreadable report (${detail})`);
   }
-  if (bytes.includes(0x0d)) return fail(2, CRLF_PAGE_MESSAGE);
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    return fail(2, BOM_PAGE_MESSAGE);
+  }
+  const endings = lineEndingError(bytes);
+  if (endings) return fail(2, endings);
   let html: string;
   try {
-    html = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    html = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     return fail(2, INVALID_UTF8_MESSAGE);
   }
@@ -1116,8 +1265,14 @@ function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions
   }
   const explicitReceipts = Boolean(opts.receiptsDir);
   const dirs = explicitReceipts ? [resolve(cwd, opts.receiptsDir as string)] : [receiptsDir(cwd)];
-  const local = checkLocalReceipts(payload, dirs, explicitReceipts);
-  const counts = { checked: local.checked, skipped: local.skipped, trusted };
+  const local = checkLocalReceipts(cwd, payload, dirs, explicitReceipts);
+  const counts = {
+    checked: local.checked,
+    skipped: local.skipped,
+    failed: local.failed,
+    notChecked: local.notChecked,
+    trusted,
+  };
   if (local.reason) return fail(2, local.reason, { ...base, ...counts });
   if (payload.verdict === 'FAILED') {
     return fail(2, failedVerdictReason(payload), { ...base, ...counts });
@@ -1145,6 +1300,8 @@ function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions
         receiptCount: payload.receipts.length,
         checked: local.checked,
         skipped: local.skipped,
+        failed: local.failed,
+        notChecked: local.notChecked,
         reason: null,
       },
       json,
@@ -1153,19 +1310,22 @@ function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions
   if (payload.verdict !== 'VERIFIED') {
     return fail(2, 'report verdict is not VERIFIED', { ...base, ...counts });
   }
+  const payloadOnly = local.notChecked > 0;
   return emitVerify(
     {
       ok: true,
       command: 'report-verify',
       version: VERSION,
       exitCode: 0,
-      verdict: 'VERIFIED',
+      verdict: payloadOnly ? 'VERIFIED_PAYLOAD_ONLY' : 'VERIFIED',
       signed: true,
       fingerprint: signature?.fingerprint ?? null,
       trusted,
       receiptCount: payload.receipts.length,
       checked: local.checked,
       skipped: local.skipped,
+      failed: local.failed,
+      notChecked: local.notChecked,
       reason: null,
     },
     json,
@@ -1197,6 +1357,8 @@ export function cmdReportVerify(
         receiptCount: 0,
         checked: 0,
         skipped: 0,
+        failed: 0,
+        notChecked: 0,
         reason,
       },
       json,
