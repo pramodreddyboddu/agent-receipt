@@ -22,6 +22,7 @@ import {
 import { applyTrust, loadTrustedFingerprints } from '../lib/trust.js';
 import type { FailOnThreshold } from '../lib/risk.js';
 import { renderProveHtml, type ProveHtmlSummary } from '../lib/prove-html.js';
+import { indexLocalReceipts, parseLinkMeta, receiptIntegrity } from '../lib/link.js';
 
 export interface ProveOptions {
   /** One JSON object on stdout. Human banner stays off. */
@@ -88,6 +89,15 @@ export interface ProveReport {
    * Omitted when `--html` was not passed.
    */
   htmlPath?: string | null;
+  /**
+   * Present only when the receipt carries a session or parent link.
+   * Omitted otherwise so an unlinked prove object keeps its key set.
+   * Host is never included.
+   */
+  session?: string | null;
+  parent?: string | null;
+  /** True/false when the parent receipt is local. Null when it is not. */
+  parentVerified?: boolean | null;
 }
 
 const ABSENT_AUDIT: ProveAudit = {
@@ -330,6 +340,11 @@ function renderProvePage(report: ProveReport): string {
   ];
   if (report.failOn) lines.push(line('failOn', report.failOn));
   if (report.reason) lines.push(line('reason', oneLine(report.reason)));
+  if (report.session || report.parent) {
+    lines.push(line('session', oneLine(report.session ?? '(none)')));
+    lines.push(line('parent', oneLine(report.parent ?? '(none)')));
+    lines.push(line('parent verify', parentVerifyLabel(report)));
+  }
   lines.push('', '---', '', PAGE_FOOTER, '');
   return lines.join('\n');
 }
@@ -401,6 +416,11 @@ function printHuman(report: ProveReport): void {
   ];
   if (report.failOn) lines.push(`  failOn: ${report.failOn}`);
   if (report.reason) lines.push(`  reason: ${report.reason}`);
+  if (report.session || report.parent) {
+    lines.push(`  session: ${report.session ?? '(none)'}`);
+    lines.push(`  parent: ${report.parent ?? '(none)'}`);
+    lines.push(`  parent verify: ${parentVerifyLabel(report)}`);
+  }
   if (report.pagePath) lines.push(`  page: ${report.pagePath}`);
   if (report.htmlPath) lines.push(`  html: ${report.htmlPath}`);
   console.log(lines.join('\n'));
@@ -410,6 +430,35 @@ function printHuman(report: ProveReport): void {
       'Tip: the hash and audit link are tamper-evident, not a cryptographic signature. The signature line reports a local Ed25519 sidecar when one is present.',
     ),
   );
+}
+
+function parentVerifyLabel(report: ProveReport): string {
+  if (report.parentVerified === true) return 'yes';
+  if (report.parentVerified === false) return 'no';
+  if (report.parent) return 'not local';
+  return '(none)';
+}
+
+/**
+ * When the parent id or hash is a receipt in outDir, report whether that
+ * file verifies. A missing local parent is null ("not local") and does not
+ * change this prove's exit code. Host is not reported.
+ */
+function lookupParentVerified(
+  cwd: string,
+  receiptPath: string,
+  parent: string | null,
+  selfOk: boolean,
+): boolean | null {
+  if (!parent) return null;
+  const local = indexLocalReceipts(cwd).get(parent);
+  if (!local) return null;
+  if (resolve(local.path) === resolve(receiptPath)) return selfOk;
+  try {
+    return receiptIntegrity(readFileSync(local.path, 'utf8')).ok;
+  } catch {
+    return null;
+  }
 }
 
 export function printProve(report: ProveReport): void {
@@ -512,6 +561,18 @@ export function cmdProve(
     signature,
     reason,
   };
+
+  const link = parseLinkMeta(text);
+  if (link.session || link.parent) {
+    report.session = link.session;
+    report.parent = link.parent;
+    report.parentVerified = lookupParentVerified(
+      cwd,
+      verified.path,
+      link.parent,
+      verified.ok,
+    );
+  }
 
   if (opts.page) {
     report.pagePath = writeProvePage(cwd, report, opts.out);

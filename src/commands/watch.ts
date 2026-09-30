@@ -16,6 +16,10 @@ export interface WatchOptions {
   /** Capture once after the next change, then exit. */
   once?: boolean;
   agent?: string;
+  id?: string;
+  session?: string;
+  parent?: string;
+  host?: string;
   message?: string;
   failOn?: FailOnThreshold;
   json?: boolean;
@@ -157,6 +161,10 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
 
         const captureOpts: CaptureOptions = {
           agent: opts.agent ?? 'watch',
+          id: opts.id,
+          session: opts.session,
+          parent: opts.parent,
+          host: opts.host,
           message: opts.message ?? `watch ${head.slice(0, 7)}`,
           failOn: opts.failOn,
           json: opts.json,
@@ -206,6 +214,10 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
       const captureOpts: CaptureOptions = {
         uncommitted: true,
         agent: opts.agent ?? 'watch',
+        id: opts.id,
+        session: opts.session,
+        parent: opts.parent,
+        host: opts.host,
         message: opts.message ?? 'watch uncommitted',
         failOn: opts.failOn,
         json: opts.json,

@@ -82,6 +82,16 @@ export function summarizeNotableChanges(files: FileStat[]): ChangeSummary[] {
   return out;
 }
 
+/**
+ * A diff-stat row is inside a ``` fence. A path that itself starts with
+ * ``` or ~~~ would toggle that fence for every later reader (redact, a
+ * heading scan). A leading space keeps the row inside the block.
+ */
+function shieldDiffStatPath(path: string): string {
+  if (/^\s*(?:`{3,}|~{3,})/.test(path)) return ` ${path}`;
+  return path;
+}
+
 export function formatDiffStatTable(files: FileStat[]): string[] {
   const lines: string[] = [];
   if (!files.length) {
@@ -94,7 +104,8 @@ export function formatDiffStatTable(files: FileStat[]): string[] {
   );
   lines.push('```');
   for (const f of files) {
-    const path = f.path.length > maxPath ? '…' + f.path.slice(-(maxPath - 1)) : f.path;
+    const shown = f.path.length > maxPath ? '…' + f.path.slice(-(maxPath - 1)) : f.path;
+    const path = shieldDiffStatPath(shown);
     const pad = ' '.repeat(Math.max(1, maxPath - path.length + 1));
     const barPlus = '+'.repeat(Math.min(20, f.insertions));
     const barMinus = '-'.repeat(Math.min(20, f.deletions));

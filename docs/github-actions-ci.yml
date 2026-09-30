@@ -12,7 +12,7 @@
 #   mkdir -p .github/workflows
 #   cp docs/github-actions-ci.yml .github/workflows/ci.yml
 #
-# v1.0.6 through v1.0.27: live .github/workflows/ci.yml was left
+# v1.0.6 through v1.0.28: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
 name: CI
@@ -258,3 +258,10 @@ jobs:
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="wrap"||g.exitCode!==0||g.autoPrune!==true||g.pruned!==0||g.pruneReason!=="chain-broken"){console.error(g); process.exit(1)} const err=fs.readFileSync(process.argv[2],"utf8"); if(err.indexOf("chain")===-1||err.indexOf("prune --force")===-1){console.error(err); process.exit(1)}' "$tmp/wrap-autoprune-broken.json" "$tmp/wrap-autoprune-broken.err"
           after=$(count_receipts | tr -d ' ')
           test "$after" = "$((before + 1))"
+          # v1.0.28: nested wrap linking. The steps above set maxCount 1 and
+          # autoPrune true, which would delete the parent. Turn that off so
+          # both receipts stay and the child is not an orphan.
+          node -e 'const fs=require("fs"); const p=process.argv[1]; const lines=fs.readFileSync(p,"utf8").split("\n"); function setKey(key,value){ let found=false; for (let i=0;i<lines.length;i++){ if(lines[i].startsWith(key+":")){ lines[i]=key+": "+value; found=true; } } if(!found) lines.push(key+": "+value); } setKey("maxCount","20"); setKey("autoPrune","false"); fs.writeFileSync(p, lines.join("\n").replace(/\n*$/,"\n"));' "$tmp/.agent-receipt.yml"
+          node bin/agent-receipt.js wrap --link --session ci-link-1028 --agent parent --message link-parent --cwd "$tmp" -- node bin/agent-receipt.js wrap --agent child --message link-child --cwd "$tmp"
+          node bin/agent-receipt.js session ci-link-1028 --json --cwd "$tmp" > "$tmp/session.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="session"||g.exitCode!==0||g.session!=="ci-link-1028"||!Array.isArray(g.receipts)||g.receipts.length!==2||g.receipts.some(function(r){return r.verified!==true})){console.error(g); process.exit(1)} const parent=g.receipts.find(function(r){return r.agent==="parent"}); const child=g.receipts.find(function(r){return r.agent==="child"}); if(!parent||!child||child.parent!==parent.id||parent.parent!==null||child.orphan===true||child.cycle===true){console.error(g); process.exit(1)}' "$tmp/session.json"

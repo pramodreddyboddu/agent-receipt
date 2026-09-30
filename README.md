@@ -183,8 +183,10 @@ agent-receipt html --redact --out share.html
 | `--commits <N>` | Last N commits (default: config / 1) |
 | `--uncommitted` | Snapshot dirty working tree (labeled **uncommitted**) |
 | `--message <text>` | Session message |
-| `--agent <name>` | Agent label |
-| `--session <id>` | Session / run id label |
+| `--agent <name>` | Agent label (flag wins over `AGENT_RECEIPT_AGENT`) |
+| `--session <id>` | Session id for related runs (`AGENT_RECEIPT_SESSION`) |
+| `--parent <ref>` | Parent receipt id, sha256, or path (`AGENT_RECEIPT_PARENT`) |
+| `--host <label>` | Host label. Omitted unless this flag or `AGENT_RECEIPT_HOST` |
 | `--out <path>` | Output Markdown path |
 | `--full` | Full diffs (no truncation) |
 | `--json` | Also write companion `.json` |
@@ -209,9 +211,27 @@ agent-receipt wrap --agent cursor --message "session done"
 agent-receipt wrap --agent cursor --base main --fail-on high
 ```
 
-Flags: `--agent`, `--message`, `--fail-on`, `--base`, `--redact`, `--no-redact`, `--uncommitted`, `--json`, `--full`.
+Flags: `--agent`, `--message`, `--session`, `--parent`, `--host`, `--link`, `--fail-on`, `--base`, `--redact`, `--no-redact`, `--uncommitted`, `--json`, `--full`.
 
 `--json` prints one CI gate object on stdout (exit codes unchanged: 0 pass, 2 policy or verify failure, 1 usage error) and still writes the companion receipt `.json`. Config `failOn` / `redact` apply when the flags are omitted. See [`docs/business.md`](docs/business.md).
+
+## Linking multi-agent runs
+
+`capture`, `wrap`, and `watch` can record a `session` id and a `parent` receipt reference in the hashed `## Session` header, plus an `agent` label. Link fields are read only when two checks both pass. The bytes from `# Agent Receipt` through the end of `## Session` must match the 1.0.28 writer, with fence awareness off in that region: the writer's TL;DR (the `> **TL;DR**` line, blank lines, and `> `-quoted message lines, including the bare `>` quote spacer), then `## What to review` in the writer's body shape, then `## Summary` in the writer's table shape, then `## Session` fields in writer order, then the heading the writer emits next (`## Notable changes`, `## Commits`, or `## Files changed`). A raw line, a fence (`` ``` `` or `~~~`, any info string), an extra heading, a CR-only or mixed line ending, or an out-of-order field fails that check. A file that is entirely CRLF still matches. The whole file is then scanned line by line with fences ignored (a fenced line still counts). There must be exactly one line equal to `# Agent Receipt`, exactly one equal to `## What to review`, and exactly one equal to `## Session`. If any count is not one, the receipt is pre-1.0.28: no link metadata. When the TL;DR contains a timestamp it must match the header Timestamp; a TL;DR with no timestamp skips that check. Receipts written by 1.0.27 or earlier quote only the first message line and leave the rest raw, then write their own header, so a message that pastes a 1.0.28 block has those headings more than once and is not linked. Only that receipt's author, or whoever signs it, can put that message in the hashed body. The rule makes every pre-1.0.28 receipt unlinkable. A branch or workspace path that contains a backtick is percent-encoded in the header so the link is kept. `wrap --link` (or `--session`, including `--session new`) exports `AGENT_RECEIPT_SESSION` and `AGENT_RECEIPT_PARENT` to the command after `--`, so a nested wrap links itself to this receipt. Flags win over those env vars. With no link flag and no link env, the receipt is unchanged.
+
+`--agent` is free-form (spaces allowed; no newlines or control characters), matching 1.0.27 and config `defaultAgent`. `--session` still accepts 1.0.27 values such as `old sess/1` and stores them on one line. Generated ids are `s-` plus 16 hex. `--parent` is an `r-` id, a sha256, or a path to a receipt file. `--message` may span lines; each line is quoted or indented so it cannot form a header field.
+
+`agent-receipt session <id>` prints the local parent/child tree. `--json` is the machine-readable form. Exit 1 when any receipt in the session fails verify or a local parent fails verify. A parent that is not in this `outDir` is flagged `orphan`. A loop inside the session is flagged `cycle`. A parent in another local session is `warnings=cross-session-parent`. None of those warnings change the exit code by themselves.
+
+`host` stays off unless you pass `--host` or set `AGENT_RECEIPT_HOST`. `share` keeps session, parent, and agent, and masks host unless `--include-host`. `prove` shows session, parent, and whether a local parent verifies. It does not show host, and a missing parent does not change the prove exit code.
+
+```bash
+agent-receipt wrap --link --session new --agent parent -- node agent-receipt wrap --agent child
+agent-receipt session s-0123456789abcdef
+agent-receipt session s-0123456789abcdef --json
+```
+
+This is a local index. Cross-host merge of a whole session tree and a signed session manifest are still deferred. Receipts written with `--out` outside `outDir` are not listed. Auto-prune can delete a parent later; the child then shows as an orphan.
 
 ### `share` (redacted HTML in one shot)
 
@@ -372,7 +392,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.27`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.28`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -531,10 +551,12 @@ landed in v1.0.21. Config `sign: true` and `--no-sign` landed in v1.0.22.
 directory, then a copy of the proved Markdown). Auto-prune landed in v1.0.26
 (`autoPrune: true` after capture, wrap, and watch when a retention limit is
 set; a broken chain skips the delete). `prove --html` landed in v1.0.27
-(offline, redacted HTML verification report; not itself signed). Full
-PKI/CA, minisign, GPG, default auto-sign on capture without that config, a
-signed one-pager or signed HTML report, and a long-running prune daemon are
-still deferred.
+(offline, redacted HTML verification report; not itself signed). Thin
+multi-agent receipt linking landed in v1.0.28 (session, parent, `wrap --link`,
+`session`). Cross-host session merge and a signed session manifest are still
+deferred. Full PKI/CA, minisign, GPG, default auto-sign on capture without
+that config, a signed one-pager or signed HTML report, and a long-running
+prune daemon are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
 

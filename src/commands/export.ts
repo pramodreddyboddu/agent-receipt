@@ -13,6 +13,11 @@ export interface ExportOptions {
   out?: string;
   /** Mask high/secret findings before writing. */
   redact?: boolean;
+  /**
+   * Keep the Host label when redacting. Default false: share and export
+   * replace it with `[REDACTED]`. Session, parent, and agent stay.
+   */
+  includeHost?: boolean;
   /** Force markdown output instead of HTML. */
   format?: 'html' | 'markdown' | 'md';
   /** Skip human stdout (share / JSON gate print their own summary). */
@@ -38,7 +43,8 @@ export interface ExportResult {
 }
 
 function agentLabel(markdown: string): string | null {
-  const m = markdown.match(/^- \*\*Agent\*\*:\s*(.+)$/m);
+  // [^\n] keeps CR and U+2028 in the value; `.` would stop and drop them.
+  const m = markdown.match(/^- \*\*Agent\*\*:([^\n]*)$/m);
   const agent = m?.[1]?.trim();
   return agent || null;
 }
@@ -67,7 +73,9 @@ export function cmdExport(
   const redacted = Boolean(opts.redact);
 
   if (redacted) {
-    markdown = appendHashFooter(prepareRedactedBody(markdown));
+    markdown = appendHashFooter(
+      prepareRedactedBody(markdown, { maskHost: opts.includeHost !== true }),
+    );
   }
 
   const fmtRaw = (opts.format || 'html').toLowerCase();

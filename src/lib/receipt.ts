@@ -41,7 +41,13 @@ export interface ReceiptData {
   rangeLabel: string;
   base: string;
   agent?: string;
+  /** Link id (`r-` + 16 hex). Omitted when this run is not linked. */
+  id?: string;
   session?: string;
+  /** Parent link id or sha256. Omitted when this run has no parent. */
+  parent?: string;
+  /** Host label. Omitted unless the user opted in. */
+  host?: string;
   message?: string;
   commits: string[];
   files: FileStat[];
@@ -130,10 +136,88 @@ export function buildReviewItems(data: ReceiptData, limit = 8): ReviewItem[] {
   return items;
 }
 
+const CONTROL_RE = /[\u0000-\u001f\u007f\u2028\u2029]/;
+
+/**
+ * Headings the link grammar counts across the whole file. The writer emits
+ * each of these once. User content must not emit them again as their own line.
+ */
+export const STRUCTURAL_HEADING_LINES = new Set([
+  '# Agent Receipt',
+  '## What to review',
+  '## Session',
+]);
+
+/**
+ * Branch and Workspace are single-backtick spans (`[^`]*`). A raw backtick
+ * ends the span and the receipt is treated as pre-1.0.28. Percent-encode
+ * `%` and `` ` `` so the span matches and the value round-trips.
+ */
+export function encodeBacktickField(value: string): string {
+  return value.replace(/%/g, '%25').replace(/`/g, '%60');
+}
+
+export function decodeBacktickField(value: string): string {
+  return value.replace(/%60/g, '`').replace(/%25/g, '%');
+}
+
+/**
+ * A line after `## Session` is outside the writer grammar. If it is exactly
+ * a structural heading, the whole-file count is not one and the receipt
+ * does not link. Prefix that line with a space. Git diff bodies already
+ * start with `+`, `-`, or a space, so those lines are unchanged.
+ */
+function pushUserLines(lines: string[], text: string): void {
+  for (const line of String(text).split('\n')) {
+    lines.push(STRUCTURAL_HEADING_LINES.has(line) ? ` ${line}` : line);
+  }
+}
+
+function rejectHeaderControl(kind: string, value: string | undefined): void {
+  if (value && CONTROL_RE.test(value)) {
+    throw new Error(
+      `${kind} must be a single line. Newlines and control characters are rejected.`,
+    );
+  }
+}
+
+/** Split on every line break so each piece can be quoted or indented. */
+function messagePhysicalLines(message: string): string[] {
+  return message.replace(/\r\n/g, '\n').replace(/[\r\u2028\u2029]/g, '\n').split('\n');
+}
+
+/**
+ * TL;DR quote. Every physical line is prefixed so a message cannot open a heading.
+ * A one-line message stays `>` plus `> text`, matching earlier receipts.
+ */
+function pushQuotedMessage(lines: string[], message: string): void {
+  lines.push('>');
+  for (const line of messagePhysicalLines(message)) {
+    lines.push(`> ${line}`);
+  }
+}
+
+/**
+ * Header message. The first line stays on the field. Later lines are indented
+ * so they are not headings and not `- **Field**:` lines. One line is unchanged.
+ */
+function pushHeaderMessage(lines: string[], message: string): void {
+  const parts = messagePhysicalLines(message);
+  lines.push(`- **Message**: ${parts[0]}`);
+  for (const extra of parts.slice(1)) {
+    lines.push(`  ${extra}`);
+  }
+}
+
 export function formatMarkdown(
   data: ReceiptData,
   opts: boolean | FormatOptions = false,
 ): string {
+  rejectHeaderControl('agent', data.agent);
+  rejectHeaderControl('session', data.session);
+  rejectHeaderControl('parent', data.parent);
+  rejectHeaderControl('host', data.host);
+  rejectHeaderControl('id', data.id);
   const options: FormatOptions =
     typeof opts === 'boolean' ? { full: opts } : opts ?? {};
   const full = Boolean(options.full);
@@ -155,10 +239,7 @@ export function formatMarkdown(
   lines.push('# Agent Receipt');
   lines.push('');
   lines.push(`> **TL;DR** ${tldr}`);
-  if (data.message) {
-    lines.push('>');
-    lines.push(`> ${data.message}`);
-  }
+  if (data.message) pushQuotedMessage(lines, data.message);
   lines.push('');
 
   lines.push('## What to review');
@@ -172,7 +253,9 @@ export function formatMarkdown(
     let i = 1;
     for (const r of review) {
       const label = r.severity === 'notable' ? 'notable' : r.severity;
-      lines.push(`${i}. **${label}** \`${r.code}\` — ${r.text}`);
+      // One physical line. A newline is still inside the writer grammar.
+      const text = r.text.replace(/[\r\n\u2028\u2029]+/g, ' ');
+      lines.push(`${i}. **${label}** \`${r.code}\` — ${text}`);
       i++;
     }
     lines.push('');
@@ -199,7 +282,7 @@ export function formatMarkdown(
   lines.push('');
   lines.push(`- **Version**: ${data.version}`);
   lines.push(`- **Timestamp**: ${data.timestamp}`);
-  lines.push(`- **Branch**: \`${data.branch}\``);
+  lines.push(`- **Branch**: \`${encodeBacktickField(data.branch)}\``);
   lines.push(`- **HEAD**: \`${data.head}\``);
   if (data.remote) lines.push(`- **Remote**: ${data.remote}`);
   if (data.uncommitted) {
@@ -210,17 +293,20 @@ export function formatMarkdown(
       `- **Range**: \`${data.rangeLabel}\` (\`${data.base.slice(0, 12)}\` → HEAD)`,
     );
   }
+  if (data.id) lines.push(`- **Id**: ${data.id}`);
   if (data.agent) lines.push(`- **Agent**: ${data.agent}`);
   if (data.session) lines.push(`- **Session**: ${data.session}`);
-  if (data.message) lines.push(`- **Message**: ${data.message}`);
-  lines.push(`- **Workspace**: \`${data.cwd}\``);
+  if (data.parent) lines.push(`- **Parent**: ${data.parent}`);
+  if (data.host) lines.push(`- **Host**: ${data.host}`);
+  if (data.message) pushHeaderMessage(lines, data.message);
+  lines.push(`- **Workspace**: \`${encodeBacktickField(data.cwd)}\``);
   lines.push('');
 
   if (notable.length) {
     lines.push('## Notable changes');
     lines.push('');
     for (const n of notable) {
-      lines.push(`- **${n.kind}**: ${n.note} (\`${n.path}\`)`);
+      pushUserLines(lines, `- **${n.kind}**: ${n.note} (\`${n.path}\`)`);
     }
     lines.push('');
   }
@@ -233,7 +319,7 @@ export function formatMarkdown(
   } else if (data.commits.length) {
     lines.push('## Commits');
     lines.push('');
-    for (const c of data.commits) lines.push(`- ${c}`);
+    for (const c of data.commits) pushUserLines(lines, `- ${c}`);
     lines.push('');
   }
 
@@ -246,7 +332,8 @@ export function formatMarkdown(
     lines.push('| Status | File | + | − | Binary |');
     lines.push('|--------|------|---|---|--------|');
     for (const f of data.files) {
-      lines.push(
+      pushUserLines(
+        lines,
         `| ${f.status} | \`${f.path}\` | ${f.insertions} | ${f.deletions} | ${f.binary ? 'yes' : ''} |`,
       );
     }
@@ -258,7 +345,7 @@ export function formatMarkdown(
   if (diffStat) {
     lines.push('## Diff stat');
     lines.push('');
-    for (const l of formatDiffStatTable(data.files)) lines.push(l);
+    for (const l of formatDiffStatTable(data.files)) pushUserLines(lines, l);
     lines.push('');
   }
 
@@ -271,7 +358,7 @@ export function formatMarkdown(
     lines.push('|-----|------|--------|');
     for (const r of shown) {
       const detail = r.message.replace(/\|/g, '\\|');
-      lines.push(`| ${r.severity} | \`${r.code}\` | ${detail} |`);
+      pushUserLines(lines, `| ${r.severity} | \`${r.code}\` | ${detail} |`);
     }
     if (sorted.length > shown.length) {
       lines.push('');
@@ -291,10 +378,10 @@ export function formatMarkdown(
     lines.push('');
   } else {
     for (const p of paths) {
-      lines.push(`### \`${p}\``);
+      pushUserLines(lines, `### \`${p}\``);
       lines.push('');
       lines.push('```diff');
-      lines.push(data.diffs[p]);
+      pushUserLines(lines, data.diffs[p]);
       lines.push('```');
       lines.push('');
     }
@@ -322,6 +409,9 @@ export function formatJson(
     range: { label: data.rangeLabel, base: data.base, head: data.head },
     agent: data.agent ?? null,
     session: data.session ?? null,
+    ...(data.id ? { id: data.id } : {}),
+    ...(data.parent ? { parent: data.parent } : {}),
+    ...(data.host ? { host: data.host } : {}),
     message: data.message ?? null,
     uncommitted: Boolean(data.uncommitted),
     failedOn: Boolean(failedOn),

@@ -82,9 +82,14 @@ Options:
   --since <ref>          Diff range start (e.g. main, HEAD~5, abc123)
   --commits <N>          Last N commits (default: config or 1)
   --uncommitted          Snapshot dirty working tree (staged+unstaged+untracked)
-  --message <text>       Human/agent session message
-  --agent <name>         Agent label (default: config or "agent")
-  --session <id>         Session / run id label
+  --message <text>       Session message. Multiple lines are kept, quoted and indented
+                         so they cannot form header fields
+  --agent <name>         Agent label (default: config or "agent"). Free-form;
+                         spaces allowed. No newlines or control characters.
+  --session <id>         Session id. Same values as 1.0.27, including spaces
+                         and slashes, stored as one line. \`new\` generates s- + 16 hex.
+  --parent <ref>         Parent receipt: r- id, sha256, or a path to a receipt file
+  --host <label>         Host label. Omitted unless this flag or AGENT_RECEIPT_HOST
   --out <path>           Output Markdown path
   --full                 Include full diffs (no truncation)
   --json                 Write companion .json AND print one CI gate object on stdout
@@ -126,8 +131,25 @@ above are omitted. \`sign: true\` covers capture, wrap, and watch only.
 and \`trust add --self\`, add \`sign: true\`. \`--no-sign\` overrides.
 Missing keys tip and leave the receipt unsigned (not exit 2).
 
+Link fields (session, parent, agent, host, and an r- id) are written into the
+\`## Session\` header block only when a flag or env var is set. Flags win over
+AGENT_RECEIPT_SESSION, AGENT_RECEIPT_PARENT, AGENT_RECEIPT_AGENT, and
+AGENT_RECEIPT_HOST. \`--agent\` is a free-form label (spaces allowed; no
+newlines, control characters, or more than 256 characters). Config
+\`defaultAgent\` uses the same rules. \`--session\` accepts the values 1.0.27
+stored, including spaces and slashes, as a single line of at most 256
+characters. Generated ids are \`s-\` + 16 hex. \`--host\` is 1–64 of
+[A-Za-z0-9._:-]. \`--parent\` is an r- id, a 64-hex sha256, or a path that
+parses as a receipt file (not an arbitrary file). \`--message\` may span
+lines; continuation lines are quoted and indented so they are not header
+fields. Invalid link values fail before a file is written. Host is privacy-sensitive
+and is not recorded unless you pass --host or set AGENT_RECEIPT_HOST.
+\`share\` keeps session, parent, and agent, and masks host unless
+--include-host. A local \`capture --redact\` keeps an explicitly requested host.
+
 Each capture under outDir updates .agent-receipt/index.json (stable receipt index).
-Captures with --out outside outDir are not indexed (so they do not become newest).
+Captures with --out outside outDir are not indexed (so they do not become newest)
+and are not listed by \`session\`.
 Appends one line to \`.agent-receipt/audit.jsonl\` (no diff body, no --message).
 See \`help audit\`. Wrap records a wrap line instead of a second capture line.
 
@@ -144,15 +166,21 @@ Examples:
   wrap: `agent-receipt wrap — one-shot end-of-session capture + TL;DR + verify
 
 Usage:
-  agent-receipt wrap [options]
+  agent-receipt wrap [options] [-- command ...]
 
 If the working tree is dirty (and --base is not set), captures with --uncommitted;
 otherwise captures commits (optionally vs --base). Explicit --base always uses a
 commit range even if the tree is dirty. Prints TL;DR + path, then verifies.
 
 Options:
-  --agent <name>         Agent label (default: wrap)
-  --message <text>       Session message (default: "session wrap")
+  --agent <name>         Agent label (default: wrap). Free-form; spaces allowed
+  --session <id>         Session id. \`--session new\` generates s- + 16 hex.
+                         Other values may include spaces and slashes (1.0.27).
+  --parent <ref>         Parent receipt: r- id, sha256, or a path to a receipt file
+  --host <label>         Host label (strict charset). Omitted unless set
+  --link                 Record a session (reuse env, or generate) and run the
+                         command after -- with this receipt as its parent
+  --message <text>       Session message (default: "session wrap"). Multiple lines are allowed
   --base <ref>           When clean, capture vs this base branch/ref
   --uncommitted          Require dirty-tree capture (error if clean)
   --redact               Mask high/secret findings in the written receipt
@@ -194,8 +222,24 @@ Exit codes: 0 OK, 2 fail-on threshold or verify failure, 1 usage/runtime error.
 object sets \`failedOn\` and \`verified\` so CI can tell them apart.
 A line is appended to \`.agent-receipt/audit.jsonl\` (see \`help audit\`).
 
+Linking (\`help session\`):
+  --link, or an explicit --session (including \`new\`), writes a session id
+  and an r- id into this receipt. When a command follows \`--\`, wrap exports
+  AGENT_RECEIPT_SESSION and AGENT_RECEIPT_PARENT (this receipt's id) and
+  runs that command. The child starts in the process working directory,
+  not in \`--cwd\` — pass \`--cwd\` on the child when the parent used it.
+  The child's exit code is printed and does not change wrap's exit code.
+  Do not combine \`--json\` with a child that also prints JSON (stdout would
+  mix). A nested wrap with no --link and no --session still records the
+  exported session and parent. Pass --link on that child as well when it
+  should export its own id to a grandchild. With no --link and no --session,
+  arguments after \`--\` are ignored and no link fields are written.
+  Auto-prune can delete the parent later; \`session\` then flags the child
+  as an orphan. Receipts outside outDir are not listed.
+
 Examples:
   agent-receipt wrap --agent cursor --message "done with auth"
+  agent-receipt wrap --link --session new --agent parent -- node agent-receipt wrap --agent child
   agent-receipt wrap --agent grok --redact --message "grok session"
   agent-receipt wrap --agent grok --redact --uncommitted --message "wip"
   agent-receipt wrap --agent cursor --base main
@@ -272,6 +316,9 @@ Options:
   --json                 One CI gate object on stdout (progress on stderr).
                          Adds sigPath (string or null) when Markdown was written.
                          Adds packagePath when --package wrote a directory.
+  --include-host         Keep the Host label. Default share masks it as
+                         [REDACTED]. Session, parent, and agent always stay.
+                         --no-redact skips masking, so host remains too.
   --cwd <path>           Run as if started in this directory
 
 Exit codes: 0 OK, 2 verify failure or --fail-on, 1 usage/runtime error.
@@ -300,6 +347,7 @@ or share as a single file.
 Options:
   --out <path>           Output path (default: sibling .html next to the receipt)
   --redact               Mask high/secret findings before writing
+  --include-host         With --redact, keep the Host label (default: mask it)
   --format <html|markdown|md>
                          Output format (default: html)
   --cwd <path>           Run as if started in this directory
@@ -440,6 +488,10 @@ Options:
   --once                 Capture after the next change, then exit
   --commits-only         Only watch HEAD commits (ignore dirty tree)
   --agent <name>         Agent label (default: watch)
+  --session <id>         Session id recorded on each capture in this watch
+                         (1.0.27 values allowed; one line)
+  --parent <ref>         Parent receipt: r- id, sha256, or a local receipt path
+  --host <label>         Host label. Omitted unless this flag or AGENT_RECEIPT_HOST
   --message <text>       Session message
   --fail-on [high|medium|low]
                          After capture, exit 2 when --once if threshold met
@@ -477,6 +529,48 @@ Examples:
   agent-receipt watch --once --agent cursor
   agent-receipt watch --commits-only --once
   agent-receipt watch --interval 10 --fail-on high
+`,
+
+  session: `agent-receipt session — list one multi-agent session as a tree
+
+Usage:
+  agent-receipt session <id> [--json] [--cwd <path>]
+
+Scans the configured outDir for receipts whose Session header field equals
+<id> and prints a parent/child tree. Link fields are read only from the
+writer's \`## Session\` block, not from diffs or messages. Each line shows
+the receipt id, pass/fail, exit 0 or 2, agent label, timestamp, and
+verified or unverified.
+\`orphan\` means the parent ref is not a receipt in this outDir (it may
+live on another machine, or auto-prune deleted it). \`cycle\` means the
+parent links loop inside this session. Orphans and cycles do not by
+themselves change the exit code. A parent in a different local session
+is not an orphan; the child is marked \`warnings=cross-session-parent\`.
+A child whose local parent fails verify is \`warnings=parent-unverified\`.
+A receipt with no Session line whose parent is in this session is listed
+with \`warnings=missing-session\`.
+
+\`--json\` prints one object: command, ok, version, exitCode, session,
+receipts[] (id, parent, agent, verified, exitCode, plus orphan, cycle,
+warnings, timestamp, status, path), and reason. Parent is the stored ref,
+or null. \`warnings\` is an array of those codes, or empty.
+
+Exit 0 when every listed receipt verifies and no local parent fails verify.
+Cross-session parents and a missing Session line do not by themselves
+change the exit code.
+Exit 1 when any receipt fails verify, when a local parent fails verify,
+when the session has no local receipts, or on usage errors (missing id,
+control characters, longer than 256 characters, unknown flag).
+A receipt's own exitCode in the tree is 0 or 2. That is separate from
+this command's exit code. Usage errors print on stderr. An empty session
+with --json still prints the object on stdout and exits 1.
+
+Receipts written with --out outside outDir are not listed. This is a
+local index, not a cross-host merge and not a signed session manifest.
+
+Examples:
+  agent-receipt session s-0123456789abcdef
+  agent-receipt session ci-link --json
 `,
 
   verify: `agent-receipt verify — hash-check tamper-evident integrity
@@ -818,6 +912,14 @@ both, \`--out\` must be a directory (end it with \`/\`). Human stdout adds
 one \`html:\` line; \`--json\` adds \`htmlPath\` (string), omitted when
 \`--html\` was not passed. \`prove --html\` does not append the audit log.
 
+When the receipt has a session or parent link, human stdout, the one-pager,
+and the HTML report add session, parent, and parent verify (yes, no,
+not local, or (none)). \`--json\` adds session, parent, and parentVerified
+only in that case. Those keys are omitted when the receipt is unlinked.
+parentVerified does not change the exit code. Host is not shown. The CSP
+meta tag is \`default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; ...\`.
+Single quotes in receipt text are escaped as \`&#39;\`.
+
 Signature status (foo.md → foo.sig.json, written by \`sign\`):
   - No sidecar: present false, ok null. Exit rules are unchanged for that alone.
   - Present and valid for the current receipt sha256: ok true, plus alg and
@@ -859,6 +961,7 @@ true and the exit is 2 even if the hash matches.
   audit { present, chainOk, events, matched, reason },
   signature { present, ok, alg, fingerprint, reason, trusted },
   reason
+  When the receipt has a session or parent: session, parent, parentVerified.
   ok is true only when exitCode is 0.
   --page adds pagePath (string) when the one-pager was written.
   --html adds htmlPath (string) when the HTML report was written.
@@ -1063,6 +1166,10 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
                 maxAgeDays are unset (names init --retention). That WARN
                 does not fail doctor or doctor --strict. Unset autoPrune
                 does not fail --strict. Not a daemon.
+  link          Multi-agent linking (optional). Always INFO, including
+                under --strict. Names --session, --parent, --agent, --host,
+                and wrap --link. Host stays off unless you opt in. share
+                masks host unless --include-host. Not a cross-host merge.
   git-clean     working tree clean? Dirty is a warning, not a failure
   cursor        init --cursor rule present?
   grok          init --grok rule + SessionEnd hook present?
@@ -1200,6 +1307,7 @@ Commands:
   history                List recent receipts (--agent, --uncommitted, --failed, --json)
   ls                     Alias for history
   watch                  Poll git; auto-capture on commits or dirty tree
+  session <id>           List one session as a parent/child tree (--json)
   keygen                 Create a local Ed25519 keypair under .agent-receipt/keys
   sign [path]            Attest the receipt sha256 into a .sig.json sidecar
   trust                  Known-keys allowlist: list, show, add <fp>, add --self, rm <fp>
@@ -1270,6 +1378,9 @@ Examples:
   agent-receipt prove
   agent-receipt prove --page
   agent-receipt prove --html
+  agent-receipt session <id>
+  agent-receipt session <id> --json
+  agent-receipt wrap --link --session new -- node agent-receipt wrap --agent child
   agent-receipt prove --json
   agent-receipt audit
   agent-receipt audit --event wrap

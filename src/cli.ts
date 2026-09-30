@@ -23,6 +23,8 @@ import { cmdCompare } from './commands/compare.js';
 import { cmdHistory } from './commands/history.js';
 import { cmdWatch } from './commands/watch.js';
 import { cmdWrap } from './commands/wrap.js';
+import { cmdSession } from './commands/session.js';
+import { resolveLink, type ResolvedLink } from './lib/link.js';
 import { cmdExport, cmdHtml } from './commands/export.js';
 import { cmdShare } from './commands/share.js';
 import { cmdAudit } from './commands/audit.js';
@@ -75,6 +77,35 @@ function resolveAutoPrune(cwd: string, flags: Record<string, string | boolean>):
   if (flagBool(flags, 'no-prune')) return false;
   if (flagBool(flags, 'prune')) return true;
   return loadConfig(cwd).autoPrune === true;
+}
+
+/**
+ * Flags win over AGENT_RECEIPT_SESSION / PARENT / AGENT / HOST.
+ * `link` is wrap-only: it generates a session when none is set and tells
+ * wrap to export the session and this receipt's id to a child after `--`.
+ * An absent agent is left unset so capture, wrap, and watch keep their defaults.
+ */
+function resolveCliLink(
+  cwd: string,
+  flags: Record<string, string | boolean>,
+  link: boolean,
+): ResolvedLink {
+  const session = flags.session;
+  const parent = flags.parent;
+  const host = flags.host;
+  const agentPresent = flags.agent !== undefined || flags.a !== undefined;
+  return resolveLink(cwd, {
+    sessionFlagPresent: session !== undefined,
+    sessionFlag: typeof session === 'string' ? session : undefined,
+    parentFlagPresent: parent !== undefined,
+    parentFlag: typeof parent === 'string' ? parent : undefined,
+    agentFlagPresent: agentPresent,
+    agentFlag: flagString(flags, 'agent', 'a'),
+    hostFlagPresent: host !== undefined,
+    hostFlag: typeof host === 'string' ? host : undefined,
+    link,
+    env: process.env,
+  });
 }
 
 function flagPositiveInt(
@@ -301,16 +332,24 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         });
         return 0;
       case 'capture': {
+        if (flagBool(flags, 'link')) {
+          throw new Error('--link is only valid on wrap. Pass --session on capture.');
+        }
         const noDiffStat = flagBool(flags, 'no-diff-stat');
         const json = flagBool(flags, 'json');
         const failOn = resolveFailOn(cwd, flags, true);
+        const link = resolveCliLink(cwd, flags, false);
+        const message = flagString(flags, 'message', 'm');
         const result = cmdCapture(cwd, {
           since: flagString(flags, 'since'),
           base: flagString(flags, 'base'),
           commits: flagNumber(flags, 'commits'),
-          message: flagString(flags, 'message', 'm'),
-          agent: flagString(flags, 'agent', 'a'),
-          session: flagString(flags, 'session'),
+          message,
+          agent: link.agent,
+          id: link.id,
+          session: link.session,
+          parent: link.parent,
+          host: link.host,
           out: flagString(flags, 'out', 'o'),
           full: flagBool(flags, 'full'),
           json,
@@ -327,9 +366,17 @@ export async function run(argv: string[] = process.argv): Promise<number> {
       }
       case 'wrap': {
         const failOn = resolveFailOn(cwd, flags, true);
+        const link = resolveCliLink(cwd, flags, flagBool(flags, 'link'));
+        const message = flagString(flags, 'message', 'm');
         const result = cmdWrap(cwd, {
-          agent: flagString(flags, 'agent', 'a'),
-          message: flagString(flags, 'message', 'm'),
+          agent: link.agent,
+          id: link.id,
+          session: link.session,
+          parent: link.parent,
+          host: link.host,
+          propagate: link.propagate,
+          command: positional,
+          message,
           failOn,
           base: flagString(flags, 'base'),
           redact: resolveRedact(cwd, flags),
@@ -351,6 +398,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           failOn,
           json: flagBool(flags, 'json'),
           package: flagBool(flags, 'package', 'pack'),
+          includeHost: flagBool(flags, 'include-host'),
         });
         return result.exitCode;
       }
@@ -359,6 +407,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         cmdExport(cwd, positional[0], {
           out: flagString(flags, 'out', 'o'),
           redact: flagBool(flags, 'redact'),
+          includeHost: flagBool(flags, 'include-host'),
           format: (fmt as 'html' | 'markdown' | 'md' | undefined) || 'html',
         });
         return 0;
@@ -367,6 +416,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         cmdHtml(cwd, positional[0], {
           out: flagString(flags, 'out', 'o'),
           redact: flagBool(flags, 'redact'),
+          includeHost: flagBool(flags, 'include-host'),
         });
         return 0;
       case 'show':
@@ -389,12 +439,20 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           failed: flagHistoryFailed(flags),
         });
       case 'watch': {
+        if (flagBool(flags, 'link')) {
+          throw new Error('--link is only valid on wrap. Pass --session on watch.');
+        }
         const failOn = resolveFailOn(cwd, flags, true);
+        const link = resolveCliLink(cwd, flags, false);
+        const message = flagString(flags, 'message', 'm');
         return await cmdWatch(cwd, {
           interval: flagNumber(flags, 'interval'),
           once: flagBool(flags, 'once'),
-          agent: flagString(flags, 'agent', 'a'),
-          message: flagString(flags, 'message', 'm'),
+          agent: link.agent,
+          session: link.session,
+          parent: link.parent,
+          host: link.host,
+          message,
           failOn,
           json: flagBool(flags, 'json'),
           commitsOnly: flagBool(flags, 'commits-only'),
@@ -508,6 +566,17 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           self: flagBool(flags, 'self'),
         });
         return result.exitCode;
+      }
+      case 'session': {
+        for (const key of Object.keys(flags)) {
+          if (key !== 'cwd' && key !== 'json') {
+            throw new Error(`Unknown flag: --${key}. session accepts --json and --cwd.`);
+          }
+        }
+        if (positional.length > 1) {
+          throw new Error('session accepts one id. Usage: agent-receipt session <id> [--json]');
+        }
+        return cmdSession(cwd, positional[0], { json: flagBool(flags, 'json') });
       }
       case 'doctor':
         return cmdDoctor(cwd, {
