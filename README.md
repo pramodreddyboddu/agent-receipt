@@ -76,6 +76,7 @@ agent-receipt trust add --self   # allowlist that fingerprint (not a CA)
 agent-receipt sign               # attest the receipt sha256
 agent-receipt prove             # hash + audit link + signature status
 agent-receipt prove --page      # human one-pager beside the receipt (foo.prove.md)
+agent-receipt prove --html      # offline HTML verification report (foo.prove.html)
 agent-receipt --version
 ```
 
@@ -161,6 +162,7 @@ agent-receipt trust add --self
 agent-receipt sign
 agent-receipt prove --json
 agent-receipt prove --page
+agent-receipt prove --html
 agent-receipt last --json
 agent-receipt audit --event wrap --limit 20
 agent-receipt audit --agent cursor --failed
@@ -370,7 +372,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.26`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.27`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -475,6 +477,16 @@ does not apply. `prove --json` prints one object, including `signature`.
 (`foo.md` → `foo.prove.md`) with the verdict, hash, audit link, and
 signature status. `--json --page` adds `pagePath`. The page is not signed.
 
+`prove --html` (v1.0.27) writes one self-contained, offline HTML
+verification report (`foo.md` → `foo.prove.html`, same `--out` rules) with a
+PASS / FAIL banner, the hash check, audit chain, Ed25519 signature and trust
+status, and a receipt summary. Redaction is always on (same secret rules as
+`share`), everything is HTML-escaped, URLs are defanged, and the file has
+inline CSS only: no scripts, links, images, fonts, or network, plus a
+`default-src 'none'` CSP. It is written on FAIL too; exit codes do not
+change. `--json --html` adds `htmlPath`. `--page --html` writes both (then
+`--out` must be a directory). The HTML report is not itself signed.
+
 `verify --require-sig` (alias `--require-signature`) opts in to that sidecar.
 The hash check still runs first. After it matches, a missing sidecar exits 2
 (`signature required: signature absent`) and a bad sidecar exits 2 with the
@@ -518,9 +530,11 @@ landed in v1.0.21. Config `sign: true` and `--no-sign` landed in v1.0.22.
 `verify --package` and `import` landed in v1.0.25 (peer check of that
 directory, then a copy of the proved Markdown). Auto-prune landed in v1.0.26
 (`autoPrune: true` after capture, wrap, and watch when a retention limit is
-set; a broken chain skips the delete). Full PKI/CA, minisign, GPG,
-default auto-sign on capture without that config, a signed one-pager,
-`prove --html`, and a long-running prune daemon are still deferred.
+set; a broken chain skips the delete). `prove --html` landed in v1.0.27
+(offline, redacted HTML verification report; not itself signed). Full
+PKI/CA, minisign, GPG, default auto-sign on capture without that config, a
+signed one-pager or signed HTML report, and a long-running prune daemon are
+still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
 

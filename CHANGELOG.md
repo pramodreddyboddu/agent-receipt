@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.27] — 2026-09-26
+
+### Added
+
+- `prove --html` writes one self-contained, offline HTML verification report beside the receipt (`foo.md` → `foo.prove.html`; a name without `.md` gets `<name>.prove.html`). It is rendered from the same prove report as stdout, `--json`, and `--page` (verification is not forked). The page opens with a clear PASS / FAIL banner (PASS is exit 0, the same condition as PROVED) and the failure reasons, then the hash check and SHA-256, the audit hash chain (present / intact / events / matched), Ed25519 signature and trust status (VALID / INVALID / UNSIGNED, fingerprint, TRUSTED / UNTRUSTED / no trust store), redaction status, a receipt summary (agent, timestamp, branch, HEAD, message, TL;DR, files, lines, risk, uncommitted, failed gate), the changed-file list, and risk findings, plus a generated-at timestamp, the agent-receipt version, and the tamper-evident disclaimer. The report is written on FAIL too; exit codes are unchanged. It does not append the audit log.
+- Share-safe by default: every receipt-derived string in the HTML goes through the same secret redaction as `share` (`redactSecretsInText`), secret-bearing risk details (`isHighSecretRiskCode`) are masked as `[REDACTED]`, all text is HTML-escaped, and URL schemes in receipt text are defanged (`https[:]//`) so nothing is clickable or fetchable.
+- Offline and self-contained: inline CSS only; no `<script>`, `<link>`, images, fonts, `@import`, or `url(...)`; no http(s) references; a `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; ...">` and `no-referrer`. Light and dark color schemes and print styles are inline.
+- `--out <file|dir/>` works with `--html` using the same rules as `--page` (an existing directory or a trailing `/` receives `<stem>.prove.html`). `--out` now requires `--page` or `--html`. `--page --html` writes both files; with both, `--out` must be a directory. The HTML is never written over the source receipt. `*.prove.html` is not a receipt (receipt scanners only read `.md`).
+- JSON parity: `prove --json --html` adds optional `htmlPath` (absolute string) when the report was written. The field is omitted without `--html`. Required prove keys are unchanged. Human stdout adds one `html:` line.
+
+### Changed
+
+- Package version bumped to `1.0.27`.
+- `agent-receipt help prove` documents `--html` (and drops "HTML export of this page is deferred"); the command list mentions `--html writes foo.prove.html`.
+- [`docs/business.md`](docs/business.md) documents `prove --html` under Prove and moves it from Deferred to landed. The lead sentence tracks 1.0.27.
+- [`README.md`](README.md) and [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md) document `prove --html`, with a tip to upload `*.prove.html` as a CI artifact for reviewers. Pin comments that track the current cut are `v1.0.27`.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) version-range comments include 1.0.27. A smoke runs `prove --json --html`, checks `htmlPath`, the PASS banner and sha256, and asserts no scripts, links, or http(s) references. Live [`.github/workflows/*`](.github/workflows) was not edited.
+- [`examples/github/action.yml`](examples/github/action.yml), [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml), and [`examples/org-policy.yml`](examples/org-policy.yml) pin comments are `v1.0.27`. No new action input.
+
+### Notes
+
+- Live workflow files were **not** updated. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm.
+- The HTML report is not itself signed. Still not a CA. No new runtime dependencies. `prove --html` is a rendering of the prove result; re-run `prove` or `verify --require-sig` on the receipt to re-check.
+- Stacked on 1.0.26 (auto-prune, PR #39).
+- Still deferred: a signed HTML report / signed one-pager, full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, multi-agent receipt linking, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.26] — 2026-09-23
 
 ### Added

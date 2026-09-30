@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { color } from '../lib/color.js';
 import { VERSION } from '../lib/version.js';
 import { extractTldr } from '../lib/receipt.js';
@@ -21,6 +21,7 @@ import {
 } from '../lib/sign.js';
 import { applyTrust, loadTrustedFingerprints } from '../lib/trust.js';
 import type { FailOnThreshold } from '../lib/risk.js';
+import { renderProveHtml, type ProveHtmlSummary } from '../lib/prove-html.js';
 
 export interface ProveOptions {
   /** One JSON object on stdout. Human banner stays off. */
@@ -37,7 +38,15 @@ export interface ProveOptions {
    * Does not change exit codes. Omitted means stdout only.
    */
   page?: boolean;
-  /** Destination file or directory for the one-pager. Requires `page`. */
+  /**
+   * Write a self-contained offline HTML verification report (`foo.prove.html`).
+   * Redacted by default. Does not change exit codes.
+   */
+  html?: boolean;
+  /**
+   * Destination file or directory for the one-pager and/or HTML report.
+   * Requires `page` or `html`. Must be a directory when both are set.
+   */
   out?: string;
 }
 
@@ -74,6 +83,11 @@ export interface ProveReport {
    * their key set. Null is unused today: a write failure exits 1 instead.
    */
   pagePath?: string | null;
+  /**
+   * Absolute path of the HTML report when `--html` wrote one.
+   * Omitted when `--html` was not passed.
+   */
+  htmlPath?: string | null;
 }
 
 const ABSENT_AUDIT: ProveAudit = {
@@ -235,27 +249,42 @@ function oneLine(value: string): string {
  * `notes.txt.prove.md`) so it does not collide with a Markdown receipt
  * of the same stem.
  */
-function provePageFileName(receiptPath: string): string {
+function provePageFileName(receiptPath: string, ext: 'md' | 'html' = 'md'): string {
   const base = basename(receiptPath);
-  if (/\.md$/i.test(base)) return base.replace(/\.md$/i, '.prove.md');
-  return `${base}.prove.md`;
+  if (/\.md$/i.test(base)) return base.replace(/\.md$/i, `.prove.${ext}`);
+  return `${base}.prove.${ext}`;
 }
 
-function defaultProvePagePath(receiptPath: string): string {
-  return join(dirname(receiptPath), provePageFileName(receiptPath));
+function defaultProvePagePath(receiptPath: string, ext: 'md' | 'html' = 'md'): string {
+  return join(dirname(receiptPath), provePageFileName(receiptPath, ext));
+}
+
+/** True when `--out` names a directory (trailing slash or an existing dir). */
+function outIsDirectory(cwd: string, out: string): boolean {
+  if (/[/\\]$/.test(out)) return true;
+  try {
+    return statSync(resolve(cwd, out)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /**
  * `--out` file is used as-is. An existing directory, or a path that ends
  * with a slash, receives `<stem>.prove.md` inside it.
  */
-function resolveProvePageOut(cwd: string, receiptPath: string, out?: string): string {
-  if (!out) return defaultProvePagePath(receiptPath);
+function resolveProvePageOut(
+  cwd: string,
+  receiptPath: string,
+  out?: string,
+  ext: 'md' | 'html' = 'md',
+): string {
+  if (!out) return defaultProvePagePath(receiptPath, ext);
   const wantsDir = /[/\\]$/.test(out);
   const resolved = resolve(cwd, out);
-  if (wantsDir) return join(resolved, provePageFileName(receiptPath));
+  if (wantsDir) return join(resolved, provePageFileName(receiptPath, ext));
   try {
-    if (statSync(resolved).isDirectory()) return join(resolved, provePageFileName(receiptPath));
+    if (statSync(resolved).isDirectory()) return join(resolved, provePageFileName(receiptPath, ext));
   } catch {
     // Missing path is a file. Parent directories are created at write time.
   }
@@ -320,6 +349,39 @@ function writeProvePage(cwd: string, report: ProveReport, out?: string): string 
   return dest;
 }
 
+function htmlSummary(cwd: string, receiptPath: string): ProveHtmlSummary {
+  const glance = parseReceiptGlance(receiptPath);
+  const rel = relative(cwd, receiptPath);
+  const displayPath = rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : basename(receiptPath);
+  return {
+    displayPath,
+    timestamp: glance.timestamp,
+    branch: glance.branch,
+    head: glance.head,
+    message: glance.message,
+    fileCount: glance.fileCount,
+    insertions: glance.insertions,
+    deletions: glance.deletions,
+    files: glance.files,
+    risks: glance.risks,
+  };
+}
+
+function writeProveHtml(cwd: string, report: ProveReport, out?: string): string {
+  if (!report.path) {
+    throw new Error('prove --html needs a receipt path.');
+  }
+  const dest = resolveProvePageOut(cwd, report.path, out, 'html');
+  if (resolve(dest) === resolve(report.path)) {
+    throw new Error(
+      'prove --html must not overwrite the source receipt. Pass a different --out.',
+    );
+  }
+  mkdirSync(dirname(dest), { recursive: true });
+  writeFileSync(dest, renderProveHtml(report, htmlSummary(cwd, report.path)), 'utf8');
+  return dest;
+}
+
 function printHuman(report: ProveReport): void {
   const banner =
     report.exitCode === 0 ? color.green('PROVED') : color.red('FAILED');
@@ -340,6 +402,7 @@ function printHuman(report: ProveReport): void {
   if (report.failOn) lines.push(`  failOn: ${report.failOn}`);
   if (report.reason) lines.push(`  reason: ${report.reason}`);
   if (report.pagePath) lines.push(`  page: ${report.pagePath}`);
+  if (report.htmlPath) lines.push(`  html: ${report.htmlPath}`);
   console.log(lines.join('\n'));
   console.log('');
   console.log(
@@ -392,6 +455,11 @@ export function cmdProve(
   pathArg?: string,
   opts: ProveOptions = {},
 ): ProveReport {
+  if (opts.page && opts.html && opts.out && !outIsDirectory(cwd, opts.out)) {
+    throw new Error(
+      'prove --out must be a directory (end it with /) when --page and --html are both passed.',
+    );
+  }
   const verified = cmdVerify(cwd, pathArg, { quiet: true, failOn: opts.failOn });
   const text = readFileSync(verified.path, 'utf8');
   const memory = runMemory(cwd, verified.path);
@@ -447,6 +515,9 @@ export function cmdProve(
 
   if (opts.page) {
     report.pagePath = writeProvePage(cwd, report, opts.out);
+  }
+  if (opts.html) {
+    report.htmlPath = writeProveHtml(cwd, report, opts.out);
   }
 
   if (opts.json) printProve(report);

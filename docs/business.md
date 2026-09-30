@@ -1,6 +1,6 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.26 for teams: install once, capture every session, fail CI
+`agent-receipt` 1.0.27 for teams: install once, capture every session, fail CI
 on high-severity findings, share a redacted HTML + Markdown package (or HTML
 alone), verify that package with `verify --package`, and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. When
@@ -135,7 +135,7 @@ is the artifact, not the gate. The gate object itself is
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.26",
+  "version": "1.0.27",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -268,7 +268,7 @@ Copy one of:
 | Example | What to do with it |
 |---------|--------------------|
 | [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. After a green gate it runs `prove --json` (`prove` defaults to true) and uploads `receipt-gate.json` plus the receipt Markdown (`actions/upload-artifact@v4`, name `agent-receipt-gate`). |
-| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.26`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.27`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
 
 ### Drop-in
 
@@ -287,7 +287,7 @@ true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
 - uses: ./.github/actions/agent-receipt
   with:
     install: true
-    from: github:pramodreddyboddu/agent-receipt#v1.0.26
+    from: github:pramodreddyboddu/agent-receipt#v1.0.27
     prove: true
     fail-on: high
     base: origin/main
@@ -308,6 +308,7 @@ agent-receipt trust show
 agent-receipt wrap --sign --fail-on high --json
 agent-receipt prove --json
 agent-receipt prove --page
+agent-receipt prove --html
 agent-receipt verify --require-sig
 ```
 
@@ -483,8 +484,24 @@ file. Human stdout keeps PROVED or FAILED and prints one `page:` line.
 A failed prove (exit 2) still writes the page, with verdict FAILED.
 The page is not itself signed, not a CA, and not access control. It does
 not append the audit log. `last`, `history`, and `prune` ignore
-`*.prove.md` so the page is not the next receipt. HTML export of the
-one-pager stays deferred.
+`*.prove.md` so the page is not the next receipt.
+
+`prove --html` (1.0.27) renders the same report as one self-contained,
+offline HTML verification report a reviewer can open in any browser:
+`foo.md` becomes `foo.prove.html` (same `--out` rules as `--page`). It
+opens with a PASS or FAIL banner (PASS means exit 0), then the hash check,
+SHA-256, audit chain, Ed25519 signature and trust status, redaction, and a
+receipt summary (agent, time, branch, HEAD, message, TL;DR, files, lines,
+risk findings). Share-safe by default: every receipt-derived string goes
+through the same secret redaction as `share`, secret-bearing risk details
+are masked, text is HTML-escaped, and URLs are defanged. Inline CSS only;
+no scripts, links, images, fonts, or network, and a `default-src 'none'`
+CSP. A failed prove still writes the report with a FAIL banner and the
+same exit code. `--json --html` adds `htmlPath`. `--page --html` writes
+both (`--out` must then be a directory). The report is not itself signed,
+not a CA, and does not append the audit log. `*.prove.html` is not a
+receipt. Upload it as a CI artifact so reviewers can read the proof
+without installing anything.
 
 `signature.ok` is null when no sidecar is present, and that alone does not
 change the exit. A sidecar that verifies against the current receipt sha256
@@ -668,10 +685,12 @@ in 1.0.26: `autoPrune: true` (or `--prune` / `init --auto-prune`) runs trusted
 prune after a successful capture, wrap, or watch when a retention limit is
 set. It does not pass `--force`. A broken audit chain skips the delete and
 does not fail the capture. `init --retention` does not turn it on. This is
-not a long-running daemon or cron. This is not a CA. Full PKI/CA is still deferred. Minisign, GPG/OpenPGP, default auto-sign
+not a long-running daemon or cron. `prove --html` landed in 1.0.27: an
+offline, redacted, self-contained HTML verification report (not itself
+signed). This is not a CA. Full PKI/CA is still deferred. Minisign, GPG/OpenPGP, default auto-sign
 on capture without config (signing stays opt-in via config `sign: true` or
-`--sign`), a signed one-pager, unsigned HTML prove export (`prove --html`),
-and multi-agent receipt linking are still deferred. A long-running prune
+`--sign`), a signed one-pager or signed HTML prove report, and multi-agent
+receipt linking are still deferred. A long-running prune
 daemon or cron is still deferred. `trust show` landed in
 1.0.23: a read-only report of the allowlist and whether the local key is
 listed. It is not a CA. Config `sign: true` /
@@ -700,7 +719,7 @@ are checklist and listing tools; they do not sign the audit log.
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.26 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.27 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

@@ -67,7 +67,7 @@
 # Gate JSON schema: docs/gate.schema.json (next to docs/receipt.schema.json)
 # Signature sidecar: docs/signature.schema.json
 # Drop-in CI: examples/github/action.yml and examples/github/pr-gate.yml
-#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.26
+#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.27
 #   local allowlist (since v1.0.20): agent-receipt keygen && agent-receipt trust add --self
 #   status (v1.0.23, read-only): agent-receipt trust show
 #   handoff (v1.0.24): agent-receipt share --package   # HTML + Markdown; HTML unsigned

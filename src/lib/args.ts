@@ -18,6 +18,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     'self',
     'page',
     'one-pager',
+    'html',
     'package',
     'pack',
     'dry-run',
