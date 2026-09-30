@@ -68,6 +68,11 @@ export interface SessionExportReceipt {
   fingerprint: string | null;
   originalFingerprint: string | null;
   resignedBy: string | null;
+  /**
+   * Exporter fingerprint when this package signed an unsigned source whose
+   * bytes changed. Null otherwise. Not the original author's signature.
+   */
+  signedBy: string | null;
   orphan: boolean;
   cycle: boolean;
   warnings: string[];
@@ -101,7 +106,10 @@ const RESIGN_TIP =
  * keeps the original bytes. A rewritten body whose sidecar fingerprint is
  * not the local key is refused unless `--resign`. An unchanged body keeps
  * the original sidecar. A same-key rewrite is re-signed when local keys
- * load and left unsigned when they do not. Missing keys omit
+ * load and left unsigned when they do not. An unsigned source whose bytes
+ * change is signed with the exporter key when keys load. That is recorded
+ * as `signedBy` with `originalFingerprint` null, and a warning is printed
+ * on stderr. It is not the original author's signature. Missing keys omit
  * `session-manifest.sig.json` and do not exit 2. Does not append the
  * audit log and does not edit the index. Cycles and orphans are included
  * and named in `warnings`.
@@ -310,6 +318,15 @@ export function cmdSessionExport(
         item.masked && item.sourceFingerprint && fingerprint && fingerprint !== item.sourceFingerprint
           ? fingerprint
           : null;
+      const signedBy =
+        item.masked && !item.sourceFingerprint && fingerprint ? fingerprint : null;
+      if (signedBy) {
+        console.error(
+          `warning: ${item.rel} was unsigned and redaction changed the bytes. ` +
+            `The packaged copy is signed by the exporter key (signedBy ${signedBy}). ` +
+            'originalFingerprint is null. This is not the original author\'s signature.',
+        );
+      }
       if (resign && item.masked && item.foreign) {
         const next = fingerprint ?? '(unsigned — no local key)';
         console.error(
@@ -331,6 +348,7 @@ export function cmdSessionExport(
         fingerprint,
         originalFingerprint: item.sourceFingerprint,
         resignedBy,
+        signedBy,
         orphan: item.node.orphan,
         cycle: item.node.cycle,
         warnings,
@@ -457,6 +475,7 @@ function toExportReceipt(entry: SessionManifestReceipt): SessionExportReceipt {
     fingerprint: entry.fingerprint,
     originalFingerprint: entry.originalFingerprint,
     resignedBy: entry.resignedBy,
+    signedBy: entry.signedBy,
     orphan: entry.orphan,
     cycle: entry.cycle,
     warnings: entry.warnings,

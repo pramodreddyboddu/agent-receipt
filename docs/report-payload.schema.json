@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/report-payload.schema.json",
+  "title": "ReportPayload",
+  "description": "Canonical JSON embedded in a signed one-page HTML report (`<script type=\"application/json\" id=\"agent-receipt-report\">`) by `agent-receipt report`. The Ed25519 signature is a SignatureDocument (docs/signature.schema.json) over the UTF-8 hex SHA-256 of the canonical form of this object (sorted object keys, no whitespace, array order kept). It is not a signature over the HTML bytes. The same document is embedded as id `agent-receipt-report-sig` and written beside the file as `<report>.html.sig.json` when local keys load. Missing keys omit the signature. CSS, narrative wording, file lists, commit messages, risk text, diff excerpts, and the receipt bytes are not covered. `report verify` re-hashes receipt files when they are on disk. originalFingerprint, resignedBy, and signedBy are the manifest signer's claims when the report was built from a session package. This is not a certificate authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "cliVersion",
+    "generatedAt",
+    "subject",
+    "session",
+    "manifestSha256",
+    "exposure",
+    "verdict",
+    "verifyCommands",
+    "receipts"
+  ],
+  "properties": {
+    "kind": {
+      "const": "agent-receipt-report",
+      "description": "Discriminator. Peers should reject other kinds."
+    },
+    "version": {
+      "const": 1,
+      "description": "Payload schema version. Not the CLI version."
+    },
+    "cliVersion": {
+      "type": "string",
+      "minLength": 1,
+      "description": "agent-receipt version that wrote the report."
+    },
+    "generatedAt": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO-8601 timestamp when the report was written."
+    },
+    "subject": {
+      "enum": ["receipt", "session"],
+      "description": "receipt for one file. session for `report --session` or a `*.session` package."
+    },
+    "session": {
+      "description": "Session id from the receipt or the package, or null.",
+      "anyOf": [{ "type": "string" }, { "type": "null" }]
+    },
+    "manifestSha256": {
+      "description": "SHA-256 of the raw session-manifest.json bytes, or null when the report is not a session package.",
+      "anyOf": [
+        { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        { "type": "null" }
+      ]
+    },
+    "exposure": {
+      "enum": ["redacted", "host", "unredacted"],
+      "description": "redacted is the default pipeline. host is --include-host (secrets still masked). unredacted is --no-redact."
+    },
+    "verdict": {
+      "enum": ["VERIFIED", "FAILED", "UNSIGNED", "UNTRUSTED"],
+      "description": "FAILED wins, then UNTRUSTED, then UNSIGNED when the report itself has no signature, otherwise VERIFIED. An unsigned receipt does not by itself make a signed report UNSIGNED."
+    },
+    "verifyCommands": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Exact offline commands shown on the page. Basenames, not absolute paths."
+    },
+    "receipts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "sha256",
+          "parent",
+          "agent",
+          "verified",
+          "signature",
+          "fingerprint",
+          "trusted",
+          "originalFingerprint",
+          "resignedBy",
+          "signedBy"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Receipt link id, or the canonical sha256 when the receipt has no id."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "Canonical verify hash of the on-disk source receipt, not the redacted display body."
+          },
+          "parent": {
+            "description": "Parent r- id or sha256, or null.",
+            "anyOf": [{ "type": "string" }, { "type": "null" }]
+          },
+          "agent": {
+            "description": "Agent label, or null.",
+            "anyOf": [{ "type": "string" }, { "type": "null" }]
+          },
+          "verified": {
+            "type": "boolean",
+            "description": "True when the receipt hash path matches."
+          },
+          "signature": {
+            "enum": ["valid", "invalid", "unsigned"],
+            "description": "Receipt sidecar status. invalid is a present sidecar that does not verify."
+          },
+          "fingerprint": {
+            "description": "64-hex fingerprint of the receipt sidecar, or null when unsigned.",
+            "anyOf": [
+              { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              { "type": "null" }
+            ]
+          },
+          "trusted": {
+            "description": "True or false when an allowlist was active and the sidecar verified. Null when unsigned, invalid, or the allowlist was inactive.",
+            "anyOf": [{ "type": "boolean" }, { "type": "null" }]
+          },
+          "originalFingerprint": {
+            "description": "Manifest signer's claim of the source sidecar fingerprint, or null. Not a second signature.",
+            "anyOf": [
+              { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              { "type": "null" }
+            ]
+          },
+          "resignedBy": {
+            "description": "Manifest signer's claim of the key that re-signed a different key, or null.",
+            "anyOf": [
+              { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              { "type": "null" }
+            ]
+          },
+          "signedBy": {
+            "description": "Manifest signer's claim of the exporter key that signed an unsigned source whose bytes changed, or null.",
+            "anyOf": [
+              { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              { "type": "null" }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

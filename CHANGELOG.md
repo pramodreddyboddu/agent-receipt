@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.30] — 2026-09-30
+
+### Added
+
+- `agent-receipt report <receipt|last>` and `agent-receipt report --session <id>` (also `report <path/to/*.session>` or a `session-manifest.json`) write one self-contained HTML file. The default path is the sibling of `outDir`: `.agent-receipt/receipts` becomes `.agent-receipt/<stem>.report.html`. A receipt stem that is not a safe filename becomes `report-<sha256-12>.report.html`. A session id that is one safe path segment becomes `<id>.report.html`; anything else becomes `session-<sha256-12>.report.html`. `--out <file>` is that file. An existing directory, or a path that ends with `/`, receives `<stem>.report.html`. The report is never written over the source receipt. `*.report.html` is not a receipt. `last`, `history`, and `prune` ignore it. The report does not append the audit log and does not add an index row.
+- The page is one file: inline CSS, no images, fonts, or network requests. JavaScript is not required to read it. The verdict banner is VERIFIED, FAILED, UNSIGNED, or UNTRUSTED. The page shows what the agent did (summary, commands, files touched, risk flags, What to review, commits, range, and a capped diff excerpt), the session tree for a session report (parent, child, agent, and re-sign claims), signer fingerprints and trust per receipt, the CLI version, the generated timestamp, and the exact commands to re-verify offline. Those commands use basenames.
+- Redaction uses the same `publishRedactedReceipt` pipeline as `share` and `session export` (secrets, nested receipt or index bodies, and the Host line). `--include-host` keeps Host and still masks secrets, the same as `share --include-host`. `--no-redact` skips that pipeline and wins over `--include-host`. Either opt-out prints a loud UNREDACTED marker. The default page does not.
+- Signing embeds `<script type="application/json" id="agent-receipt-report">` with the canonical report payload: kind `agent-receipt-report`, version 1, CLI version, generated timestamp, subject, session, manifest sha256 when the input is a session package, exposure, verdict, the verify commands, and each receipt id, sha256, parent, agent, verified, signature status, fingerprint, trust, `originalFingerprint`, `resignedBy`, and `signedBy`. A detached `<report>.html.sig.json` is the existing Ed25519 `SignatureDocument` over the UTF-8 hex SHA-256 of that canonical JSON (not the HTML bytes). The same signature is embedded as `id="agent-receipt-report-sig"` so one file is enough. Missing keys write an UNSIGNED report and exit 0. A receipt that fails verify, or a present invalid receipt signature, still writes the page and exits 2. UNTRUSTED means an active allowlist rejected a fingerprint; generation still exits 0. See [`docs/report-payload.schema.json`](docs/report-payload.schema.json).
+- `agent-receipt report verify <file.html>` extracts the payload and signature, checks the visible covered fields against the payload, verifies the signature, and re-hashes referenced receipts when they are under `outDir` or `--receipts <dir>`. A receipt that is not on disk is skipped. Exit 0 when the payload, signature, and found receipts agree. Exit 2 when a covered field, the payload, the signature, or a found receipt was tampered with, or when a found receipt fails verify. Exit 1 when the file or the payload is missing or malformed. `--require-sig` requires a signature and enforces the trust allowlist. Without it, an absent signature still exits 0. An invalid signature exits 2 either way. CSS, narrative wording, file lists, commit messages, risk text, diff lines, and the receipt bytes are not signed. Re-hash the receipt files to check their bodies. `originalFingerprint`, `resignedBy`, and `signedBy` are the manifest signer's claims when they come from a session package.
+- Share HTML and the report use the same Content-Security-Policy meta tag: `default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'`. `style-src 'unsafe-inline'` is the stylesheet inside the file. There is no external CSS to hash, and a style hash would change on every edit without adding a boundary the opened file does not already have. `script-src 'none'` blocks executable script. The report's JSON blocks are `type="application/json"` data, not script. `prove --html` is unchanged and still has no script element.
+
+### Changed
+
+- Package version bumped to `1.0.30`.
+- [`README.md`](README.md) and [`docs/business.md`](docs/business.md) document the signed one-page report. Pin comments that track the current cut are `v1.0.30`.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) version-range comments include 1.0.30. A smoke runs `report last` and `report verify`. Live [`.github/workflows/*`](.github/workflows) was not edited.
+- Share HTML decodes a percent-encoded branch or workspace for display, then HTML-escapes it. The stored receipt is unchanged.
+- Default `session export` of an unsigned receipt whose bytes change (redaction) no longer presents the exporter key as the original author. It warns on stderr and records `signedBy` with `originalFingerprint` null and `resignedBy` null. A same-key rewrite leaves `signedBy` null. A different key still requires `--resign` and uses `resignedBy`. Packages written before 1.0.30 omit `signedBy`; readers treat that as null. [`docs/session-package.schema.json`](docs/session-package.schema.json) documents the field. It is not required, so older packages still validate.
+
+### Fixed
+
+- `prune` lstats every target (receipt, JSON companion, and `.sig.json`) before it unlinks anything. A symlinked sidecar is refused and nothing from that batch is deleted, so prune does not exit 1 after deleting only some files.
+- `session import` removes stale `.import-staging-*` directories it owns when they are older than the current run. A directory counts only when it contains the marker file `.agent-receipt-import-staging`. Anything without that marker is left alone, including a symlink that uses the prefix. `--dry-run` does not delete them.
+- `session <id>` and the human `session import` summary show `originalFingerprint`, `resignedBy`, and `signedBy` after import. The claims are stored in `.agent-receipt/resign-provenance.json`, keyed by the canonical receipt sha256. That file is the manifest signer's claim. It is not a second signature over the pre-export bytes. `originalFingerprint` on the manifest is the same kind of claim, covered by `session-manifest.sig.json` when that sidecar verifies.
+- A symlinked `.agent-receipt` parent is followed. Receipts, keys, and the trust store are written in the real directory.
+
+### Notes
+
+- Live workflow files were not edited. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm. No new runtime dependencies.
+- The signature covers the canonical JSON payload, not the pixel HTML. This is not a certificate authority.
+- Still deferred: native adapters (Claude, Cursor, Grok, Codex, MCP), in-toto/SLSA export, Sigstore keyless signing, a published GitHub Action (the drop-in under `examples/github/` stays an example to copy), policy packs, a local web viewer, full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.29] — 2026-09-30
 
 ### Added
@@ -76,7 +109,7 @@ All notable changes to this project will be documented in this file.
 
 - Live workflow files were not edited. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - This cut does not publish to npm. No new runtime dependencies.
-- Still deferred: cross-host session merge and import of whole session trees, a signed session manifest, a signed HTML report / signed one-pager, full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing. Share HTML keeps the 1.0.27 Content-Security-Policy (no CSP meta tag on `share` HTML). Tightening share HTML CSP is deferred. `prove --html` is unchanged.
+- Still deferred: cross-host session merge and import of whole session trees, a signed session manifest, a signed HTML report / signed one-pager, full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing. Share HTML had no CSP meta tag in 1.0.28. That meta was added in 1.0.30. 1.0.28 added `img-src 'none'` to the `prove --html` Content-Security-Policy. The `prove --html` page itself was not otherwise changed in 1.0.28.
 
 ## [1.0.27] — 2026-09-26
 

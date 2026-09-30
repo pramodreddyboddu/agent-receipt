@@ -1,9 +1,22 @@
 /**
  * Self-contained HTML export of an agent-receipt Markdown file.
  * No external CSS/JS — open/share as a single .html file.
+ *
+ * `style-src 'unsafe-inline'` is the offline single-file stylesheet.
+ * There is no external CSS to hash, and a style hash would churn on every
+ * edit without adding a boundary the opened file does not already have.
+ * `script-src 'none'` blocks executable script. Share HTML has no script.
  */
 
 import { extractEmbeddedHash } from './hash.js';
+import { decodeBacktickField } from './receipt.js';
+
+/**
+ * Strict offline policy for share HTML and the signed report.
+ * Prove HTML keeps its own meta (it must not contain a script element).
+ */
+export const OFFLINE_HTML_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'";
 
 export function escapeHtml(s: string): string {
   return s
@@ -21,6 +34,18 @@ function inlineFormat(text: string): string {
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
   return s;
+}
+
+/**
+ * Branch and Workspace are stored percent-encoded (`%25`, `%60`).
+ * Decode for display, then escape. The decoded value is not passed back
+ * through the backtick span, so a backtick cannot reopen a code span.
+ */
+function formatFieldLine(line: string): string {
+  const match = line.match(/^((?:[-*]\s+)?\*\*(Branch|Workspace)\*\*:\s*)`([^`]*)`(.*)$/);
+  if (!match) return inlineFormat(line);
+  const decoded = decodeBacktickField(match[3]);
+  return `${inlineFormat(match[1])}<code>${escapeHtml(decoded)}</code>${inlineFormat(match[4])}`;
 }
 
 /**
@@ -150,7 +175,7 @@ export function markdownToHtml(
         quoteLines.push(lines[i].replace(/^>\s?/, ''));
         i++;
       }
-      body.push(`<blockquote>${quoteLines.map((l) => inlineFormat(l) || '<br>').join('<br>\n')}</blockquote>`);
+      body.push(`<blockquote>${quoteLines.map((l) => formatFieldLine(l) || '<br>').join('<br>\n')}</blockquote>`);
       continue;
     }
 
@@ -163,7 +188,7 @@ export function markdownToHtml(
         body.push('<ul>');
         inUl = true;
       }
-      body.push(`<li>${inlineFormat(line.replace(/^[-*]\s+/, ''))}</li>`);
+      body.push(`<li>${formatFieldLine(line.replace(/^[-*]\s+/, ''))}</li>`);
       i++;
       continue;
     }
@@ -177,7 +202,7 @@ export function markdownToHtml(
         body.push('<ol>');
         inOl = true;
       }
-      body.push(`<li>${inlineFormat(line.replace(/^\d+\.\s+/, ''))}</li>`);
+      body.push(`<li>${formatFieldLine(line.replace(/^\d+\.\s+/, ''))}</li>`);
       i++;
       continue;
     }
@@ -196,7 +221,7 @@ export function markdownToHtml(
     }
 
     closeLists();
-    body.push(`<p>${inlineFormat(line)}</p>`);
+    body.push(`<p>${formatFieldLine(line)}</p>`);
     i++;
   }
   flushTable();
@@ -218,8 +243,11 @@ export function markdownToHtml(
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${OFFLINE_HTML_CSP}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
 <title>${escapeHtml(title)}</title>
+<!-- style-src unsafe-inline: the stylesheet is in this file so it opens offline. script-src none. No remote sources. -->
 <style>
   :root {
     --bg: #0f1419;

@@ -88,6 +88,15 @@ export interface SessionManifestReceipt {
    * unsigned source. Equals `fingerprint` when set.
    */
   resignedBy: string | null;
+  /**
+   * Fingerprint of the exporter key that signed a packaged copy whose source
+   * receipt was unsigned and whose bytes changed (redaction). Null when the
+   * source sidecar was copied, when a same-key rewrite was re-signed, when
+   * `--resign` set `resignedBy`, or when the packaged copy is unsigned.
+   * Equals `fingerprint` when set. `originalFingerprint` is null when this
+   * is set. Absent on a 1.0.29 manifest; readers treat that as null.
+   */
+  signedBy: string | null;
   /** SHA-256 of the raw sidecar bytes. Present only when `signed` is true. */
   sigBytes?: string;
   orphan: boolean;
@@ -428,6 +437,7 @@ function parseReceiptEntry(
     'fingerprint',
     'originalFingerprint',
     'resignedBy',
+    'signedBy',
     'sigBytes',
     'orphan',
     'cycle',
@@ -507,6 +517,32 @@ function parseReceiptEntry(
   if (!doc.signed && doc.resignedBy !== null) {
     throw new SessionPackageUsageError(`${label}.resignedBy must be null when signed is false`);
   }
+  let signedBy: string | null = null;
+  if (Object.prototype.hasOwnProperty.call(doc, 'signedBy')) {
+    if (doc.signedBy !== null && !hex64(doc.signedBy)) {
+      throw new SessionPackageUsageError(
+        `${label}.signedBy must be 64 lowercase hex chars or null`,
+      );
+    }
+    signedBy = (doc.signedBy as string | null) ?? null;
+  }
+  if (signedBy !== null) {
+    if (!doc.signed || signedBy !== doc.fingerprint) {
+      throw new SessionPackageUsageError(
+        `${label}.signedBy must equal fingerprint when set`,
+      );
+    }
+    if (doc.originalFingerprint !== null) {
+      throw new SessionPackageUsageError(
+        `${label}.originalFingerprint must be null when signedBy is set`,
+      );
+    }
+    if (doc.resignedBy !== null) {
+      throw new SessionPackageUsageError(
+        `${label}.resignedBy must be null when signedBy is set`,
+      );
+    }
+  }
   if (doc.signed && !hex64(doc.sigBytes)) {
     throw new SessionPackageUsageError(`${label}.sigBytes is required when signed is true`);
   }
@@ -535,6 +571,7 @@ function parseReceiptEntry(
     fingerprint: doc.fingerprint,
     originalFingerprint: doc.originalFingerprint,
     resignedBy: doc.resignedBy,
+    signedBy,
     orphan: doc.orphan,
     cycle: doc.cycle,
     warnings,

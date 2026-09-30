@@ -77,6 +77,8 @@ agent-receipt sign               # attest the receipt sha256
 agent-receipt prove             # hash + audit link + signature status
 agent-receipt prove --page      # human one-pager beside the receipt (foo.prove.md)
 agent-receipt prove --html      # offline HTML verification report (foo.prove.html)
+agent-receipt report last       # signed one-page HTML report (sibling of outDir)
+agent-receipt report verify .agent-receipt/*.report.html
 agent-receipt --version
 ```
 
@@ -131,6 +133,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `verify [path]` | Hash-check tamper-evident integrity. Default stays hash-only (unsigned receipts still pass). `--package` checks a `share --package` directory (manifest, file hashes, receipt, optional signatures). `--require-sig` requires a valid `*.sig.json` and, when a trust store is configured, a known fingerprint. `--json` includes `trailingIgnored` (boolean) |
 | `import <dir>` | Verify a share package, then copy `receipt.md` (and `receipt.sig.json` when present) into the local receipt store. `--dry-run` writes nothing. Not a local capture |
 | `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, an audit-log link, and signature status when a sidecar is present. `--json` adds `signature` (`trusted` is null when the allowlist is inactive). `--page` writes `foo.prove.md` (plain English; not itself signed). Config `failOn` is not applied |
+| `report [path\|last]` | Signed one-page HTML report. `report --session <id>` or `report <path/to/*.session>` covers a tree. `report verify <file.html>` checks the embedded payload. The signature covers that payload, not the HTML bytes |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
 | `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default). Trusted prune refuses the delete when the audit chain is broken (`--force` is break-glass). `autoPrune: true` or `--prune` runs that same path after capture, wrap, and watch (no `--force`; a broken chain warns and does not fail the capture) |
 | `doctor` | Health check plus a prod checklist (policy, audit, keys, trust, retention, autoPrune, hooks, redact, git clean, Cursor/Grok). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`), unset retention (`maxCount` / `maxAgeDays`), a broken audit chain, and an invalid trust store. A missing trust store stays INFO. Unset `autoPrune` stays INFO and does not fail `--strict`. Default doctor still pressure-gates unset retention. Missing signing keys stay INFO |
@@ -235,9 +238,9 @@ Receipts written with `--out` outside `outDir` are not listed. Auto-prune can de
 
 ## Cross-host session merge
 
-`session export <id>` (alias `session pack`) packs that local tree into a directory beside `outDir`: `.agent-receipt/receipts` becomes `.agent-receipt/<id>.session/`. `--out <dir>` names the directory. The package holds each receipt as `receipts/<basename>.md`, a sidecar when one was copied or re-signed, `session-manifest.json`, and `session-manifest.sig.json` when local keys load. Unless `--include-host`, export uses the same redaction function as `share`: secrets are masked, a nested receipt or index diff body is replaced with `[REDACTED — nested receipt/index body omitted]`, and the header Host line becomes `[REDACTED]`. `--include-host` keeps the original bytes, including Host and secrets. A sidecar signed by another key is copied when the bytes do not change. When redaction must change those bytes, export exits 2 and writes nothing unless `--resign`, which warns on stderr and records `originalFingerprint` and `resignedBy` in the manifest. Orphans and cycles are included and named in the manifest `warnings`. An empty session or a receipt that fails verify writes nothing. Receipts, sidecars, and the manifest are refused above 32 MiB, 256 KiB, and 8 MiB unless `--max-receipt-bytes`, `--max-sidecar-bytes`, or `--max-manifest-bytes` raises the cap. The size is taken from `stat` before the file is read.
+`session export <id>` (alias `session pack`) packs that local tree into a directory beside `outDir`: `.agent-receipt/receipts` becomes `.agent-receipt/<id>.session/`. `--out <dir>` names the directory. The package holds each receipt as `receipts/<basename>.md`, a sidecar when one was copied or re-signed, `session-manifest.json`, and `session-manifest.sig.json` when local keys load. Unless `--include-host`, export uses the same redaction function as `share`: secrets are masked, a nested receipt or index diff body is replaced with `[REDACTED — nested receipt/index body omitted]`, and the header Host line becomes `[REDACTED]`. `--include-host` keeps the original bytes, including Host and secrets. A sidecar signed by another key is copied when the bytes do not change. When redaction must change those bytes, export exits 2 and writes nothing unless `--resign`, which warns on stderr and records `originalFingerprint` and `resignedBy` in the manifest. `originalFingerprint` is the manifest signer's claim about the source sidecar (or null when the source was unsigned). It is not a second signature over the pre-export bytes. `session-manifest.sig.json` covers that claim when the sidecar verifies. An unsigned source whose bytes change is not silently treated as the exporter's own signature: export warns on stderr and sets `signedBy` to the exporter fingerprint, with `originalFingerprint` and `resignedBy` null. A same-key rewrite leaves `signedBy` null. Orphans and cycles are included and named in the manifest `warnings`. An empty session or a receipt that fails verify writes nothing. Receipts, sidecars, and the manifest are refused above 32 MiB, 256 KiB, and 8 MiB unless `--max-receipt-bytes`, `--max-sidecar-bytes`, or `--max-manifest-bytes` raises the cap. The size is taken from `stat` before the file is read.
 
-`session import <dir>` (alias `session merge`) checks the manifest, the file hashes, each receipt, and any signatures, then copies the receipts into your `outDir`. The same id and the same sha256 is skipped. A different sha256 for the same id, or the same filename compared case-insensitively, refuses the import and does not overwrite. A symlink destination (including a dangling link, a symlinked sidecar, or a symlink `outDir`) exits 2 and writes nothing. An existing file, including a stray `.sig.json`, is a conflict unless it is byte-identical. An unreadable destination is a conflict. Files are staged inside `outDir` and published without replacing a name that already exists. `--dry-run` and `--json` report the plan, including `originalFingerprint` and `resignedBy`. `--require-sig` requires receipt sidecars and a manifest signature. After import, `session <id>` lists the merged tree. Import does not append the audit log and does not add an index row. `last`, `history`, and `prune` ignore `*.session/` directories. `prune` also deletes the `.sig.json` of each receipt it deletes.
+`session import <dir>` (alias `session merge`) checks the manifest, the file hashes, each receipt, and any signatures, then copies the receipts into your `outDir`. The same id and the same sha256 is skipped. A different sha256 for the same id, or the same filename compared case-insensitively, refuses the import and does not overwrite. A symlink destination (including a dangling link, a symlinked sidecar, or a symlink `outDir`) exits 2 and writes nothing. An existing file, including a stray `.sig.json`, is a conflict unless it is byte-identical. An unreadable destination is a conflict. Files are staged inside `outDir` and published without replacing a name that already exists. On a real import, stale `.import-staging-*` directories that contain the marker file `.agent-receipt-import-staging` and are older than this run are removed first. A directory without that marker is left alone. `--dry-run` does not delete them. `--dry-run` and `--json` report the plan, including `originalFingerprint`, `resignedBy`, and `signedBy`. The human summary and a later `session <id>` print those claims. `--require-sig` requires receipt sidecars and a manifest signature. After import, `session <id>` lists the merged tree. Import does not append the audit log and does not add an index row. `last`, `history`, and `prune` ignore `*.session/` directories. `prune` checks every target, including the `.sig.json`, before it unlinks anything, and refuses a symlink sidecar.
 
 ```bash
 agent-receipt session export s-0123456789abcdef
@@ -406,7 +409,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.29`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.30`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -441,6 +444,8 @@ agent-receipt capture --fail-on high
 See [`examples/hooks.md`](examples/hooks.md).
 
 ## Config (`.agent-receipt.yml`)
+
+A symlinked `.agent-receipt` parent is followed. Receipts, keys, and the trust store are written in the real directory. `prune` still refuses a symlink receipt or a symlink sidecar and does not delete the rest of that batch.
 
 ```yaml
 outDir: .agent-receipt/receipts
@@ -521,6 +526,8 @@ inline CSS only: no scripts, links, images, fonts, or network, plus a
 change. `--json --html` adds `htmlPath`. `--page --html` writes both (then
 `--out` must be a directory). The HTML report is not itself signed.
 
+`report` (v1.0.30) writes a signed one-page HTML report a reviewer can open offline. `report last` and `report <receipt>` cover one receipt. `report --session <id>` and `report <path/to/*.session>` cover a tree, including the parent/child/agent lines and any `originalFingerprint`, `resignedBy`, or `signedBy` claim. The default file sits beside `outDir` (`.agent-receipt/<stem>.report.html`). The page has a VERIFIED / FAILED / UNSIGNED / UNTRUSTED banner, the summary, commands, files, risk flags, what to review, commits, range, and the exact commands to re-verify. Redaction matches `share` unless you pass `--include-host` or `--no-redact`, which add a loud UNREDACTED marker. The Ed25519 signature covers the canonical JSON payload embedded in the page (receipt ids and sha256s, the manifest sha when there is one, the CLI version, and the generated timestamp), not the HTML pixels. A detached `<report>.html.sig.json` is written when keys load, and the same signature is embedded so one file is enough. Missing keys leave the report unsigned and exit 0. `report verify <file.html>` checks that payload and, when the receipts are still on disk, re-hashes them. `--require-sig` enforces the trust allowlist.
+
 `verify --require-sig` (alias `--require-signature`) opts in to that sidecar.
 The hash check still runs first. After it matches, a missing sidecar exits 2
 (`signature required: signature absent`) and a bad sidecar exits 2 with the
@@ -568,9 +575,10 @@ set; a broken chain skips the delete). `prove --html` landed in v1.0.27
 (offline, redacted HTML verification report; not itself signed). Thin
 multi-agent receipt linking landed in v1.0.28 (session, parent, `wrap --link`,
 `session`). Cross-host session merge landed in v1.0.29 (`session export`,
-`session import`, optional `session-manifest.sig.json`). Full PKI/CA, minisign,
-GPG, default auto-sign on capture without that config, a signed one-pager or
-signed HTML report, and a long-running prune daemon are still deferred.
+`session import`, optional `session-manifest.sig.json`). The signed one-page
+HTML report landed in v1.0.30 (`report`, `report verify`). Full PKI/CA, minisign,
+GPG, default auto-sign on capture without that config, and a long-running
+prune daemon are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
 

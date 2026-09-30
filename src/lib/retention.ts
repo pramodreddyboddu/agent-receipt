@@ -343,31 +343,33 @@ function assertDeletable(cwd: string, abs: string): void {
 
 /**
  * Delete planned receipts, their `.json` companions, and their `.sig.json`
- * sidecars. Missing files are ignored. A symlink is refused before unlink.
+ * sidecars. Every target is lstat'd first. A symlink, a non-file, or a path
+ * outside outDir refuses the whole batch before any unlink, so a later
+ * refusal cannot leave the earlier files already deleted. Missing files
+ * are ignored.
  */
 export function deletePlanned(cwd: string, planned: PruneCandidate[]): void {
-  for (const item of planned) {
-    const sigAbs = signaturePathFor(item.abs);
-    let sigPresent = false;
+  const targets: string[] = [];
+  const seen = new Set<string>();
+  const consider = (abs: string | null): void => {
+    if (!abs || seen.has(abs)) return;
+    let st;
     try {
-      sigPresent = true;
-      lstatSync(sigAbs);
+      st = lstatSync(abs);
     } catch {
-      sigPresent = false;
+      return;
     }
-    if (sigPresent) assertDeletable(cwd, sigAbs);
-    if (item.jsonAbs) {
-      if (existsSync(item.jsonAbs)) {
-        assertDeletable(cwd, item.jsonAbs);
-        unlinkSync(item.jsonAbs);
-      }
-    }
-    if (existsSync(item.abs)) {
-      assertDeletable(cwd, item.abs);
-      unlinkSync(item.abs);
-    }
-    if (sigPresent) unlinkSync(sigAbs);
+    void st;
+    assertDeletable(cwd, abs);
+    seen.add(abs);
+    targets.push(abs);
+  };
+  for (const item of planned) {
+    consider(item.abs);
+    consider(item.jsonAbs);
+    consider(signaturePathFor(item.abs));
   }
+  for (const abs of targets) unlinkSync(abs);
 }
 
 /**

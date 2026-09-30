@@ -916,6 +916,7 @@ export function formatSessionTree(
   session: string,
   nodes: SessionNode[],
   aliasToId?: Map<string, string>,
+  provenance?: Map<string, { originalFingerprint: string | null; resignedBy: string | null; signedBy?: string | null }>,
 ): string {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const children = new Map<string, SessionNode[]>();
@@ -953,6 +954,12 @@ export function formatSessionTree(
     if (node.orphan) bits.push('orphan');
     if (node.cycle) bits.push('cycle');
     if (node.warnings.length) bits.push(`warnings=${node.warnings.join(',')}`);
+    const claim = provenance?.get(node.id);
+    if (claim && (claim.originalFingerprint || claim.resignedBy || claim.signedBy)) {
+      bits.push(`originalFingerprint=${claim.originalFingerprint ?? 'null'}`);
+      bits.push(`resignedBy=${claim.resignedBy ?? 'null'}`);
+      if (claim.signedBy) bits.push(`signedBy=${claim.signedBy}`);
+    }
     lines.push(`${indent}- ${bits.join('  ')}`);
     for (const child of children.get(node.id) ?? []) walk(child, `${indent}  `);
   };

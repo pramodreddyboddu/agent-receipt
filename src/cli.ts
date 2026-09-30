@@ -32,6 +32,7 @@ import { cmdShare } from './commands/share.js';
 import { cmdAudit } from './commands/audit.js';
 import { cmdPrune } from './commands/prune.js';
 import { cmdTrust } from './commands/trust.js';
+import { cmdReport, cmdReportVerify } from './commands/report.js';
 
 const JSON_GATE_COMMANDS = new Set(['capture', 'wrap', 'share', 'verify', 'import']);
 
@@ -548,6 +549,70 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           json: flagBool(flags, 'json'),
         });
         return result.exitCode;
+      }
+      case 'report': {
+        const sub = positional[0];
+        if (sub === 'verify') {
+          for (const key of Object.keys(flags)) {
+            if (
+              key !== 'cwd' &&
+              key !== 'json' &&
+              key !== 'receipts' &&
+              key !== 'require-sig' &&
+              key !== 'require-signature' &&
+              key !== 'trusted-key'
+            ) {
+              throw new Error(
+                `Unknown flag: --${key}. report verify accepts --receipts <dir>, --require-sig, --trusted-key <fp>, --json, and --cwd.`,
+              );
+            }
+          }
+          if (positional.length > 2) {
+            throw new Error('report verify accepts one HTML file. Usage: agent-receipt report verify <file.html>');
+          }
+          const receipts = flags.receipts;
+          if (receipts !== undefined && (typeof receipts !== 'string' || !receipts.trim())) {
+            throw new Error('--receipts requires a directory');
+          }
+          return cmdReportVerify(cwd, positional[1], {
+            json: flagBool(flags, 'json'),
+            receiptsDir: typeof receipts === 'string' ? receipts : undefined,
+            requireSig: flagBool(flags, 'require-sig', 'require-signature'),
+            trustedKeys: flagTrustedKeys(flags),
+          });
+        }
+        for (const key of Object.keys(flags)) {
+          if (
+            key !== 'cwd' &&
+            key !== 'json' &&
+            key !== 'out' &&
+            key !== 'o' &&
+            key !== 'session' &&
+            key !== 'include-host' &&
+            key !== 'no-redact' &&
+            key !== 'trusted-key'
+          ) {
+            throw new Error(
+              `Unknown flag: --${key}. report accepts --session <id>, --out <path>, --include-host, --no-redact, --trusted-key <fp>, --json, and --cwd.`,
+            );
+          }
+        }
+        if (positional.length > 1) {
+          throw new Error(
+            'report accepts one receipt, last, or a *.session directory. Usage: agent-receipt report <receipt|last> [--out <path>]',
+          );
+        }
+        const sessionFlag = flags.session;
+        if (sessionFlag === true) throw new Error('--session requires an id');
+        const out = flagProveOut(flags);
+        return cmdReport(cwd, positional[0], {
+          json: flagBool(flags, 'json'),
+          out,
+          session: typeof sessionFlag === 'string' ? sessionFlag : undefined,
+          includeHost: flagBool(flags, 'include-host'),
+          noRedact: flagBool(flags, 'no-redact'),
+          trustedKeys: flagTrustedKeys(flags),
+        });
       }
       case 'prove': {
         assertKnownProveFlags(flags);
