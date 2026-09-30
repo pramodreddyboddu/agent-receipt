@@ -81,9 +81,10 @@ export interface ReportRisk {
  * One receipt as the page shows it, plus the hashes verify may re-check.
  * `sha256` is the canonical hash of the file the report was built from.
  * `redactedSha256` is the canonical hash of the default redacted body when
- * that hash differs. A local-store report accepts only a raw `sha256` match.
- * A session-package report may also accept a redacted form that hashes to
- * `sha256` or `redactedSha256`.
+ * that hash differs. A file whose raw sha256 equals `sha256` or
+ * `redactedSha256` matches in a local store and in a package. Only a
+ * session-package report may also accept a redact-then-hash of the body,
+ * and then a non-null originalFingerprint requires that sidecar.
  */
 export interface ReportReceiptPayload {
   id: string;
@@ -318,7 +319,7 @@ article{margin:16px 0;padding-top:4px}
 `.trim();
 
 const COVERAGE_NOTE =
-  'The Ed25519 signature covers the canonical JSON payload embedded in this file (sorted keys, no whitespace). report verify re-renders this page from that payload and the signature block and requires the same bytes. A single missing trailing newline is ignored. Any other difference, including this sentence, the banner, the pills, the narrative, and the exposure marker, fails verify. renderVersion selects this HTML renderer. Every same-id file, and every file whose raw or embedded hash is the recorded sha256 or redactedSha256, must pass integrity. A local-store report requires the raw sha256. A session-package report may match the redacted form. A symlink fails verify. originalFingerprint, resignedBy, and signedBy are the manifest signer\'s claims when they come from a session package. This is not a certificate authority.';
+  'The Ed25519 signature covers the canonical JSON payload embedded in this file (sorted keys, no whitespace). report verify re-renders this page from that payload and the signature block and requires the same bytes. A single missing trailing newline is ignored. Any other difference, including this sentence, the banner, the pills, the narrative, and the exposure marker, fails verify. renderVersion selects this HTML renderer. Every same-id file, and every file whose raw or embedded hash is the recorded sha256 or redactedSha256, must pass integrity. A raw sha256 equal to the recorded sha256 or redactedSha256 matches. A session-package report may also match the redacted form, and a non-null originalFingerprint then requires a valid sidecar with that fingerprint. A symlink fails verify. originalFingerprint, resignedBy, and signedBy are the manifest signer\'s claims when they come from a session package. This is not a certificate authority.';
 
 /**
  * Bidi controls are rendered as \\uXXXX so a receipt cannot reorder the page.

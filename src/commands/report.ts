@@ -22,7 +22,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { auditLogPath, loadAuditEvents } from '../lib/audit.js';
+import { auditLogPath, loadAuditEvents, verifyAuditChain } from '../lib/audit.js';
 import { color } from '../lib/color.js';
 import { canonicalBody, extractEmbeddedHash, sha256Hex } from '../lib/hash.js';
 import {
@@ -752,6 +752,13 @@ function isReceiptMarkdownName(name: string): boolean {
   return /\.md$/i.test(name) && !/\.prove\.md$/i.test(name);
 }
 
+/**
+ * Markdown candidates for `report verify`. The depth cap of 4 means the
+ * start directory is depth 0 and a directory four levels down is still read.
+ * The same walk applies equally to pages from report last, verify, and session.
+ * Directory symlinks are not followed. `node_modules`, `.git`, and `keys`
+ * are skipped.
+ */
 function collectMarkdown(dir: string, out: string[], depth: number): void {
   if (depth > 4 || !existsSync(dir)) return;
   let st;
@@ -838,13 +845,15 @@ interface LocalCheck {
   failed: number;
   notChecked: number;
   reason: string | null;
+  /** Payload-only note. "pruned per audit" when a missing receipt was pruned. */
+  note: string | null;
 }
 
 /**
  * A session-package report records `manifestSha256`. Local-store reports leave
- * it null. The redacted-form match is allowed only for the package report:
- * export writes `publishRedactedReceipt` bytes, so `sha256` is that hash and
- * `redactedSha256` is null when the second pass does not change them.
+ * it null. Redact-then-hash (`publishRedactedReceipt`) is allowed only for the
+ * package report. A raw sha256 equal to the recorded `redactedSha256` is a
+ * byte match for both, because that hash is a signed value.
  */
 function isPackageReport(payload: ReportPayload): boolean {
   return typeof payload.manifestSha256 === 'string' && HEX64.test(payload.manifestSha256);
@@ -864,16 +873,14 @@ function redactedFormMatches(item: IndexedReceipt, receipt: ReportReceiptPayload
 }
 
 /**
- * Raw-hash candidates must carry the payload's signature status and fingerprint.
- * A redacted-form candidate is a different byte string (the unredacted original).
- * Its sidecar, when present, must verify against itself. Export may sign only
- * the package, so an absent sidecar is not a mismatch on that path.
+ * On the redact-then-hash path, a signed source names the sidecar that must
+ * still be present. `signedBy` with a null `originalFingerprint` is an
+ * unsigned source that export signed; an absent sidecar is allowed there.
  */
-function signatureMismatch(item: IndexedReceipt, receipt: ReportReceiptPayload, rawMatch: boolean): boolean {
-  if (item.signature === 'invalid') return true;
-  if (!rawMatch) return false;
-  if (item.signature !== receipt.signature) return true;
-  return (item.fingerprint ?? null) !== (receipt.fingerprint ?? null);
+function requiredRedactedFingerprint(receipt: ReportReceiptPayload): string | null {
+  if (receipt.originalFingerprint) return receipt.originalFingerprint;
+  if (receipt.signedBy) return null;
+  return receipt.fingerprint;
 }
 
 function unacceptableReason(
@@ -884,40 +891,74 @@ function unacceptableReason(
   const where = `receipt ${receipt.id} at ${item.path}`;
   if (item.symlink) return `${where} is a symlink`;
   if (!item.verified) return `${where} fails integrity`;
+  if (item.signature === 'invalid') return `${where} signature mismatch`;
   const rawMatch = item.sha256 === receipt.sha256;
-  if (signatureMismatch(item, receipt, rawMatch)) return `${where} signature mismatch`;
-  if (rawMatch) return null;
-  if (packageReport && redactedFormMatches(item, receipt)) return null;
+  if (rawMatch) {
+    if (item.signature !== receipt.signature) return `${where} signature mismatch`;
+    if ((item.fingerprint ?? null) !== (receipt.fingerprint ?? null)) return `${where} signature mismatch`;
+    return null;
+  }
+  // redactedSha256 is a signed value. Matching bytes are enough in a local
+  // store and in a package. An invalid sidecar already failed above.
+  if (receipt.redactedSha256 && item.sha256 === receipt.redactedSha256) return null;
+  if (packageReport && redactedFormMatches(item, receipt)) {
+    const required = requiredRedactedFingerprint(receipt);
+    if (required && (item.signature !== 'valid' || (item.fingerprint ?? null) !== required)) {
+      return `${where} signature mismatch`;
+    }
+    return null;
+  }
   return `${where} differs from the signed payload`;
 }
 
-function storeListsReceipt(cwd: string, receipt: ReportReceiptPayload): { listed: boolean; unreadable: boolean } {
+function auditEventMatches(
+  event: { sha256?: string | null; path?: string | null },
+  receipt: ReportReceiptPayload,
+  hashes: Set<string>,
+): boolean {
+  if (event.sha256 && hashes.has(event.sha256)) return true;
+  return Boolean(event.path && event.path.includes(receipt.id));
+}
+
+/**
+ * The newest matching audit event wins. A prune is not "still listed".
+ * A prune that removed the index row is the same result when a later event
+ * for that receipt is absent.
+ */
+function storeCatalog(
+  cwd: string,
+  receipt: ReportReceiptPayload,
+): { listed: boolean; pruned: boolean; unreadable: boolean } {
   const hashes = acceptedHashes(receipt);
-  let listed = false;
+  let indexListed = false;
   let unreadable = false;
   try {
     const { index, existed } = readIndexStrict(cwd);
     if (existed) {
       for (const entry of index.receipts) {
         if (!entry) continue;
-        if (typeof entry.sha256 === 'string' && hashes.has(entry.sha256)) listed = true;
-        if (typeof entry.path === 'string' && entry.path.includes(receipt.id)) listed = true;
+        if (auditEventMatches(entry, receipt, hashes)) indexListed = true;
       }
     }
   } catch {
     unreadable = true;
   }
+  let newest: { event: string } | null = null;
+  let sawPrune = false;
   if (existsSync(auditLogPath(cwd))) {
     try {
       for (const event of loadAuditEvents(cwd)) {
-        if (event.sha256 && hashes.has(event.sha256)) listed = true;
-        if (event.path && event.path.includes(receipt.id)) listed = true;
+        if (!auditEventMatches(event, receipt, hashes)) continue;
+        newest = event;
+        if (event.event === 'prune') sawPrune = true;
       }
     } catch {
       unreadable = true;
     }
   }
-  return { listed, unreadable };
+  const pruned = newest?.event === 'prune' || (sawPrune && !indexListed);
+  if (pruned) return { listed: false, pruned: true, unreadable };
+  return { listed: indexListed || newest !== null, pruned: false, unreadable };
 }
 
 /**
@@ -926,11 +967,14 @@ function storeListsReceipt(cwd: string, receipt: ReportReceiptPayload): { listed
  * plus every file whose raw sha256 or embedded hash is in the accepted set.
  * Names, subdirectories, and sessions do not narrow the set. `.MD` counts.
  * A symlink candidate is never acceptable.
- * A local-store report requires a raw sha256 match. A session-package report
- * may instead match the redacted form.
+ * A raw sha256 match requires the payload signature status and fingerprint.
+ * A raw sha256 equal to `redactedSha256` is a byte match in both stores.
+ * Redact-then-hash is package-only, and a non-null original fingerprint
+ * then requires that sidecar.
  * `--receipts` with no candidate exits 2. Without it, a receipt the store
- * index or audit log still lists exits 2 (deleted in place). Otherwise it
- * is not checked.
+ * index or audit log still lists exits 2 (deleted in place). A newest
+ * prune event is not listed: the receipt is not checked and the note is
+ * "pruned per audit". Every failure is recorded, not only the first.
  */
 function checkLocalReceipts(
   cwd: string,
@@ -961,8 +1005,9 @@ function checkLocalReceipts(
   let failed = 0;
   let notChecked = 0;
   let reason: string | null = null;
+  let noteText: string | null = null;
   const note = (next: string): void => {
-    if (!reason) reason = next;
+    reason = reason ? `${reason}; ${next}` : next;
   };
   for (const receipt of payload.receipts) {
     const accepted = acceptedHashes(receipt);
@@ -980,15 +1025,21 @@ function checkLocalReceipts(
         note(`receipt ${receipt.id} referenced by report not found in --receipts`);
         continue;
       }
-      const catalog = storeListsReceipt(cwd, receipt);
-      if (catalog.listed) {
-        failed += 1;
-        note(`receipt ${receipt.id} is missing but the store index or audit log still lists it`);
-        continue;
-      }
+      const catalog = storeCatalog(cwd, receipt);
       if (catalog.unreadable) {
         failed += 1;
         note(`receipt ${receipt.id} is missing and the store index or audit log could not be read`);
+        continue;
+      }
+      if (catalog.pruned) {
+        skipped += 1;
+        notChecked += 1;
+        if (!noteText) noteText = 'pruned per audit';
+        continue;
+      }
+      if (catalog.listed) {
+        failed += 1;
+        note(`receipt ${receipt.id} is missing but the store index or audit log still lists it`);
         continue;
       }
       skipped += 1;
@@ -1007,7 +1058,7 @@ function checkLocalReceipts(
     }
     checked += 1;
   }
-  return { checked, skipped, failed, notChecked, reason };
+  return { checked, skipped, failed, notChecked, reason, note: noteText };
 }
 
 /** A non-zero exit never reports VERIFIED. The page's claim is not a pass. */
@@ -1150,11 +1201,15 @@ function receiptsDirError(cwd: string, dir: string | undefined): string | null {
  *    non-zero exit.
  * Candidate files are outDir, or `--receipts` when that flag is set.
  * Every same-id file, and every file whose raw or embedded hash is recorded,
- * must pass. A local-store report requires the raw sha256. A session-package
- * report may match the redacted form. A symlink exits 2. `--receipts`
- * requires every referenced receipt. Without it, a receipt the store index
- * or audit log still lists exits 2. A receipt the store does not list is
- * not checked, and a VERIFIED page is reported as VERIFIED_PAYLOAD_ONLY.
+ * must pass. A raw sha256 equal to the recorded sha256 or redactedSha256
+ * matches. Redact-then-hash is package-only and requires the recorded
+ * original fingerprint when that claim is set. A symlink exits 2.
+ * `--receipts` requires every referenced receipt. Without it, a receipt
+ * the store index or audit log still lists exits 2, unless the newest
+ * audit event is a prune (`pruned per audit`, payload-only). A present
+ * `audit.jsonl` with a broken hash chain exits 2. A missing audit file
+ * is not a chain failure. A receipt the store does not list is not
+ * checked, and a VERIFIED page is reported as VERIFIED_PAYLOAD_ONLY.
  */
 function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions): 0 | 1 | 2 {
   const json = Boolean(opts.json);
@@ -1273,7 +1328,11 @@ function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions
     notChecked: local.notChecked,
     trusted,
   };
-  if (local.reason) return fail(2, local.reason, { ...base, ...counts });
+  const chainError = auditChainError(cwd);
+  if (chainError || local.reason) {
+    const reason = [chainError, local.reason].filter((item): item is string => Boolean(item)).join('; ');
+    return fail(2, reason, { ...base, ...counts });
+  }
   if (payload.verdict === 'FAILED') {
     return fail(2, failedVerdictReason(payload), { ...base, ...counts });
   }
@@ -1302,7 +1361,7 @@ function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions
         skipped: local.skipped,
         failed: local.failed,
         notChecked: local.notChecked,
-        reason: null,
+        reason: local.note,
       },
       json,
     );
@@ -1326,10 +1385,24 @@ function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions
       skipped: local.skipped,
       failed: local.failed,
       notChecked: local.notChecked,
-      reason: null,
+      reason: local.note,
     },
     json,
   );
+}
+
+/**
+ * Same rule as `doctor --strict`. A missing audit file is not a failure.
+ * An empty file is intact. A break exits 2 after receipt counts are known,
+ * so deleting lines cannot fall through to payload-only.
+ */
+function auditChainError(cwd: string): string | null {
+  if (!existsSync(auditLogPath(cwd))) return null;
+  const chain = verifyAuditChain(cwd);
+  if (chain.ok) return null;
+  const where = chain.brokenAt ? ` at line ${chain.brokenAt}` : '';
+  const why = chain.reason ? `: ${chain.reason}` : '';
+  return `audit log hash chain is broken${where}${why} (agent-receipt audit --verify)`;
 }
 
 /**

@@ -744,30 +744,36 @@ A lone CR exits 2 with "page has CR line endings". A leading UTF-8 BOM
 exits 2. Add \`*.report.html -text\` to \`.gitattributes\`. Those bytes
 are not rewritten. Invalid UTF-8 exits 2. \`renderVersion\` selects the
 renderer. Version 1 is this page. An unknown renderVersion exits 2. Bidi controls in rendered
-fields, including agent names, are shown as \`\\uXXXX\`.
+fields, including agent names, are shown as \`\\uXXXX\`. Share HTML uses the same escape.
 
 Candidate receipts come from outDir. \`--receipts <dir>\` searches that
 directory instead, including subdirectories, and does not fall back to
-outDir. For each payload receipt, every candidate must be acceptable.
-A candidate is any file whose parsed id equals that receipt, or whose raw
-sha256 or embedded hash is the recorded sha256 or redactedSha256. The file
-name, subdirectory, and session do not matter. \`.md\` is matched
-case-insensitively, so \`file.MD\` is a candidate. A symlink candidate
-exits 2 ("receipt <id> at <path> is a symlink").
+outDir. The candidate walk has a depth of 4. It applies equally to a page
+from report last, \`report verify\`, or report --session. For each payload
+receipt, every candidate must be acceptable. A candidate is any file whose
+parsed id equals that receipt, or whose raw sha256 or embedded hash is the
+recorded sha256 or redactedSha256. The file name, subdirectory, and session
+do not matter. \`.md\` is matched case-insensitively, so \`file.MD\` is a
+candidate. A symlink candidate exits 2 ("receipt <id> at <path> is a symlink").
 
 A candidate is acceptable only when it passes receipt integrity (the
 embedded hash is correct) and its bytes match. When the raw sha256 equals
 the payload sha256, the sidecar's signature status and fingerprint must
 match the payload. A present sidecar that does not verify is
-"signature mismatch". A local-store report (payload \`manifestSha256\` is
-null) requires that raw sha256. The redacted form is never enough there,
-including \`--include-host\`, \`--no-redact\`, and \`report --session\`.
-A session-package report (\`manifestSha256\` is set, as with
-\`report <package>.session\`) may instead match
-\`publishRedactedReceipt\` to the recorded sha256 or redactedSha256. That
-is why the unredacted original still verifies in the exporter's repo.
-On that path a present sidecar must verify against the file itself; export
-may have signed only the package.
+"signature mismatch". A file whose raw sha256 equals the recorded
+redactedSha256 is a byte match in a local-store report and in a
+session-package report, because that hash is a signed value. An invalid
+sidecar still fails. Computing \`publishRedactedReceipt\` and comparing
+that hash is limited to a session-package report (\`manifestSha256\` is
+set, as with \`report <package>.session\`). A local-store report, including
+\`--include-host\`, \`--no-redact\`, and \`report --session\`, does not
+accept that redact-then-hash stand-in. On the redact-then-hash path, a
+non-null originalFingerprint (or the recorded fingerprint when signedBy
+is null) requires a valid sidecar whose fingerprint equals it, with or
+without \`--require-sig\`. When originalFingerprint is null and signedBy
+is set, an unsigned source is allowed. That is why the unredacted original
+still verifies in the exporter's repo, and why deleting its sidecar after
+a host edit and a re-hash does not.
 
 An unacceptable file exits 2 with the path:
 "receipt <id> at <path> fails integrity",
@@ -778,11 +784,18 @@ With \`--receipts\`, a referenced receipt that is absent exits 2
 ("receipt <id> referenced by report not found in --receipts").
 Without \`--receipts\`, a missing receipt that is still listed in
 \`.agent-receipt/index.json\` or \`.agent-receipt/audit.jsonl\` exits 2
-("still lists it"). If this store does not list it, the page can still
-be exit 0 and the headline is
-"VERIFIED (payload only; N receipts not checked)". \`--json\` then uses
-verdict \`VERIFIED_PAYLOAD_ONLY\` and \`notChecked\`. It does not print a
-plain VERIFIED. On failure the counts are checked, skipped, and failed.
+("still lists it"). The newest audit event for that sha256 or path wins.
+When that event is \`prune\`, or a prune event removed the index row, the
+receipt is not still listed. The result is exit 0 and the note is
+"pruned per audit", under the headline
+"VERIFIED (payload only; N receipts not checked)". If this store does not
+list it at all, the page can still be exit 0 with that same headline.
+\`--json\` then uses verdict \`VERIFIED_PAYLOAD_ONLY\` and \`notChecked\`.
+It does not print a plain VERIFIED. When \`audit.jsonl\` exists, verify
+checks its hash chain the same way \`doctor --strict\` does and exits 2
+with "audit log hash chain is broken" on a break. A store with no
+\`audit.jsonl\` is not a chain failure. On failure the counts are checked,
+skipped, and failed, and the reason lists every problem, not only the first.
 A leading UTF-8 BOM (EF BB BF) exits 2 ("page starts with a UTF-8 BOM").
 The decoder is created with \`ignoreBOM: true\` and the bytes are checked
 explicitly. A CR that is part of CRLF is "page has CRLF line endings".
@@ -800,7 +813,7 @@ Exit codes:
   1  missing file, unreadable file, or --receipts is not a readable directory
   2  bad or missing blocks, schema, signature, page bytes, BOM, CR or CRLF,
      an unacceptable candidate, a receipt deleted while the index or audit
-     log still lists it, a missing --receipts entry, verdict FAILED, verdict
+     log still lists it, a broken audit hash chain, a missing --receipts entry, verdict FAILED, verdict
      UNTRUSTED, or UNSIGNED with --require-sig
 A non-zero exit never prints VERIFIED. \`--require-sig\` enforces the
 trust allowlist when one is configured. With no trust store,

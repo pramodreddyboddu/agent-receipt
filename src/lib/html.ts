@@ -18,8 +18,22 @@ import { decodeBacktickField } from './receipt.js';
 export const OFFLINE_HTML_CSP =
   "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'";
 
+/**
+ * Bidi controls are rendered as \\uXXXX so a receipt cannot reorder the page.
+ * U+202A–U+202E, U+2066–U+2069, and the LRM/RLM marks U+200E/U+200F.
+ * Share HTML and the report both go through `escapeHtml`.
+ */
+const BIDI_RE = /[\u202A-\u202E\u2066-\u2069\u200E\u200F]/g;
+
+export function neutralizeBidi(value: string): string {
+  return value.replace(BIDI_RE, (ch) => {
+    const hex = ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0');
+    return `\\u${hex}`;
+  });
+}
+
 export function escapeHtml(s: string): string {
-  return s
+  return neutralizeBidi(s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
