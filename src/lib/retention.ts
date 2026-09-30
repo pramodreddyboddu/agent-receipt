@@ -17,7 +17,13 @@ import {
 } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import type { AgentReceiptConfig } from './config.js';
-import { isInsideSharePackage, isProveOnePagerName, isSharePackageDirName } from './receipt.js';
+import {
+  isInsideSessionPackage,
+  isInsideSharePackage,
+  isProveOnePagerName,
+  isSessionPackageDirName,
+  isSharePackageDirName,
+} from './receipt.js';
 import {
   indexPath,
   isInsideOutDir,
@@ -27,6 +33,7 @@ import {
   type ReceiptIndex,
   type ReceiptIndexEntry,
 } from './receipt-index.js';
+import { signaturePathFor } from './sign.js';
 
 export const DISK_PRESSURE_BYTES = 20 * 1024 * 1024;
 export const DISK_PRESSURE_COUNT = 100;
@@ -166,6 +173,7 @@ function timestampFor(
  * Receipt markdown files directly under outDir (not nested).
  * Symlinks are skipped. SETUP.md / index.json / audit.jsonl are never receipts.
  * `*.share/` packages (and `manifest.json` inside them) are not receipts.
+ * `*.session/` packages (and `session-manifest.json` inside them) are not receipts.
  * `*.prove.md` one-pagers are not receipts.
  * A file counts when it is in the index, named `receipt-*.md`, or carries a hash footer.
  */
@@ -184,7 +192,7 @@ export function listReceiptFiles(cwd: string, index?: ReceiptIndex): ReceiptFile
 
   for (const name of names) {
     if (name.includes('/') || name.includes('\\')) continue;
-    if (isSharePackageDirName(name)) continue;
+    if (isSharePackageDirName(name) || isSessionPackageDirName(name)) continue;
     if (!name.toLowerCase().endsWith('.md')) continue;
     if (isProveOnePagerName(name)) continue;
     if (PROTECTED_BASENAMES.has(name)) continue;
@@ -196,7 +204,7 @@ export function listReceiptFiles(cwd: string, index?: ReceiptIndex): ReceiptFile
       continue;
     }
     if (st.isSymbolicLink() || !st.isFile()) continue;
-    if (isInsideSharePackage(abs)) continue;
+    if (isInsideSharePackage(abs) || isInsideSessionPackage(abs)) continue;
     if (!isInsideOutDir(cwd, abs)) continue;
     const rel = posixRel(cwd, abs);
     const named = /^receipt-.+\.md$/i.test(name);
@@ -333,9 +341,21 @@ function assertDeletable(cwd: string, abs: string): void {
   }
 }
 
-/** Delete planned receipts. Missing files are ignored. Throws before any partial unlink policy violation. */
+/**
+ * Delete planned receipts, their `.json` companions, and their `.sig.json`
+ * sidecars. Missing files are ignored. A symlink is refused before unlink.
+ */
 export function deletePlanned(cwd: string, planned: PruneCandidate[]): void {
   for (const item of planned) {
+    const sigAbs = signaturePathFor(item.abs);
+    let sigPresent = false;
+    try {
+      sigPresent = true;
+      lstatSync(sigAbs);
+    } catch {
+      sigPresent = false;
+    }
+    if (sigPresent) assertDeletable(cwd, sigAbs);
     if (item.jsonAbs) {
       if (existsSync(item.jsonAbs)) {
         assertDeletable(cwd, item.jsonAbs);
@@ -346,6 +366,7 @@ export function deletePlanned(cwd: string, planned: PruneCandidate[]): void {
       assertDeletable(cwd, item.abs);
       unlinkSync(item.abs);
     }
+    if (sigPresent) unlinkSync(sigAbs);
   }
 }
 

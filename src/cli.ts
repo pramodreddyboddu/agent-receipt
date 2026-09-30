@@ -24,6 +24,8 @@ import { cmdHistory } from './commands/history.js';
 import { cmdWatch } from './commands/watch.js';
 import { cmdWrap } from './commands/wrap.js';
 import { cmdSession } from './commands/session.js';
+import { cmdSessionExport } from './commands/session-export.js';
+import { cmdSessionImport } from './commands/session-import.js';
 import { resolveLink, type ResolvedLink } from './lib/link.js';
 import { cmdExport, cmdHtml } from './commands/export.js';
 import { cmdShare } from './commands/share.js';
@@ -106,6 +108,18 @@ function resolveCliLink(
     link,
     env: process.env,
   });
+}
+
+function flagByteCap(
+  flags: Record<string, string | boolean>,
+  name: string,
+): number | undefined {
+  if (flags[name] === undefined) return undefined;
+  const n = flagNumber(flags, name);
+  if (n === undefined || !Number.isInteger(n) || n < 1) {
+    throw new Error(`--${name} must be an integer number of bytes >= 1`);
+  }
+  return n;
 }
 
 function flagPositiveInt(
@@ -568,9 +582,84 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         return result.exitCode;
       }
       case 'session': {
+        const sub = positional[0];
+        if (sub === 'export' || sub === 'pack') {
+          for (const key of Object.keys(flags)) {
+            if (
+              key !== 'cwd' &&
+              key !== 'json' &&
+              key !== 'out' &&
+              key !== 'include-host' &&
+              key !== 'resign' &&
+              key !== 'max-receipt-bytes' &&
+              key !== 'max-sidecar-bytes' &&
+              key !== 'max-manifest-bytes'
+            ) {
+              throw new Error(
+                `Unknown flag: --${key}. session export accepts --out <dir>, --include-host, --resign, --max-receipt-bytes, --max-sidecar-bytes, --max-manifest-bytes, --json, and --cwd.`,
+              );
+            }
+          }
+          if (positional.length > 2) {
+            throw new Error(
+              'session export accepts one id. Usage: agent-receipt session export <id> [--out <dir>] [--include-host] [--resign] [--json]',
+            );
+          }
+          const out = flags.out;
+          if (out !== undefined && (typeof out !== 'string' || !out.trim())) {
+            throw new Error('--out requires a directory path');
+          }
+          const result = cmdSessionExport(cwd, positional[1], {
+            json: flagBool(flags, 'json'),
+            out: typeof out === 'string' ? out : undefined,
+            includeHost: flagBool(flags, 'include-host'),
+            resign: flagBool(flags, 'resign'),
+            maxReceiptBytes: flagByteCap(flags, 'max-receipt-bytes'),
+            maxSidecarBytes: flagByteCap(flags, 'max-sidecar-bytes'),
+            maxManifestBytes: flagByteCap(flags, 'max-manifest-bytes'),
+          });
+          return result.exitCode;
+        }
+        if (sub === 'import' || sub === 'merge') {
+          for (const key of Object.keys(flags)) {
+            if (
+              key !== 'cwd' &&
+              key !== 'json' &&
+              key !== 'dry-run' &&
+              key !== 'require-sig' &&
+              key !== 'require-signature' &&
+              key !== 'trusted-key' &&
+              key !== 'max-receipt-bytes' &&
+              key !== 'max-sidecar-bytes' &&
+              key !== 'max-manifest-bytes'
+            ) {
+              throw new Error(
+                `Unknown flag: --${key}. session import accepts --dry-run, --json, --require-sig, --trusted-key, --max-receipt-bytes, --max-sidecar-bytes, --max-manifest-bytes, and --cwd.`,
+              );
+            }
+          }
+          if (positional.length > 2) {
+            throw new Error(
+              'session import accepts one package directory. Usage: agent-receipt session import <packageDir> [--dry-run] [--json] [--require-sig]',
+            );
+          }
+          const result = cmdSessionImport(cwd, positional[1], {
+            json: flagBool(flags, 'json'),
+            dryRun: flagBool(flags, 'dry-run'),
+            requireSig: flagBool(flags, 'require-sig', 'require-signature'),
+            trustedKeys: flagTrustedKeys(flags),
+            maxReceiptBytes: flagByteCap(flags, 'max-receipt-bytes'),
+            maxSidecarBytes: flagByteCap(flags, 'max-sidecar-bytes'),
+            maxManifestBytes: flagByteCap(flags, 'max-manifest-bytes'),
+          });
+          return result.exitCode;
+        }
         for (const key of Object.keys(flags)) {
           if (key !== 'cwd' && key !== 'json') {
-            throw new Error(`Unknown flag: --${key}. session accepts --json and --cwd.`);
+            throw new Error(
+              `Unknown flag: --${key}. session accepts --json and --cwd. ` +
+                'session export|pack and session import|merge are separate subcommands.',
+            );
           }
         }
         if (positional.length > 1) {

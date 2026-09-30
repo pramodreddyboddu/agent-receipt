@@ -531,11 +531,16 @@ Examples:
   agent-receipt watch --interval 10 --fail-on high
 `,
 
-  session: `agent-receipt session — list one multi-agent session as a tree
+  session: `agent-receipt session — list, export, or import one multi-agent session
 
 Usage:
   agent-receipt session <id> [--json] [--cwd <path>]
+  agent-receipt session export <id> [--out <dir>] [--include-host] [--resign] [--json]
+  agent-receipt session pack <id>                  # alias of export
+  agent-receipt session import <packageDir> [--dry-run] [--json] [--require-sig]
+  agent-receipt session merge <packageDir>         # alias of import
 
+List:
 Scans the configured outDir for receipts whose Session header field equals
 <id> and prints a parent/child tree. Link fields are read only from the
 writer's \`## Session\` block, not from diffs or messages. Each line shows
@@ -550,10 +555,10 @@ A child whose local parent fails verify is \`warnings=parent-unverified\`.
 A receipt with no Session line whose parent is in this session is listed
 with \`warnings=missing-session\`.
 
-\`--json\` prints one object: command, ok, version, exitCode, session,
-receipts[] (id, parent, agent, verified, exitCode, plus orphan, cycle,
-warnings, timestamp, status, path), and reason. Parent is the stored ref,
-or null. \`warnings\` is an array of those codes, or empty.
+\`--json\` for the list prints one object: command, ok, version, exitCode,
+session, receipts[] (id, parent, agent, verified, exitCode, plus orphan,
+cycle, warnings, timestamp, status, path), and reason. Parent is the
+stored ref, or null. \`warnings\` is an array of those codes, or empty.
 
 Exit 0 when every listed receipt verifies and no local parent fails verify.
 Cross-session parents and a missing Session line do not by themselves
@@ -565,12 +570,93 @@ A receipt's own exitCode in the tree is 0 or 2. That is separate from
 this command's exit code. Usage errors print on stderr. An empty session
 with --json still prints the object on stdout and exits 1.
 
-Receipts written with --out outside outDir are not listed. This is a
-local index, not a cross-host merge and not a signed session manifest.
+Receipts written with --out outside outDir are not listed.
+
+Export (\`session export\`, alias \`session pack\`):
+Writes a portable directory for every receipt the list would show,
+including orphans and cycles. The default directory is the sibling of
+outDir: \`.agent-receipt/receipts\` becomes
+\`.agent-receipt/<id>.session/\`. A session id that is not one safe path
+segment (spaces or slashes, such as \`old sess/1\`) is packed as
+\`session-<sha256-12>.session\`. The manifest stores the real id.
+\`--out <dir>\` is that directory. An existing path is refused and nothing
+is written.
+The package contains \`session-manifest.json\`, \`receipts/<basename>.md\`
+for each receipt, and \`receipts/<basename>.sig.json\` when a sidecar was
+copied or re-signed. See \`docs/session-package.schema.json\`.
+Unless \`--include-host\`, export uses share's redaction function: secret
+values are masked, a nested receipt or index diff body is replaced with
+\`[REDACTED — nested receipt/index body omitted]\`, and the header Host
+line becomes \`[REDACTED]\`. Session, parent, and agent stay. The receipt
+is re-hashed. \`--include-host\` keeps the original bytes, including Host
+and any secrets. \`share --include-host\` still masks secrets and nested
+bodies; only session export's flag skips the pipeline.
+A valid source sidecar is copied when the bytes do not change. A rewrite
+whose sidecar fingerprint is the local key is re-signed when keys load,
+and left unsigned (no stale sidecar) when they do not. A rewrite whose
+sidecar was signed by a different key exits 2 and writes nothing.
+\`--resign\` re-signs with the local key, prints both fingerprints on
+stderr, and sets manifest \`resignedBy\`. \`originalFingerprint\` is the
+source sidecar fingerprint, or null. \`fingerprint\` is the packaged
+sidecar. When keys load, \`session-manifest.sig.json\` is the same Ed25519
+SignatureDocument as \`sign\`, over the UTF-8 hex sha256 of the manifest
+bytes, including those fingerprint fields. Missing keys omit that file
+and do not exit 2.
+A receipt over 32 MiB, a sidecar over 256 KiB, or a manifest over 8 MiB
+exits 2 before the file is read. \`--max-receipt-bytes\`,
+\`--max-sidecar-bytes\`, and \`--max-manifest-bytes\` raise those caps.
+Manifest \`warnings\` may include \`orphan\`, \`cycle\`,
+\`cross-session-parent\`, \`parent-unverified\`, and \`missing-session\`.
+Those receipts are still packed. A listed receipt that fails verify
+exits 2 and writes nothing. An empty session exits 1 and writes nothing.
+\`--json\` prints one object (command \`session-export\`) with packagePath,
+manifestSigPath, receiptCount, warnings, and receipts[].
+Export does not append the audit log and does not edit the index.
+\`last\`, \`history\`, and \`prune\` ignore \`*.session/\` directories.
+
+Import (\`session import\`, alias \`session merge\`):
+Verifies the package, then copies each receipt and its sidecar into
+outDir. The basename is kept when it is a safe \`*.md\` name
+(\`receipts/foo.md\` → \`foo.md\`). Same id and same canonical sha256 skips
+(idempotent) and does not rewrite a sidecar. Same id, or the same
+basename compared case-insensitively, with a different sha256 refuses
+the whole import and writes nothing. A stray \`.sig.json\` is a conflict
+unless the bytes are identical. An unreadable destination, including
+mode 0200, is a conflict. A symlink at the destination or at a parent
+inside outDir, including a dangling symlink and a symlink outDir, exits
+2 and writes nothing. Files are staged in a directory inside outDir and
+published with an exclusive no-overwrite link. A name that already
+exists is left in place. A failed copy removes the stage and any file
+this import published.
+\`--dry-run\` plans the copy and writes nothing. \`--json\` files[] include
+\`fingerprint\`, \`originalFingerprint\`, and \`resignedBy\`.
+\`--require-sig\` requires a valid receipt sidecar and a valid manifest
+signature. When a known-keys allowlist is active, those fingerprints
+must be trusted. The same 32 MiB / 256 KiB / 8 MiB caps as export apply,
+and the same \`--max-*-bytes\` flags raise them. \`stat\` runs first.
+Malformed manifest (kind, version, required fields, lowercase hex) exits 1.
+A file hash mismatch, a receipt that fails verify, a canonical sha256
+that does not match the manifest, a present invalid sidecar, or an
+invalid manifest signature exits 2. An absent receipt sidecar is fine
+when the entry is unsigned. An absent manifest signature is fine unless
+\`--require-sig\` is set.
+\`--json\` prints one object (command \`session-import\`) with copied,
+skipped, conflicts, files[] (action copy, skip, conflict, or symlink),
+and manifestSig. Human output prints VERIFIED or FAILED, the paths that
+would be written or were written, and the skip and conflict counts.
+Import does not append the audit log and does not add an index row.
+\`history\` keeps using the index, so a fresh import is absent there
+while the index has rows. \`session <id>\` scans outDir and lists the
+merged tree. \`last\` follows mtime, so a file just copied can become last.
 
 Examples:
   agent-receipt session s-0123456789abcdef
   agent-receipt session ci-link --json
+  agent-receipt session export s-0123456789abcdef
+  agent-receipt session pack ci-link --include-host --json
+  agent-receipt session import .agent-receipt/ci-link.session
+  agent-receipt session merge .agent-receipt/ci-link.session --dry-run --json
+  agent-receipt session import .agent-receipt/ci-link.session --require-sig
 `,
 
   verify: `agent-receipt verify — hash-check tamper-evident integrity
@@ -1078,7 +1164,8 @@ A receipt is kept only when it satisfies every limit that is set
                  (a receipt exactly N days old is kept)
 
 Both limits together: a file is kept only if it is inside the count AND
-young enough. Sibling \`<receipt>.json\` is deleted with the markdown.
+young enough. Sibling \`<receipt>.json\` and \`<receipt>.sig.json\` are
+deleted with the markdown. A symlink sidecar is refused, not followed.
 \`index.json\` is rewritten (temp file + rename) so removed paths drop out.
 Rows that already point at missing files under outDir are dropped too.
 \`audit.jsonl\` and \`SETUP.md\` are never deleted. Symlinks are skipped.
@@ -1169,7 +1256,12 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
   link          Multi-agent linking (optional). Always INFO, including
                 under --strict. Names --session, --parent, --agent, --host,
                 and wrap --link. Host stays off unless you opt in. share
-                masks host unless --include-host. Not a cross-host merge.
+                masks secrets, nested receipt bodies, and host unless
+                --include-host. session export uses that same redaction
+                unless --include-host, which keeps the original bytes.
+                session export / session import move a whole session tree.
+                Import refuses a symlink destination.
+                Not a CA.
   git-clean     working tree clean? Dirty is a warning, not a failure
   cursor        init --cursor rule present?
   grok          init --grok rule + SessionEnd hook present?
@@ -1308,6 +1400,8 @@ Commands:
   ls                     Alias for history
   watch                  Poll git; auto-capture on commits or dirty tree
   session <id>           List one session as a parent/child tree (--json)
+  session export <id>    Pack a session into <id>.session/ beside outDir (alias: pack)
+  session import <dir>   Verify a session package and merge it into outDir (alias: merge)
   keygen                 Create a local Ed25519 keypair under .agent-receipt/keys
   sign [path]            Attest the receipt sha256 into a .sig.json sidecar
   trust                  Known-keys allowlist: list, show, add <fp>, add --self, rm <fp>
@@ -1380,6 +1474,8 @@ Examples:
   agent-receipt prove --html
   agent-receipt session <id>
   agent-receipt session <id> --json
+  agent-receipt session export <id>
+  agent-receipt session import <id>.session --dry-run
   agent-receipt wrap --link --session new -- node agent-receipt wrap --agent child
   agent-receipt prove --json
   agent-receipt audit

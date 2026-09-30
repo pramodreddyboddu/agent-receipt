@@ -231,7 +231,21 @@ agent-receipt session s-0123456789abcdef
 agent-receipt session s-0123456789abcdef --json
 ```
 
-This is a local index. Cross-host merge of a whole session tree and a signed session manifest are still deferred. Receipts written with `--out` outside `outDir` are not listed. Auto-prune can delete a parent later; the child then shows as an orphan.
+Receipts written with `--out` outside `outDir` are not listed. Auto-prune can delete a parent later; the child then shows as an orphan.
+
+## Cross-host session merge
+
+`session export <id>` (alias `session pack`) packs that local tree into a directory beside `outDir`: `.agent-receipt/receipts` becomes `.agent-receipt/<id>.session/`. `--out <dir>` names the directory. The package holds each receipt as `receipts/<basename>.md`, a sidecar when one was copied or re-signed, `session-manifest.json`, and `session-manifest.sig.json` when local keys load. Unless `--include-host`, export uses the same redaction function as `share`: secrets are masked, a nested receipt or index diff body is replaced with `[REDACTED — nested receipt/index body omitted]`, and the header Host line becomes `[REDACTED]`. `--include-host` keeps the original bytes, including Host and secrets. A sidecar signed by another key is copied when the bytes do not change. When redaction must change those bytes, export exits 2 and writes nothing unless `--resign`, which warns on stderr and records `originalFingerprint` and `resignedBy` in the manifest. Orphans and cycles are included and named in the manifest `warnings`. An empty session or a receipt that fails verify writes nothing. Receipts, sidecars, and the manifest are refused above 32 MiB, 256 KiB, and 8 MiB unless `--max-receipt-bytes`, `--max-sidecar-bytes`, or `--max-manifest-bytes` raises the cap. The size is taken from `stat` before the file is read.
+
+`session import <dir>` (alias `session merge`) checks the manifest, the file hashes, each receipt, and any signatures, then copies the receipts into your `outDir`. The same id and the same sha256 is skipped. A different sha256 for the same id, or the same filename compared case-insensitively, refuses the import and does not overwrite. A symlink destination (including a dangling link, a symlinked sidecar, or a symlink `outDir`) exits 2 and writes nothing. An existing file, including a stray `.sig.json`, is a conflict unless it is byte-identical. An unreadable destination is a conflict. Files are staged inside `outDir` and published without replacing a name that already exists. `--dry-run` and `--json` report the plan, including `originalFingerprint` and `resignedBy`. `--require-sig` requires receipt sidecars and a manifest signature. After import, `session <id>` lists the merged tree. Import does not append the audit log and does not add an index row. `last`, `history`, and `prune` ignore `*.session/` directories. `prune` also deletes the `.sig.json` of each receipt it deletes.
+
+```bash
+agent-receipt session export s-0123456789abcdef
+agent-receipt session import .agent-receipt/s-0123456789abcdef.session --dry-run
+agent-receipt session s-0123456789abcdef
+```
+
+Schema: [`docs/session-package.schema.json`](docs/session-package.schema.json). This is not a CA.
 
 ### `share` (redacted HTML in one shot)
 
@@ -392,7 +406,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.28`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.29`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -553,10 +567,10 @@ directory, then a copy of the proved Markdown). Auto-prune landed in v1.0.26
 set; a broken chain skips the delete). `prove --html` landed in v1.0.27
 (offline, redacted HTML verification report; not itself signed). Thin
 multi-agent receipt linking landed in v1.0.28 (session, parent, `wrap --link`,
-`session`). Cross-host session merge and a signed session manifest are still
-deferred. Full PKI/CA, minisign, GPG, default auto-sign on capture without
-that config, a signed one-pager or signed HTML report, and a long-running
-prune daemon are still deferred.
+`session`). Cross-host session merge landed in v1.0.29 (`session export`,
+`session import`, optional `session-manifest.sig.json`). Full PKI/CA, minisign,
+GPG, default auto-sign on capture without that config, a signed one-pager or
+signed HTML report, and a long-running prune daemon are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
 

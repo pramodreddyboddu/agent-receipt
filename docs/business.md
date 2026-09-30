@@ -135,7 +135,7 @@ is the artifact, not the gate. The gate object itself is
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.28",
+  "version": "1.0.29",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -268,7 +268,7 @@ Copy one of:
 | Example | What to do with it |
 |---------|--------------------|
 | [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. After a green gate it runs `prove --json` (`prove` defaults to true) and uploads `receipt-gate.json` plus the receipt Markdown (`actions/upload-artifact@v4`, name `agent-receipt-gate`). |
-| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.28`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Composite action. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.29`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
 
 ### Drop-in
 
@@ -287,7 +287,7 @@ true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
 - uses: ./.github/actions/agent-receipt
   with:
     install: true
-    from: github:pramodreddyboddu/agent-receipt#v1.0.28
+    from: github:pramodreddyboddu/agent-receipt#v1.0.29
     prove: true
     fail-on: high
     base: origin/main
@@ -655,7 +655,15 @@ A receipt can name the session it belongs to and the parent receipt that spawned
 
 Those fields are inside the hashed `## Session` header. A receipt is 1.0.28+ only when two checks both pass. The bytes from the title line through the end of `## Session` must match the 1.0.28 writer grammar, parsed with fence awareness off. The grammar is the title `# Agent Receipt`, then only the writer's TL;DR lines (`> **TL;DR**`, blank lines, and `> `-quoted message lines), then `## What to review` with the writer's body (a blank line, either the nothing-flagged sentence or numbered review items, a blank line), then `## Summary` with the writer's metric table, then `## Session` with fields in writer order (Version, Timestamp, Branch, HEAD, optional Remote, Range, Snapshot only after an uncommitted Range, optional Id, Agent, Session, Parent, Host, and Message, then Workspace, then the optional redaction notice), then the heading the writer emits next (`## Notable changes`, `## Commits`, or `## Files changed`). A raw line, a fence (`` ``` `` or `~~~`, any info string), an extra heading, a CR-only or mixed line ending, or an out-of-order field in that region fails the grammar. Uniform CRLF is accepted; a bare CR line ending is not. The whole file is then scanned line by line with fences ignored: a line inside a fence still counts. There must be exactly one line equal to `# Agent Receipt`, exactly one equal to `## What to review`, and exactly one equal to `## Session`. If any count is not one, the receipt is pre-1.0.28 and parsers read no link metadata from it. There is no fallback `## Session`. When the TL;DR line contains a timestamp, it must match the header Timestamp. A TL;DR with no timestamp skips that check. The 1.0.28 writer emits one and it matches. A diff or message that contains `- **Session**:` lines does not create a link. Receipts written by 1.0.27 or earlier have no link metadata and verify, require a signature, and prove with the same exit codes as before. Those writers quote only the first message line and emit the rest raw, then write their own header, so a pasted 1.0.28 block (including a first line `# Agent Receipt`, or a blank line after the quoted line) leaves more than one of each heading. Only the author of that old receipt, or whoever signs it, can craft that body. The rule makes every pre-1.0.28 receipt unlinkable. The 1.0.28 writer quotes or indents message lines, commit continuations, diff lines, file names, and risk details that would otherwise be exactly those headings, so a real 1.0.28 receipt still has one of each and still links. A backtick in the branch or workspace path is percent-encoded (`%60`) so the grammar keeps the link. `--agent` is free-form, including spaces, same as 1.0.27 and config `defaultAgent`. `--session` still accepts 1.0.27 values (spaces and slashes) on one line. `--message` may span lines; the 1.0.28 writer quotes every line in the TL;DR and indents every header continuation so a message cannot put a raw heading in the header region. `--parent` must be an `r-` id, a sha256, or a receipt file. Changing the header breaks `verify`. On a 1.0.28+ receipt, a hash-valid id, parent, or host that fails the strict check is tampered (`verify` exits 2). Free-form agent and session text is not a verify-time tamper failure. `agent-receipt session <id>` lists the local tree and exits 1 when any receipt fails verify or a local parent fails verify. A cross-session parent is a warning. `prove` and `prove --html` show the session, the parent, and whether a local parent verifies. That does not change the prove exit code.
 
-`host` is off unless `--host` or `AGENT_RECEIPT_HOST` is set. `share` keeps session, parent, and agent, and masks host unless `--include-host`. This is not a cross-host merge and not a signed session manifest. Receipts outside `outDir` are not indexed. Auto-prune can delete a parent; the child is then an orphan, which does not by itself fail `session`.
+`host` is off unless `--host` or `AGENT_RECEIPT_HOST` is set. `share` keeps session, parent, and agent, and masks host unless `--include-host`. Receipts outside `outDir` are not indexed. Auto-prune can delete a parent; the child is then an orphan, which does not by itself fail `session`.
+
+### Cross-host session merge
+
+`session export <id>` (alias `session pack`) writes a portable directory for that local tree. The default path is the sibling of `outDir`: `.agent-receipt/receipts` becomes `.agent-receipt/<id>.session/`. `--out <dir>` names the directory. The package contains each receipt, a sidecar when one was copied or re-signed, `session-manifest.json`, and `session-manifest.sig.json` when local keys load. Unless `--include-host`, export calls the same function as `share`: secrets are masked, a nested receipt or index diff body is replaced with `[REDACTED — nested receipt/index body omitted]`, and the header Host line becomes `[REDACTED]`. `--include-host` keeps the original bytes. A sidecar from another key is kept when the bytes do not change. Redaction that would change those bytes exits 2 and writes nothing unless `--resign`. `--resign` warns on stderr and records `originalFingerprint` and `resignedBy`. Orphans and cycles are included and named in `warnings`. An empty session or a receipt that fails verify writes nothing. Reads are capped at 32 MiB (receipt), 256 KiB (sidecar), and 8 MiB (manifest) unless the matching `--max-*-bytes` flag raises the cap. `stat` runs before the read.
+
+`session import <dir>` (alias `session merge`) verifies the manifest, the file hashes, each receipt, and any signatures, then copies the receipts into `outDir`. The same id and the same sha256 is skipped. A different sha256 for the same id, or the same filename compared case-insensitively, refuses the import and does not overwrite. A symlink at the destination or in a parent inside `outDir` exits 2 and writes nothing. A stray sidecar or an unreadable destination is a conflict. The copy is staged inside `outDir` and published only onto names that do not exist. `--dry-run` and `--json` report the plan, including both fingerprints. `--require-sig` requires receipt sidecars and a manifest signature. After import, `session <id>` lists the merged tree. Import does not append the audit log and does not add an index row. `last`, `history`, and `prune` ignore `*.session/` directories. `prune` deletes the `.sig.json` sidecar of each receipt it deletes.
+
+Schema: [`session-package.schema.json`](session-package.schema.json). This is not a CA.
 
 ### Deferred
 
@@ -697,7 +705,7 @@ not a long-running daemon or cron. `prove --html` landed in 1.0.27: an
 offline, redacted, self-contained HTML verification report (not itself
 signed). This is not a CA. Full PKI/CA is still deferred. Minisign, GPG/OpenPGP, default auto-sign
 on capture without config (signing stays opt-in via config `sign: true` or
-`--sign`), and a signed one-pager or signed HTML prove report are still deferred. Thin local multi-agent receipt linking landed in 1.0.28 (`--session`, `--parent`, `--agent`, `--host`, `wrap --link`, `session`). Cross-host session merge, a signed session manifest, and importing a whole session tree are still deferred. A long-running prune
+`--sign`), and a signed one-pager or signed HTML prove report are still deferred. Thin local multi-agent receipt linking landed in 1.0.28 (`--session`, `--parent`, `--agent`, `--host`, `wrap --link`, `session`). Cross-host session merge landed in 1.0.29 (`session export`, `session import`, optional `session-manifest.sig.json`). A long-running prune
 daemon or cron is still deferred. `trust show` landed in
 1.0.23: a read-only report of the allowlist and whether the local key is
 listed. It is not a CA. Config `sign: true` /
@@ -726,7 +734,7 @@ are checklist and listing tools; they do not sign the audit log.
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.28 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.29 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

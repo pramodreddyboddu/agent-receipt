@@ -32,6 +32,26 @@ export function isInsideSharePackage(filePath: string): boolean {
   return parts.slice(0, -1).some((part) => isSharePackageDirName(part));
 }
 
+/**
+ * Portable session packages are directories named `<id>.session`.
+ * `last`, `history`, and `prune` skip those directories and anything inside them.
+ * `session-manifest.json` and the packaged receipts are not local receipts.
+ */
+export function isSessionPackageDirName(filename: string): boolean {
+  const base = filename.split(/[/\\]/).pop() ?? filename;
+  return /\.session$/i.test(base);
+}
+
+/**
+ * True when any parent segment is a `*.session` package directory.
+ * The file's own basename is not treated as a directory.
+ */
+export function isInsideSessionPackage(filePath: string): boolean {
+  const parts = filePath.replace(/\\/g, '/').split('/').filter((part) => part.length > 0);
+  if (parts.length < 2) return false;
+  return parts.slice(0, -1).some((part) => isSessionPackageDirName(part));
+}
+
 export interface ReceiptData {
   version: string;
   timestamp: string;

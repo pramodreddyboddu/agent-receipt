@@ -27,6 +27,8 @@ export { cmdVerifyPackage } from './commands/verify-package.js';
 export { cmdImport } from './commands/import.js';
 export { cmdProve } from './commands/prove.js';
 export { cmdSession } from './commands/session.js';
+export { cmdSessionExport } from './commands/session-export.js';
+export { cmdSessionImport } from './commands/session-import.js';
 export { cmdKeygen } from './commands/keygen.js';
 export { cmdSign } from './commands/sign.js';
 export { cmdTrust } from './commands/trust.js';
@@ -83,6 +85,7 @@ export {
   redactSecretsInText,
   redactMarkdownBody,
   prepareRedactedBody,
+  publishRedactedReceipt,
   isReceiptArtifactPath,
 } from './lib/redact.js';
 export { markdownToHtml } from './lib/html.js';

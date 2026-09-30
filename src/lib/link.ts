@@ -33,13 +33,16 @@
 
 import { randomBytes } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { assertReadableSize, type ByteLimitError } from './byte-limit.js';
 import { isAbsolute, join, resolve } from 'node:path';
 import { loadConfig } from './config.js';
 import { extractEmbeddedHash, verifyMarkdown } from './hash.js';
 import {
   decodeBacktickField,
+  isInsideSessionPackage,
   isInsideSharePackage,
   isProveOnePagerName,
+  isSessionPackageDirName,
   isSharePackageDirName,
   STRUCTURAL_HEADING_LINES,
 } from './receipt.js';
@@ -213,16 +216,16 @@ function requireFlagValue(name: string, present: boolean, value: string | undefi
   return value.trim();
 }
 
-/** Receipt .md files under outDir, newest last is not required. Skips prove pages and share packages. */
+/** Receipt .md files under outDir, newest last is not required. Skips prove pages, share packages, and session packages. */
 export function listOutDirReceipts(cwd: string): string[] {
   const cfg = loadConfig(cwd);
   const dir = cfg.outDir.startsWith('/') ? cfg.outDir : join(cwd, cfg.outDir);
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
-    .filter((f) => !isSharePackageDirName(f))
+    .filter((f) => !isSharePackageDirName(f) && !isSessionPackageDirName(f))
     .filter((f) => f.endsWith('.md') && !isProveOnePagerName(f))
     .map((f) => join(dir, f))
-    .filter((p) => !isInsideSharePackage(p))
+    .filter((p) => !isInsideSharePackage(p) && !isInsideSessionPackage(p))
     .filter((p) => {
       try {
         return statSync(p).isFile();
@@ -619,11 +622,23 @@ export interface LocalReceiptRef {
   meta: LinkMeta;
 }
 
-export function readLocalReceipt(filePath: string): LocalReceiptRef | null {
+export interface ReadReceiptOptions {
+  /** When set, stat and refuse before reading a larger file. */
+  maxBytes?: number;
+}
+
+export function readLocalReceipt(
+  filePath: string,
+  opts?: ReadReceiptOptions,
+): LocalReceiptRef | null {
+  if (opts?.maxBytes !== undefined) {
+    assertReadableSize(filePath, opts.maxBytes, `receipt ${filePath}`, '--max-receipt-bytes');
+  }
   let text: string;
   try {
     text = readFileSync(filePath, 'utf8');
-  } catch {
+  } catch (err) {
+    if (opts?.maxBytes !== undefined && isByteLimit(err)) throw err;
     return null;
   }
   const meta = parseLinkMeta(text);
@@ -641,10 +656,17 @@ export function readLocalReceipt(filePath: string): LocalReceiptRef | null {
   return { path: filePath, id, sha256, aliases: [...aliases], meta };
 }
 
-export function indexLocalReceipts(cwd: string): Map<string, LocalReceiptRef> {
+function isByteLimit(err: unknown): err is ByteLimitError {
+  return Boolean(err && typeof err === 'object' && (err as { name?: string }).name === 'ByteLimitError');
+}
+
+export function indexLocalReceipts(
+  cwd: string,
+  opts?: ReadReceiptOptions,
+): Map<string, LocalReceiptRef> {
   const map = new Map<string, LocalReceiptRef>();
   for (const filePath of listOutDirReceipts(cwd)) {
-    const rec = readLocalReceipt(filePath);
+    const rec = readLocalReceipt(filePath, opts);
     if (!rec) continue;
     for (const alias of rec.aliases) {
       if (!map.has(alias)) map.set(alias, rec);

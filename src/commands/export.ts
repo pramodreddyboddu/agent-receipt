@@ -2,8 +2,8 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve, basename } from 'node:path';
 import { resolveReceiptPath } from './show.js';
 import { markdownToHtml } from '../lib/html.js';
-import { prepareRedactedBody } from '../lib/redact.js';
-import { appendHashFooter, verifyMarkdown } from '../lib/hash.js';
+import { publishRedactedReceipt } from '../lib/redact.js';
+import { verifyMarkdown } from '../lib/hash.js';
 import { recordAuditEvent } from '../lib/audit.js';
 import { color } from '../lib/color.js';
 import { handoffMarkdownSignature } from '../lib/sign.js';
@@ -73,9 +73,7 @@ export function cmdExport(
   const redacted = Boolean(opts.redact);
 
   if (redacted) {
-    markdown = appendHashFooter(
-      prepareRedactedBody(markdown, { maskHost: opts.includeHost !== true }),
-    );
+    markdown = publishRedactedReceipt(markdown, { maskHost: opts.includeHost !== true });
   }
 
   const fmtRaw = (opts.format || 'html').toLowerCase();

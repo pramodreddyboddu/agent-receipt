@@ -36,7 +36,7 @@ gh auth refresh -h github.com -s workflow
 
 Fine-grained PAT: **Actions: Read and write**. GitHub App: **Workflows**.
 A token whose `gh auth status` scopes are only `gist`, `read:org`, `repo`
-cannot push `.github/workflows/*`. v1.0.6 through v1.0.28 left
+cannot push `.github/workflows/*`. v1.0.6 through v1.0.29 left
 `.github/workflows/ci.yml` unchanged for that reason; the docs mirror has
 the `share --json` smoke, `prove --json`, `last --json`, a `prune --dry-run`
 check, a `docs/gate.schema.json` required-key check on `wrap.json`,
@@ -65,7 +65,9 @@ package), and a 1.0.26 auto-prune smoke (retention plus `autoPrune`
 deletes older receipts after wrap and appends prune audit lines; a broken
 audit chain still exits 0 and deletes nothing), a 1.0.27 `prove --html` smoke (`htmlPath`
 written, PASS banner, no scripts or http(s) asset references), and a 1.0.28 nested
-`wrap --link` smoke (`session --json` lists the parent and the child, both verified).
+`wrap --link` smoke (`session --json` lists the parent and the child, both verified),
+and a 1.0.29 session-package smoke (`session export` writes `session-manifest.json`,
+`session import` into a second repo copies the tree, and `session --json` lists it).
 The drop-in PR gate
 (`examples/github/pr-gate.yml`, `examples/github/action.yml`) is an example
 to copy, not this repo's live workflow. See `docs/ci-signed-gate.md`.
