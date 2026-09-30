@@ -146,11 +146,38 @@ function rejectHeaderControl(kind: string, value: string | undefined): void {
   }
 }
 
+/** Split on every line break so each piece can be quoted or indented. */
+function messagePhysicalLines(message: string): string[] {
+  return message.replace(/\r\n/g, '\n').replace(/[\r\u2028\u2029]/g, '\n').split('\n');
+}
+
+/**
+ * TL;DR quote. Every physical line is prefixed so a message cannot open a heading.
+ * A one-line message stays `>` plus `> text`, matching earlier receipts.
+ */
+function pushQuotedMessage(lines: string[], message: string): void {
+  lines.push('>');
+  for (const line of messagePhysicalLines(message)) {
+    lines.push(`> ${line}`);
+  }
+}
+
+/**
+ * Header message. The first line stays on the field. Later lines are indented
+ * so they are not headings and not `- **Field**:` lines. One line is unchanged.
+ */
+function pushHeaderMessage(lines: string[], message: string): void {
+  const parts = messagePhysicalLines(message);
+  lines.push(`- **Message**: ${parts[0]}`);
+  for (const extra of parts.slice(1)) {
+    lines.push(`  ${extra}`);
+  }
+}
+
 export function formatMarkdown(
   data: ReceiptData,
   opts: boolean | FormatOptions = false,
 ): string {
-  rejectHeaderControl('message', data.message);
   rejectHeaderControl('agent', data.agent);
   rejectHeaderControl('session', data.session);
   rejectHeaderControl('parent', data.parent);
@@ -177,10 +204,7 @@ export function formatMarkdown(
   lines.push('# Agent Receipt');
   lines.push('');
   lines.push(`> **TL;DR** ${tldr}`);
-  if (data.message) {
-    lines.push('>');
-    lines.push(`> ${data.message}`);
-  }
+  if (data.message) pushQuotedMessage(lines, data.message);
   lines.push('');
 
   lines.push('## What to review');
@@ -237,7 +261,7 @@ export function formatMarkdown(
   if (data.session) lines.push(`- **Session**: ${data.session}`);
   if (data.parent) lines.push(`- **Parent**: ${data.parent}`);
   if (data.host) lines.push(`- **Host**: ${data.host}`);
-  if (data.message) lines.push(`- **Message**: ${data.message}`);
+  if (data.message) pushHeaderMessage(lines, data.message);
   lines.push(`- **Workspace**: \`${data.cwd}\``);
   lines.push('');
 

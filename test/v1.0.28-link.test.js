@@ -2,6 +2,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -15,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { appendHashFooter, canonicalBody, sha256Hex } from '../dist/lib/hash.js';
-import { parseLinkMeta, readLocalReceipt } from '../dist/lib/link.js';
+import { parseLinkMeta, parseSessionHeader, readLocalReceipt } from '../dist/lib/link.js';
 import { CURSOR_RULE_MDC } from '../dist/lib/cursor-rule.js';
 import { GROK_WRAP_SCRIPT_REL } from '../dist/lib/grok-rule.js';
 import { postCommitBody, prePushBody } from '../dist/commands/hooks.js';
@@ -76,6 +77,24 @@ function field(md, label) {
 function latestReceipt(dir) {
   const body = parseJson(cli(dir, ['last', '--json']));
   return { path: body.path, md: readFileSync(body.path, 'utf8') };
+}
+
+/** 1.0.28 writer header: ## Summary, then ## Session with Version/Timestamp/Workspace. */
+function linkEraBody(fieldLines) {
+  return [
+    '## Summary',
+    '',
+    '| Metric | Value |',
+    '|--------|-------|',
+    '| Files | 0 |',
+    '',
+    '## Session',
+    '',
+    '- **Version**: 1.0.28',
+    ...fieldLines,
+    '- **Workspace**: `/tmp`',
+    '',
+  ].join('\n');
 }
 
 describe('v1.0.28 multi-agent receipt linking', () => {
@@ -198,7 +217,6 @@ describe('v1.0.28 multi-agent receipt linking', () => {
       [['capture', '--agent', 'a'.repeat(257), '--message', 'x'], /Invalid agent/],
       [['capture', '--parent', '../secret', '--message', 'x'], /--parent must not contain/],
       [['capture', '--host', 'bad/host', '--message', 'x'], /Invalid host/],
-      [['capture', '--message', 'hello\n- **Session**: injected'], /single line/],
       [['watch', '--once', '--session', 'bad\nid'], /Invalid session/],
     ]) {
       const before = existsSync(join(dir, '.agent-receipt', 'receipts'))
@@ -391,25 +409,23 @@ describe('v1.0.28 multi-agent receipt linking', () => {
     const seal = (body) => appendHashFooter(body.endsWith('\n') ? body : `${body}\n`);
     writeFileSync(
       join(outDir, 'receipt-cycle-a.md'),
-      seal(`## Session
-
-- **Id**: r-aaaaaaaaaaaaaaaa
-- **Timestamp**: 2026-09-29T00:00:00.000Z
-- **Agent**: cycle-a
-- **Session**: sess-cycle
-- **Parent**: r-bbbbbbbbbbbbbbbb
-`),
+      seal(linkEraBody([
+        '- **Id**: r-aaaaaaaaaaaaaaaa',
+        '- **Timestamp**: 2026-09-29T00:00:00.000Z',
+        '- **Agent**: cycle-a',
+        '- **Session**: sess-cycle',
+        '- **Parent**: r-bbbbbbbbbbbbbbbb',
+      ])),
     );
     writeFileSync(
       join(outDir, 'receipt-cycle-b.md'),
-      seal(`## Session
-
-- **Id**: r-bbbbbbbbbbbbbbbb
-- **Timestamp**: 2026-09-29T00:00:01.000Z
-- **Agent**: cycle-b
-- **Session**: sess-cycle
-- **Parent**: r-aaaaaaaaaaaaaaaa
-`),
+      seal(linkEraBody([
+        '- **Id**: r-bbbbbbbbbbbbbbbb',
+        '- **Timestamp**: 2026-09-29T00:00:01.000Z',
+        '- **Agent**: cycle-b',
+        '- **Session**: sess-cycle',
+        '- **Parent**: r-aaaaaaaaaaaaaaaa',
+      ])),
     );
     const cycle = parseJson(cli(dir, ['session', 'sess-cycle', '--json']));
     assert.equal(cycle.exitCode, 0);
@@ -420,14 +436,13 @@ describe('v1.0.28 multi-agent receipt linking', () => {
 
     writeFileSync(
       join(outDir, 'receipt-orphan.md'),
-      seal(`## Session
-
-- **Id**: r-cccccccccccccccc
-- **Timestamp**: 2026-09-29T00:00:02.000Z
-- **Agent**: lonely
-- **Session**: sess-orphan
-- **Parent**: r-0000000000000000
-`),
+      seal(linkEraBody([
+        '- **Id**: r-cccccccccccccccc',
+        '- **Timestamp**: 2026-09-29T00:00:02.000Z',
+        '- **Agent**: lonely',
+        '- **Session**: sess-orphan',
+        '- **Parent**: r-0000000000000000',
+      ])),
     );
     const orphan = parseJson(cli(dir, ['session', 'sess-orphan', '--json']));
     assert.equal(orphan.exitCode, 0);
@@ -439,14 +454,13 @@ describe('v1.0.28 multi-agent receipt linking', () => {
 
     writeFileSync(
       join(outDir, 'receipt-other.md'),
-      seal(`## Session
-
-- **Id**: r-dddddddddddddddd
-- **Timestamp**: 2026-09-29T00:00:03.000Z
-- **Agent**: other
-- **Session**: sess-other
-- **Parent**: r-aaaaaaaaaaaaaaaa
-`),
+      seal(linkEraBody([
+        '- **Id**: r-dddddddddddddddd',
+        '- **Timestamp**: 2026-09-29T00:00:03.000Z',
+        '- **Agent**: other',
+        '- **Session**: sess-other',
+        '- **Parent**: r-aaaaaaaaaaaaaaaa',
+      ])),
     );
     const other = parseJson(cli(dir, ['session', 'sess-other', '--json']));
     assert.equal(other.receipts[0].orphan, false);
@@ -571,7 +585,7 @@ describe('v1.0.28 multi-agent receipt linking', () => {
     assert.equal(envAgent.code, 0, envAgent.err);
     assert.equal(field(latestReceipt(dir).md, 'Agent'), 'git hook');
 
-    for (const sessionId of ['old sess/1', 'bad/id', 'has space', '..']) {
+    for (const sessionId of ['old sess/1', 'bad/id', 'has space', '..', 's-abc', 's-zzzzzzzzzzzzzzzz']) {
       const saved = cliResult(dir, ['capture', '--session', sessionId, '--message', 'legacy session']);
       assert.equal(saved.code, 0, `${sessionId}\n${saved.err}`);
       assert.equal(field(latestReceipt(dir).md, 'Session'), sessionId);
@@ -652,16 +666,29 @@ describe('v1.0.28 multi-agent receipt linking', () => {
     assert.equal(inlineMeta.session, null);
     assert.equal(inlineMeta.parent, null);
 
-    const before = readdirSync(join(dir, '.agent-receipt', 'receipts'));
-    const injected = cliResult(dir, [
-      'capture',
-      '--message',
-      'hello\n## Session\n\n- **Session**: msg-sess\n- **Parent**: r-aaaaaaaaaaaaaaaa\n- **Agent**: msg-agent',
-    ]);
-    assert.equal(injected.code, 1, injected.out);
-    assert.match(injected.err, /single line/);
-    const after = readdirSync(join(dir, '.agent-receipt', 'receipts'));
-    assert.deepEqual(after, before);
+    const injectedMessage = [
+      'hello',
+      '## Session',
+      '',
+      '- **Session**: msg-sess',
+      '- **Parent**: r-aaaaaaaaaaaaaaaa',
+      '- **Id**: r-bbbbbbbbbbbbbbbb',
+      '- **Agent**: msg-agent',
+    ].join('\n');
+    const injected = cliResult(dir, ['capture', '--message', injectedMessage]);
+    assert.equal(injected.code, 0, injected.err);
+    const injectedMd = latestReceipt(dir).md;
+    const rawSessionHeadings = injectedMd.split('\n').filter((line) => line === '## Session');
+    assert.equal(rawSessionHeadings.length, 1);
+    assert.match(injectedMd, /^> ## Session$/m);
+    assert.match(injectedMd, /^ {2}## Session$/m);
+    assert.equal(parseSessionHeader(injectedMd).Message, injectedMessage);
+    const injectedMeta = parseLinkMeta(injectedMd);
+    assert.equal(injectedMeta.session, null);
+    assert.equal(injectedMeta.parent, null);
+    assert.equal(injectedMeta.id, null);
+    assert.notEqual(injectedMeta.agent, 'msg-agent');
+    assert.equal(cliResult(dir, ['verify']).code, 0);
     const msgListed = cliResult(dir, ['session', 'msg-sess', '--json']);
     assert.equal(msgListed.code, 1);
     assert.deepEqual(parseJson(msgListed.out).receipts, []);
@@ -781,21 +808,86 @@ _No file changes in range._
     assert.equal(badSession.code, 1);
     assert.equal(parseJson(badSession.out).receipts[0].verified, false);
 
+    const badHost = join(outDir, 'receipt-bad-host.md');
+    writeFileSync(
+      badHost,
+      appendHashFooter(linkEraBody([
+        '- **Timestamp**: 2026-09-29T00:00:00.000Z',
+        '- **Id**: r-aaaaaaaaaaaaaaaa',
+        '- **Host**: bad/host',
+        '- **Session**: host-sess',
+      ])),
+    );
+    assert.equal(cliResult(dir, ['verify', badHost]).code, 2);
+
+    const badId = join(outDir, 'receipt-bad-id.md');
+    writeFileSync(
+      badId,
+      appendHashFooter(linkEraBody([
+        '- **Timestamp**: 2026-09-29T00:00:00.000Z',
+        '- **Id**: r-not-an-id',
+        '- **Session**: id-sess',
+      ])),
+    );
+    assert.equal(cliResult(dir, ['verify', badId]).code, 2);
+
+    const longAgent = 'A'.repeat(300);
+    const freeform = join(outDir, 'receipt-freeform.md');
+    writeFileSync(
+      freeform,
+      appendHashFooter(linkEraBody([
+        '- **Timestamp**: 2026-09-29T00:00:00.000Z',
+        '- **Id**: r-bbbbbbbbbbbbbbbb',
+        `- **Agent**: ${longAgent}`,
+        '- **Session**: old sess/1',
+      ])),
+    );
+    assert.equal(cliResult(dir, ['verify', freeform]).code, 0);
+    const listed = parseJson(cli(dir, ['session', 'old sess/1', '--json']));
+    assert.equal(listed.exitCode, 0);
+    assert.equal(listed.receipts[0].agent, longAgent);
+    assert.equal(listed.receipts[0].verified, true);
+
     const legacyPath = join(outDir, 'receipt-legacy-values.md');
     writeFileSync(
       legacyPath,
+      appendHashFooter(`## Summary
+
+| Metric | Value |
+|--------|-------|
+| Files | 0 |
+
+## Session
+
+- **Version**: 1.0.27
+- **Timestamp**: 2026-09-29T00:00:00.000Z
+- **Agent**: ${'C'.repeat(300)}\tClaude
+- **Session**: old\tsess/1
+- **Workspace**: \`/tmp\`
+`),
+    );
+    assert.equal(cliResult(dir, ['verify', legacyPath]).code, 0);
+    assert.equal(cliResult(dir, ['prove', legacyPath]).code, 0);
+    const legacyMeta = parseLinkMeta(readFileSync(legacyPath, 'utf8'));
+    assert.equal(legacyMeta.session, null);
+    assert.equal(legacyMeta.parent, null);
+    assert.equal(legacyMeta.id, null);
+    assert.equal(legacyMeta.agent, null);
+
+    const barePath = join(outDir, 'receipt-bare-session.md');
+    writeFileSync(
+      barePath,
       appendHashFooter(`## Session
 
 - **Timestamp**: 2026-09-29T00:00:00.000Z
 - **Agent**: Claude Code
-- **Session**: old sess/1
+- **Session**: bare-sess
 `),
     );
-    assert.equal(cliResult(dir, ['verify', legacyPath]).code, 0);
-    const legacy = parseJson(cli(dir, ['session', 'old sess/1', '--json']));
-    assert.equal(legacy.exitCode, 0);
-    assert.equal(legacy.receipts[0].agent, 'Claude Code');
-    assert.equal(legacy.receipts[0].verified, true);
+    assert.equal(cliResult(dir, ['verify', barePath]).code, 0);
+    const bareListed = cliResult(dir, ['session', 'bare-sess', '--json']);
+    assert.equal(bareListed.code, 1);
+    assert.deepEqual(parseJson(bareListed.out).receipts, []);
   });
 
   it('rejects a --parent path that is not a receipt file', () => {
@@ -835,24 +927,22 @@ _No file changes in range._
     const seal = (body) => appendHashFooter(body.endsWith('\n') ? body : `${body}\n`);
     writeFileSync(
       join(outDir, 'receipt-flag-parent.md'),
-      seal(`## Session
-
-- **Id**: r-aaaaaaaaaaaaaaaa
-- **Timestamp**: 2026-09-29T00:00:00.000Z
-- **Agent**: parent
-- **Session**: sess-parent
-`),
+      seal(linkEraBody([
+        '- **Id**: r-aaaaaaaaaaaaaaaa',
+        '- **Timestamp**: 2026-09-29T00:00:00.000Z',
+        '- **Agent**: parent',
+        '- **Session**: sess-parent',
+      ])),
     );
     writeFileSync(
       join(outDir, 'receipt-flag-child.md'),
-      seal(`## Session
-
-- **Id**: r-bbbbbbbbbbbbbbbb
-- **Timestamp**: 2026-09-29T00:00:01.000Z
-- **Agent**: child
-- **Session**: sess-child
-- **Parent**: r-aaaaaaaaaaaaaaaa
-`),
+      seal(linkEraBody([
+        '- **Id**: r-bbbbbbbbbbbbbbbb',
+        '- **Timestamp**: 2026-09-29T00:00:01.000Z',
+        '- **Agent**: child',
+        '- **Session**: sess-child',
+        '- **Parent**: r-aaaaaaaaaaaaaaaa',
+      ])),
     );
     const cross = parseJson(cli(dir, ['session', 'sess-child', '--json']));
     assert.equal(cross.exitCode, 0);
@@ -864,13 +954,12 @@ _No file changes in range._
 
     writeFileSync(
       join(outDir, 'receipt-flag-removed.md'),
-      seal(`## Session
-
-- **Id**: r-cccccccccccccccc
-- **Timestamp**: 2026-09-29T00:00:02.000Z
-- **Agent**: removed
-- **Parent**: r-aaaaaaaaaaaaaaaa
-`),
+      seal(linkEraBody([
+        '- **Id**: r-cccccccccccccccc',
+        '- **Timestamp**: 2026-09-29T00:00:02.000Z',
+        '- **Agent**: removed',
+        '- **Parent**: r-aaaaaaaaaaaaaaaa',
+      ])),
     );
     const missing = parseJson(cli(dir, ['session', 'sess-parent', '--json']));
     assert.equal(missing.exitCode, 0);
@@ -910,7 +999,9 @@ _No file changes in range._
     const markedRec = readLocalReceipt(emptyMarker);
     assert.ok(markedRec);
     assert.equal(markedRec.id, sha256Hex(canonicalBody(marked)));
-    assert.equal(markedRec.meta.agent, 'plain');
+    assert.equal(markedRec.meta.id, null);
+    assert.equal(markedRec.meta.session, null);
+    assert.equal(markedRec.meta.agent, null);
   });
 
   it('still writes receipts from the shipped grok rule, cursor rule, and git hooks', () => {
@@ -986,5 +1077,102 @@ _No file changes in range._
     assert.equal(spaced.code, 0, spaced.err);
     assert.equal(field(latestReceipt(dir).md, 'Agent'), 'git hook');
     assert.equal(cliResult(dir, ['verify']).code, 0);
+  });
+
+  it('keeps multi-line --message and grok-wrap.sh from creating links', () => {
+    const dir = initRepo();
+    commitFile(dir, 'wrap.txt', 'wrap\n');
+    const wrapped = spawnSync('sh', [join(root, 'scripts/grok-wrap.sh'), 'a\nb'], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: spawnEnv(),
+      input: '',
+    });
+    assert.equal(wrapped.status, 0, wrapped.stdout + wrapped.stderr);
+    const wrappedMd = latestReceipt(dir).md;
+    assert.match(wrappedMd, /^> a$/m);
+    assert.match(wrappedMd, /^> b$/m);
+    assert.equal(parseSessionHeader(wrappedMd).Message, 'a\nb');
+    assert.equal(parseLinkMeta(wrappedMd).session, null);
+    assert.equal(parseLinkMeta(wrappedMd).parent, null);
+    assert.equal(cliResult(dir, ['verify']).code, 0);
+    const rawHeadings = wrappedMd.split('\n').filter((line) => line === '## Session');
+    assert.equal(rawHeadings.length, 1);
+  });
+
+  it('verifies 1.0.16 and 1.0.27 fixtures with no link metadata', () => {
+    const dir = initRepo();
+    const outDir = join(dir, '.agent-receipt', 'receipts');
+    mkdirSync(outDir, { recursive: true });
+    const versions = ['v1.0.16', 'v1.0.27'];
+    const names = ['long-agent', 'tab-agent-session', 'message-session-spoof', 'control-agent'];
+    for (const version of versions) {
+      for (const name of names) {
+        const mdPath = join(root, 'test', 'fixtures', version, `${name}.md`);
+        const sigPath = join(root, 'test', 'fixtures', version, `${name}.sig.json`);
+        const label = `${version}/${name}`;
+        const text = readFileSync(mdPath, 'utf8');
+        const meta = parseLinkMeta(text);
+        assert.equal(meta.id, null, label);
+        assert.equal(meta.session, null, label);
+        assert.equal(meta.parent, null, label);
+        assert.equal(meta.host, null, label);
+        assert.equal(meta.agent, null, label);
+        for (const args of [
+          ['verify', mdPath],
+          ['verify', '--require-sig', mdPath],
+          ['prove', mdPath],
+        ]) {
+          const result = cliResult(dir, args);
+          assert.equal(result.code, 0, `${label} ${args.join(' ')}\n${result.out}\n${result.err}`);
+        }
+        const proved = parseJson(cli(dir, ['prove', mdPath, '--json']));
+        assert.equal(proved.exitCode, 0, label);
+        assert.equal('session' in proved, false, label);
+        assert.equal('parent' in proved, false, label);
+        assert.equal('parentVerified' in proved, false, label);
+
+        const unsigned = join(dir, `${version}-${name}.md`);
+        copyFileSync(mdPath, unsigned);
+        assert.equal(cliResult(dir, ['verify', unsigned]).code, 0, label);
+        assert.equal(cliResult(dir, ['prove', unsigned]).code, 0, label);
+        const unsignedSig = cliResult(dir, ['verify', '--require-sig', unsigned]);
+        assert.equal(unsignedSig.code, 2, label);
+        assert.match(unsignedSig.out + unsignedSig.err, /signature absent/);
+
+        copyFileSync(mdPath, join(outDir, `${version}-${name}.md`));
+        copyFileSync(sigPath, join(outDir, `${version}-${name}.sig.json`));
+      }
+    }
+
+    for (const id of ['s-evil', 'real-session', 'plain-session']) {
+      const listed = cliResult(dir, ['session', id, '--json']);
+      assert.equal(listed.code, 1, id);
+      assert.deepEqual(parseJson(listed.out).receipts, []);
+    }
+
+    const control = readFileSync(join(root, 'test', 'fixtures', 'v1.0.27', 'control-agent.md'), 'utf8');
+    assert.equal(parseSessionHeader(control).Agent, 'pre\rmid\u2028post');
+    const controlProve = parseJson(
+      cli(dir, ['prove', join(root, 'test', 'fixtures', 'v1.0.27', 'control-agent.md'), '--json']),
+    );
+    assert.equal(controlProve.agent, 'pre\rmid\u2028post');
+    assert.equal(controlProve.exitCode, 0);
+
+    const tab = readFileSync(join(root, 'test', 'fixtures', 'v1.0.16', 'tab-agent-session.md'), 'utf8');
+    assert.equal(parseSessionHeader(tab).Agent, 'agent\tname');
+    assert.equal(parseSessionHeader(tab).Session, 'sess\tion');
+    const tabProve = parseJson(
+      cli(dir, ['prove', join(root, 'test', 'fixtures', 'v1.0.16', 'tab-agent-session.md'), '--json']),
+    );
+    assert.equal(tabProve.agent, 'agent\tname');
+
+    const longText = readFileSync(join(root, 'test', 'fixtures', 'v1.0.16', 'long-agent.md'), 'utf8');
+    assert.equal(parseSessionHeader(longText).Agent, 'A'.repeat(300));
+    assert.equal(parseSessionHeader(longText).Session, 'B'.repeat(300));
+    const longProve = parseJson(
+      cli(dir, ['prove', join(root, 'test', 'fixtures', 'v1.0.16', 'long-agent.md'), '--json']),
+    );
+    assert.equal(longProve.agent, 'A'.repeat(300));
   });
 });

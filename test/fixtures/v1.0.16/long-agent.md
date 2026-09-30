@@ -1,0 +1,73 @@
+# Agent Receipt
+
+> **TL;DR** AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA · 2026-09-30T06:05:57.387Z · master @ 7a0ce2d9488e · 1 files · +1/−0 · risk none
+>
+> long labels
+
+## What to review
+
+_Nothing flagged. Skim the file list if this session should have been a no-op._
+
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Files | 1 (1A) |
+| Lines | +1 / −0 |
+| Commits | 1 |
+| Risk | none |
+
+## Session
+
+- **Version**: 1.0.16
+- **Timestamp**: 2026-09-30T06:05:57.387Z
+- **Branch**: `master`
+- **HEAD**: `7a0ce2d9488e25f5b014bea4e74af25dcd01092a`
+- **Range**: `HEAD~1..HEAD` (`ebc53c392f58` → HEAD)
+- **Agent**: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- **Session**: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+- **Message**: long labels
+- **Workspace**: `/tmp/legacy-v1.0.16-wAxDql`
+
+## Commits
+
+- 7a0ce2d long-agent
+
+## Files changed
+
+| Status | File | + | − | Binary |
+|--------|------|---|---|--------|
+| A | `long-agent.txt` | 1 | 0 |  |
+
+**Totals**: 1 files, +1 / −0
+
+## Diff stat
+
+```
+long-agent.txt | A    1    0 +
+1 file changed, 1 insertion(+), 0 deletions(-)
+```
+
+## Risk findings
+
+_None detected._
+
+## Diff summaries
+
+### `long-agent.txt`
+
+```diff
+diff --git a/long-agent.txt b/long-agent.txt
+new file mode 100644
+index 0000000..d1fccb7
+--- /dev/null
++++ b/long-agent.txt
+@@ -0,0 +1 @@
++long-agent
+```
+
+## Integrity
+
+<!-- agent-receipt-sha256:728d78b6e1f4fba29b6fe965928f1b240e539bca0d8a5e7730428e3ad32b4e16 -->
+
+SHA-256 of canonical body: `728d78b6e1f4fba29b6fe965928f1b240e539bca0d8a5e7730428e3ad32b4e16`

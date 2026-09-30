@@ -6,11 +6,12 @@
  * Agent and host are short labels. Host is omitted unless the user opts in.
  *
  * These fields are written into the hashed Markdown body, inside the
- * `## Session` block the writer already emits. Link parsers read only that
- * block (from the heading through the next heading), never diff or message
- * text. Old receipts that omit the link lines verify unchanged. Nothing is
- * written when no link flag and no AGENT_RECEIPT_SESSION / PARENT / AGENT /
- * HOST env is set.
+ * `## Session` block the writer already emits. Link parsers read only the
+ * 1.0.28+ header block directly after `## Summary` (Version, Timestamp, and
+ * Workspace, through the next heading). There is no fallback block. Diffs,
+ * messages, and a `## Session` anywhere else are not link metadata.
+ * Pre-1.0.28 receipts have no link metadata. Nothing is written when no
+ * link flag and no AGENT_RECEIPT_SESSION / PARENT / AGENT / HOST env is set.
  *
  * `--agent` stays the 1.0.27 free-form label (spaces allowed). `--session`
  * still accepts the values 1.0.27 stored, including spaces and slashes, as
@@ -172,16 +173,6 @@ export function validateLegacySession(value: string): string {
   return trimmed;
 }
 
-/** `--message` is one physical line. Newlines would be written into the body. */
-export function validateMessageLine(value: string): string {
-  if (CONTROL_RE.test(value)) {
-    throw new Error(
-      '--message must be a single line. Newlines and control characters are rejected so a message cannot inject receipt header fields.',
-    );
-  }
-  return value;
-}
-
 export function validateStoredId(value: string): string {
   const trimmed = value.trim();
   if (!LINK_ID_RE.test(trimmed)) {
@@ -273,50 +264,81 @@ function hasWriterMarkers(body: string[]): boolean {
 
 /**
  * Lines of the writer's `## Session` block only (heading excluded, next
- * heading excluded). Full receipts are identified by the block the writer
- * emits: the first `## Session` that follows `## Summary` and contains
- * Version, Timestamp, and Workspace. A `## Session` inside a message,
- * a diff, or a later section does not match that position. Minimal
- * fixtures that are only a `## Session` block use that first block.
+ * heading excluded). The block is the `## Session` directly after
+ * `## Summary` that contains Version, Timestamp, and Workspace. No other
+ * `## Session` is a header. A message, diff, or later section cannot supply one.
  */
 export function sessionHeaderLines(markdown: string): string[] | null {
   const lines = markdownLines(markdown);
   const headings = unfencedHeadings(lines);
-  const blocks = headings
-    .filter((heading) => heading.text === '## Session')
-    .map((heading) => {
-      const previous = [...headings].reverse().find((item) => item.index < heading.index);
-      return {
-        body: sectionBody(lines, heading.index, headings),
-        afterSummary: previous?.text === '## Summary',
-      };
-    });
-  const writer = blocks.find((block) => block.afterSummary && hasWriterMarkers(block.body));
-  if (writer) return writer.body;
-  if (!blocks.length) return null;
-  return blocks[0].body;
+  for (const heading of headings) {
+    if (heading.text !== '## Session') continue;
+    const previous = [...headings].reverse().find((item) => item.index < heading.index);
+    if (previous?.text !== '## Summary') continue;
+    const body = sectionBody(lines, heading.index, headings);
+    if (hasWriterMarkers(body)) return body;
+  }
+  return null;
 }
 
 /**
- * Field lines in the header block. Link fields that appear after the
- * writer's Message or Workspace line are ignored: a multi-line message
- * is written on that line and must not add Session or Parent.
+ * `.` does not match CR or U+2028/U+2029, so a value with those characters
+ * would otherwise fail the match and be read as absent. `s` keeps them.
+ */
+const FIELD_RE = /^- \*\*([A-Za-z][A-Za-z0-9 ]*)\*\*:\s*(.*)$/s;
+
+function cleanFieldValue(raw: string): string {
+  return raw.replace(/^`|`$/g, '').trim();
+}
+
+/**
+ * Field lines in the header block. Indented message continuations stay part
+ * of Message (they cannot be headings or field lines). Link fields after
+ * Message or Workspace are ignored.
  */
 function headerFieldMap(body: string[]): Map<string, string> {
   const fields = new Map<string, string>();
   let closed = false;
-  for (const line of body) {
-    const match = line.match(/^- \*\*([A-Za-z][A-Za-z0-9 ]*)\*\*:\s*(.*)$/);
+  for (let i = 0; i < body.length; i++) {
+    const match = body[i].match(FIELD_RE);
     if (!match) continue;
     const label = match[1];
     if (closed && LINK_FIELD_LABELS.has(label)) continue;
     if (!fields.has(label)) {
-      const value = match[2].replace(/^`|`$/g, '').trim();
+      let raw = match[2];
+      if (label === 'Message') {
+        const extra: string[] = [];
+        while (i + 1 < body.length && body[i + 1].startsWith('  ')) {
+          i += 1;
+          extra.push(body[i].slice(2));
+        }
+        if (extra.length) raw = `${raw}\n${extra.join('\n')}`;
+      }
+      const value = cleanFieldValue(raw);
       if (value) fields.set(label, value);
     }
     if (label === 'Message' || label === 'Workspace') closed = true;
   }
   return fields;
+}
+
+/**
+ * Link rules apply only to receipts this release writes. The Version line is
+ * emitted by the writer before any agent, session, or message text, and the
+ * first value wins, so a later line cannot retarget an older receipt.
+ * 1.0.28+ is `1.0.28` and any newer major.minor.patch.
+ */
+export function isLinkEraVersion(version: string | null | undefined): boolean {
+  if (!version) return false;
+  const match = version.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  if (major > 1) return true;
+  if (major < 1) return false;
+  if (minor > 0) return true;
+  return patch >= 28;
 }
 
 /** Header fields keyed by their Markdown label (Branch, Agent, Message, …). */
@@ -326,8 +348,18 @@ export function parseSessionHeader(markdown: string): Record<string, string> {
   return Object.fromEntries(headerFieldMap(body));
 }
 
+const EMPTY_LINK: LinkMeta = {
+  id: null,
+  session: null,
+  parent: null,
+  agent: null,
+  host: null,
+  timestamp: null,
+};
+
 export function parseLinkMeta(markdown: string): LinkMeta {
   const header = parseSessionHeader(markdown);
+  if (!isLinkEraVersion(header.Version)) return { ...EMPTY_LINK };
   const field = (label: string): string | null => header[label] ?? null;
   return {
     id: field('Id'),
@@ -354,17 +386,20 @@ export function isReceiptDocument(markdown: string): boolean {
 const REDACTED_HOST = '[REDACTED]';
 
 /**
- * Hash-ok receipts whose header link fields fail the same checks as input
- * are treated as tampered. Absent fields are fine (unlinked and 1.0.27 receipts).
+ * Hash-ok 1.0.28+ receipts whose strict link fields are illegal are tampered.
+ * Checked: receipt id (`r-` + 16 hex), parent (`r-` id or sha256), and host
+ * (strict label). Generated session ids are `s-` + 16 hex at capture; a stored
+ * session is free-form, so agent and session text are not tamper material.
+ * Pre-1.0.28 receipts are never failed for agent or session content.
  * The published share mask `[REDACTED]` is a legal stored host.
  */
 export function linkMetaTamperReason(markdown: string): string | null {
+  const header = parseSessionHeader(markdown);
+  if (!isLinkEraVersion(header.Version)) return null;
   const meta = parseLinkMeta(markdown);
   try {
     if (meta.id) validateStoredId(meta.id);
-    if (meta.session) validateLegacySession(meta.session);
     if (meta.parent) validateStoredParent(meta.parent);
-    if (meta.agent) validateAgentLabel(meta.agent);
     if (meta.host && meta.host !== REDACTED_HOST) validateLinkLabel('host', meta.host);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

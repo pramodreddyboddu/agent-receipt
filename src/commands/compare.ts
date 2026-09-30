@@ -55,17 +55,29 @@ export function findPreviousReceipt(cwd: string, newerPath?: string): string | n
   return all[0] ?? null;
 }
 
+/**
+ * First matching field in the file. Used when the 1.0.28 writer header is
+ * absent (older receipts whose message split the block, or a short fixture).
+ * `[^\n]` keeps a CR or U+2028 inside the value.
+ */
+function firstField(text: string, label: string): string | undefined {
+  const match = text.match(new RegExp(`^- \\*\\*${label}\\*\\*:([^\\n]*)$`, 'm'));
+  if (!match) return undefined;
+  const value = match[1].replace(/^`|`$/g, '').trim();
+  return value || undefined;
+}
+
 /** Best-effort parse of a Markdown receipt into comparable fields. */
 export function parseReceiptGlance(path: string): ReceiptGlance {
   const text = readFileSync(path, 'utf8');
   const glance: ReceiptGlance = { path, files: [], risks: [] };
 
   const header = parseSessionHeader(text);
-  glance.timestamp = header.Timestamp;
-  glance.branch = header.Branch;
-  glance.head = header.HEAD;
-  glance.agent = header.Agent;
-  glance.message = header.Message;
+  glance.timestamp = header.Timestamp || firstField(text, 'Timestamp');
+  glance.branch = header.Branch || firstField(text, 'Branch');
+  glance.head = header.HEAD || firstField(text, 'HEAD');
+  glance.agent = header.Agent || firstField(text, 'Agent');
+  glance.message = header.Message || firstField(text, 'Message');
   glance.uncommitted = /\*\*Snapshot\*\*:\s*\*\*uncommitted\*\*/.test(text);
 
   const sha = text.match(/agent-receipt-sha256:\s*([a-f0-9]{64})/);

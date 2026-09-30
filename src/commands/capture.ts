@@ -38,7 +38,6 @@ import {
   validateAgentLabel,
   validateLegacySession,
   validateLinkLabel,
-  validateMessageLine,
   validateStoredId,
   validateStoredParent,
 } from '../lib/link.js';
@@ -134,7 +133,6 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
   }
 
   const cfg = loadConfig(cwd);
-  if (opts.message !== undefined) validateMessageLine(opts.message);
   const agent = validateAgentLabel(opts.agent ?? cfg.defaultAgent);
   if (opts.session) validateLegacySession(opts.session);
   if (opts.parent) validateStoredParent(opts.parent);

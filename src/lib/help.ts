@@ -82,7 +82,8 @@ Options:
   --since <ref>          Diff range start (e.g. main, HEAD~5, abc123)
   --commits <N>          Last N commits (default: config or 1)
   --uncommitted          Snapshot dirty working tree (staged+unstaged+untracked)
-  --message <text>       Session message (one line; newlines and control characters are rejected)
+  --message <text>       Session message. Multiple lines are kept, quoted and indented
+                         so they cannot form header fields
   --agent <name>         Agent label (default: config or "agent"). Free-form;
                          spaces allowed. No newlines or control characters.
   --session <id>         Session id. Same values as 1.0.27, including spaces
@@ -139,8 +140,9 @@ newlines, control characters, or more than 256 characters). Config
 stored, including spaces and slashes, as a single line of at most 256
 characters. Generated ids are \`s-\` + 16 hex. \`--host\` is 1–64 of
 [A-Za-z0-9._:-]. \`--parent\` is an r- id, a 64-hex sha256, or a path that
-parses as a receipt file (not an arbitrary file). \`--message\` must be one
-line. Invalid values fail before a file is written. Host is privacy-sensitive
+parses as a receipt file (not an arbitrary file). \`--message\` may span
+lines; continuation lines are quoted and indented so they are not header
+fields. Invalid link values fail before a file is written. Host is privacy-sensitive
 and is not recorded unless you pass --host or set AGENT_RECEIPT_HOST.
 \`share\` keeps session, parent, and agent, and masks host unless
 --include-host. A local \`capture --redact\` keeps an explicitly requested host.
@@ -178,7 +180,7 @@ Options:
   --host <label>         Host label (strict charset). Omitted unless set
   --link                 Record a session (reuse env, or generate) and run the
                          command after -- with this receipt as its parent
-  --message <text>       Session message, one line (default: "session wrap")
+  --message <text>       Session message (default: "session wrap"). Multiple lines are allowed
   --base <ref>           When clean, capture vs this base branch/ref
   --uncommitted          Require dirty-tree capture (error if clean)
   --redact               Mask high/secret findings in the written receipt

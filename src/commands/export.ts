@@ -43,7 +43,8 @@ export interface ExportResult {
 }
 
 function agentLabel(markdown: string): string | null {
-  const m = markdown.match(/^- \*\*Agent\*\*:\s*(.+)$/m);
+  // [^\n] keeps CR and U+2028 in the value; `.` would stop and drop them.
+  const m = markdown.match(/^- \*\*Agent\*\*:([^\n]*)$/m);
   const agent = m?.[1]?.trim();
   return agent || null;
 }

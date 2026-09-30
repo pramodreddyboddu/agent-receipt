@@ -1,0 +1,8 @@
+{
+  "alg": "ed25519",
+  "version": 1,
+  "sha256": "6ce903a602c6edf6ffb15ce87503523d2baa610394420d853d6d0aa2fed79d0b",
+  "fingerprint": "6eb7d8fc0dd55ab4e3345ace326fcffa81afbfac5a69f2b21e920666e3bc2899",
+  "signature": "Zwi9bLS3ypojhRGQlScjrZUacsUMGWyIpiszkwLSIe1MLMHW/YvFujebg8zpLTQIZUiAsvg7Uc/jR+5CQ3y4Dg==",
+  "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAhYZfZtKH8eRvgPvAJpYIslpk11xq4W+4jeotWoJOHuQ=\n-----END PUBLIC KEY-----\n"
+}

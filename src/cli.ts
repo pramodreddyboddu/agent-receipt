@@ -24,7 +24,7 @@ import { cmdHistory } from './commands/history.js';
 import { cmdWatch } from './commands/watch.js';
 import { cmdWrap } from './commands/wrap.js';
 import { cmdSession } from './commands/session.js';
-import { resolveLink, validateMessageLine, type ResolvedLink } from './lib/link.js';
+import { resolveLink, type ResolvedLink } from './lib/link.js';
 import { cmdExport, cmdHtml } from './commands/export.js';
 import { cmdShare } from './commands/share.js';
 import { cmdAudit } from './commands/audit.js';
@@ -340,7 +340,6 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         const failOn = resolveFailOn(cwd, flags, true);
         const link = resolveCliLink(cwd, flags, false);
         const message = flagString(flags, 'message', 'm');
-        if (message !== undefined) validateMessageLine(message);
         const result = cmdCapture(cwd, {
           since: flagString(flags, 'since'),
           base: flagString(flags, 'base'),
@@ -369,7 +368,6 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         const failOn = resolveFailOn(cwd, flags, true);
         const link = resolveCliLink(cwd, flags, flagBool(flags, 'link'));
         const message = flagString(flags, 'message', 'm');
-        if (message !== undefined) validateMessageLine(message);
         const result = cmdWrap(cwd, {
           agent: link.agent,
           id: link.id,
@@ -447,7 +445,6 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         const failOn = resolveFailOn(cwd, flags, true);
         const link = resolveCliLink(cwd, flags, false);
         const message = flagString(flags, 'message', 'm');
-        if (message !== undefined) validateMessageLine(message);
         return await cmdWatch(cwd, {
           interval: flagNumber(flags, 'interval'),
           once: flagBool(flags, 'once'),
