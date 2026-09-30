@@ -743,8 +743,9 @@ exits 2 with "page has CRLF line endings" and names \`core.autocrlf\`.
 A lone CR exits 2 with "page has CR line endings". A leading UTF-8 BOM
 exits 2. Add \`*.report.html -text\` and \`.agent-receipt/** -text\` to
 \`.gitattributes\`. Those bytes are not rewritten. The report page is not
-normalized. \`audit.jsonl\` is a separate check: one trailing CR on each
-line is stripped before the chain hash. Invalid UTF-8 exits 2. \`renderVersion\` selects the
+normalized. \`audit.jsonl\` is a separate check: exactly one trailing CR on each
+line is stripped before the chain hash. A second trailing CR fails the chain.
+Invalid UTF-8 exits 2. \`renderVersion\` selects the
 renderer. Version 1 is this page. An unknown renderVersion exits 2. Bidi controls in rendered
 fields, including agent names, are shown as \`\\uXXXX\`. Share HTML uses the same escape.
 
@@ -797,16 +798,23 @@ Without \`--receipts\`, a missing receipt that is still listed in
 \`.agent-receipt/index.json\` or \`.agent-receipt/audit.jsonl\` exits 2
 ("still lists it"). The newest audit event for that sha256, originalSha256,
 or path wins. When that event is \`prune\`, or a prune event removed the
-index row, the receipt is not still listed only if a capture, wrap, or
-watch event exists and the prune timestamp is not before that capture.
-A prune with no capture event exits 2. A prune timestamped before that
-capture exits 2. Otherwise the result is exit 0 and the reason is
+index row, a missing capture, wrap, or watch event for that receipt is
+not tampering. The result is exit 0 and the reason is
 "receipt absent; audit.jsonl (unsigned) records a prune", under the headline
-"VERIFIED (payload only; N receipts not checked)". audit.jsonl is not signed.
+"VERIFIED (payload only; N receipts not checked)". Exit 2 only when a
+capture, wrap, or watch event for that receipt does exist and the prune
+is timestamped more than 5 seconds before it. Clock skew of up to 5
+seconds stays payload-only. An unparseable prune or capture timestamp,
+when a capture event exists, exits 2 with that same before-capture reason.
+audit.jsonl is not signed.
 Anyone with write access can extend it, so that reason does not mean the
-prune was legitimate. When the store has no retention config and no
-recorded prune command, verify also warns
+prune was legitimate. When the store has no retention config (\`maxCount\`,
+\`maxAgeDays\`, or \`autoPrune\`) and the newest prune line is not
+\`source\` \`command\`, verify also warns
 "audit.jsonl is unsigned; no retention config and no recorded prune command".
+\`source\` \`retention\` does not silence that warning unless that config
+is present. When \`source\` is \`retention\` and the config is absent, the
+warning adds "(retention source claimed but no retention config found)".
 If this store does not list it at all, the page can still be exit 0 with
 that same headline. \`--json\` then uses verdict \`VERIFIED_PAYLOAD_ONLY\`
 and \`notChecked\`. It does not print a plain VERIFIED. When \`audit.jsonl\`
@@ -815,8 +823,10 @@ way \`doctor --strict\` does and exits 2 with "audit log hash chain is broken"
 on a break. \`--receipts\` pointing elsewhere does not use an unrelated
 audit.jsonl in the current directory. One trailing CR is stripped from
 each audit line before the hash, so a \`core.autocrlf\` checkout of the
-log still verifies. If the chain still fails and the file contains CR,
-the reason names CRLF and \`core.autocrlf\`. Add \`.agent-receipt/** -text\`
+log still verifies. A second trailing CR is not stripped and fails the
+chain. If the chain still fails and the failing line itself ends in CR,
+the reason names CRLF and \`core.autocrlf\`. A CR on another line does
+not add that hint. Add \`.agent-receipt/** -text\`
 next to \`*.report.html -text\` in \`.gitattributes\`. A store with no
 \`audit.jsonl\` is not a chain failure. A chain-only failure still counts
 as failed, so the line is not "failed: 0" beside FAILED. On failure the
@@ -840,8 +850,9 @@ Exit codes:
   2  bad or missing blocks, schema, signature, page bytes, BOM, CR or CRLF,
      an unacceptable candidate, a receipt deleted while the index or audit
      log still lists it, a broken audit hash chain, a missing --receipts entry, verdict FAILED, verdict
-     UNTRUSTED, or UNSIGNED with --require-sig
-A non-zero exit never prints VERIFIED. \`--require-sig\` enforces the
+     UNTRUSTED, or UNSIGNED with --require-sig (printed "FAILED (unsigned)")
+A non-zero exit never prints VERIFIED. A failing unsigned page prints
+"FAILED (unsigned)", not UNSIGNED. \`--require-sig\` enforces the
 trust allowlist when one is configured. Removing the page key from a
 store that still lists another key exits 2 (\`fingerprint not trusted\`).
 An empty allowlist is inactive. With no trust store,
@@ -1292,9 +1303,10 @@ It does **not** store diff bodies or the session \`--message\`.
 \`share\` (not a second \`export\` line). \`watch\` records \`watch\` per capture.
 
 Each line's \`prev\` is the SHA-256 of the previous line (or null on the
-first). One trailing CR is stripped before that hash, so a
-\`core.autocrlf\` checkout does not break the chain by itself. If the
-chain still fails and the file contains CR, the reason names CRLF and
+first). Exactly one trailing CR is stripped before that hash, so a
+\`core.autocrlf\` checkout does not break the chain by itself. Two
+trailing CRs still fail the chain. If the chain still fails and the
+failing line itself ends in CR, the reason names CRLF and
 \`core.autocrlf\`. \`audit --verify\` checks that chain. Exit 0 = intact,
 exit 2 = mismatch, exit 1 = unreadable or a bad flag. This is
 **experimental** tamper-evidence for the log — not a signature and not

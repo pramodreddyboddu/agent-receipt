@@ -870,7 +870,8 @@ describe('v1.0.30 signed one-page report', () => {
     assert.doesNotMatch(honest.out, /^VERIFIED/m);
     const needSig = cliResult(dir, ['report', 'verify', unsignedHtml, '--require-sig']);
     assert.equal(needSig.code, 2);
-    assert.match(needSig.out, /^UNSIGNED  report verify/m);
+    assert.match(needSig.out, /^FAILED \(unsigned\)  report verify/m);
+    assert.doesNotMatch(needSig.out, /^UNSIGNED/m);
     assert.doesNotMatch(needSig.out, /^VERIFIED/m);
 
     const receipt = latestReceipt(dir);

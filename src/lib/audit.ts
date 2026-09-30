@@ -7,8 +7,9 @@
  * access can extend it. This is experimental tamper-evidence for the log
  * itself — not a signature, not PKI, and not a record of diff bodies.
  * `prune` appends one `prune` line per receipt it deletes. Dry-run does not.
- * One trailing CR is stripped before a line is parsed or hashed, so a
- * `core.autocrlf` checkout does not break the chain by itself.
+ * Exactly one trailing CR is stripped before a line is parsed or hashed,
+ * so a `core.autocrlf` checkout does not break the chain by itself.
+ * A second trailing CR is left in place and fails the chain.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
@@ -103,7 +104,7 @@ export function readAuditRawLines(cwd: string): string[] {
   return lines;
 }
 
-/** One trailing CR from a CRLF checkout. A CR earlier in the line stays. */
+/** Exactly one trailing CR from a CRLF checkout. A CR earlier in the line stays. */
 function stripOneTrailingCr(line: string): string {
   return line.endsWith('\r') ? line.slice(0, -1) : line;
 }
@@ -112,8 +113,10 @@ function hashLine(line: string): string {
   return sha256Hex(stripOneTrailingCr(line) + '\n');
 }
 
+/** Hint only when this broken line itself ends in CR. */
 function chainFailure(lines: string[], brokenAt: number | null, reason: string): AuditChainResult {
-  const crlf = lines.some((line) => line.includes('\r'));
+  const failing = brokenAt !== null ? lines[brokenAt - 1] : undefined;
+  const crlf = typeof failing === 'string' && failing.endsWith('\r');
   return {
     ok: false,
     events: lines.length,
@@ -178,6 +181,9 @@ export function verifyAuditChain(cwd: string): AuditChainResult {
   let prev: string | null = null;
   for (let i = 0; i < lines.length; i++) {
     const line = stripOneTrailingCr(lines[i]);
+    if (line.endsWith('\r')) {
+      return chainFailure(lines, i + 1, 'trailing CR');
+    }
     if (!line.trim()) {
       return chainFailure(lines, i + 1, 'blank line');
     }

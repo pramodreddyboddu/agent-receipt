@@ -871,13 +871,19 @@ interface LocalCheck {
   reason: string | null;
   /** Payload-only note when a missing receipt has an honest unsigned prune. */
   note: string | null;
-  /** Stderr warning for an unsigned prune with no retention and no recorded source. */
+  /** Stderr warning when an unsigned prune is not backed by a command or retention config. */
   warning: string | null;
 }
 
 const PRUNE_ABSENT_NOTE = 'receipt absent; audit.jsonl (unsigned) records a prune';
 const PRUNE_UNSIGNED_WARN =
   'audit.jsonl is unsigned; no retention config and no recorded prune command';
+const PRUNE_RETENTION_CLAIMED = ' (retention source claimed but no retention config found)';
+/**
+ * A prune up to this long before a capture that exists in this log is clock
+ * skew, not tampering. More than this exits 2.
+ */
+const PRUNE_BEFORE_CAPTURE_SKEW_MS = 5000;
 
 /**
  * A session-package report records `manifestSha256`. Local-store reports leave
@@ -970,7 +976,18 @@ function auditEventMatches(
 
 function retentionConfigured(cwd: string): boolean {
   const cfg = loadConfig(cwd);
-  return typeof cfg.maxCount === 'number' || typeof cfg.maxAgeDays === 'number';
+  return typeof cfg.maxCount === 'number' || typeof cfg.maxAgeDays === 'number' || cfg.autoPrune === true;
+}
+
+/**
+ * No warning when this store has retention config, or the newest prune line
+ * records `source: command`. `source: retention` keeps the warning unless
+ * that config is actually present.
+ */
+function pruneWarning(cwd: string, source: string | undefined): string | null {
+  if (retentionConfigured(cwd) || source === 'command') return null;
+  if (source === 'retention') return PRUNE_UNSIGNED_WARN + PRUNE_RETENTION_CLAIMED;
+  return PRUNE_UNSIGNED_WARN;
 }
 
 function eventTime(ts: string | undefined): number {
@@ -982,17 +999,18 @@ interface StoreCatalog {
   listed: boolean;
   pruned: boolean;
   unreadable: boolean;
-  /** Exit 2. A prune that is not a capture-after record. */
+  /** Exit 2. A prune timestamped too far before a capture that exists here. */
   pruneInvalid: string | null;
-  /** Payload-only prune with no retention config and no recorded source. */
-  pruneWarn: boolean;
+  /** Payload-only prune warning, or null when the prune is backed by a command or config. */
+  pruneWarn: string | null;
 }
 
 /**
- * The newest matching audit event wins. A prune is not "still listed"
- * only when a capture, wrap, or watch event exists and the prune timestamp
- * is not before that event. The log is unsigned, so that is not proof the
- * prune command ran.
+ * The newest matching audit event wins. A missing capture, wrap, or watch
+ * event is not tampering: the prune is payload-only. Exit 2 only when one
+ * of those events exists in this log and the prune is more than
+ * PRUNE_BEFORE_CAPTURE_SKEW_MS before it. The log is unsigned, so a
+ * payload-only prune is not proof the prune command ran.
  */
 function storeCatalog(cwd: string, receipt: ReportReceiptPayload): StoreCatalog {
   const hashes = acceptedHashes(receipt);
@@ -1013,7 +1031,6 @@ function storeCatalog(cwd: string, receipt: ReportReceiptPayload): StoreCatalog 
   let newestPrune: { ts?: string; source?: string } | null = null;
   let newestCapture: { ts?: string } | null = null;
   let sawPrune = false;
-  let recordedPruneSource = false;
   if (existsSync(auditLogPath(cwd))) {
     try {
       for (const event of loadAuditEvents(cwd)) {
@@ -1022,7 +1039,6 @@ function storeCatalog(cwd: string, receipt: ReportReceiptPayload): StoreCatalog 
         if (event.event === 'prune') {
           sawPrune = true;
           newestPrune = event;
-          if (event.source === 'command' || event.source === 'retention') recordedPruneSource = true;
         } else if (event.event === 'capture' || event.event === 'wrap' || event.event === 'watch') {
           newestCapture = event;
         }
@@ -1033,32 +1049,29 @@ function storeCatalog(cwd: string, receipt: ReportReceiptPayload): StoreCatalog 
   }
   const pruneExplains = newest?.event === 'prune' || (sawPrune && !indexListed);
   if (pruneExplains) {
-    if (!newestCapture) {
-      return {
-        listed: false,
-        pruned: false,
-        unreadable,
-        pruneInvalid: `receipt ${receipt.id} is absent; audit.jsonl records a prune with no capture event`,
-        pruneWarn: false,
-      };
-    }
-    const pruneTs = eventTime(newestPrune?.ts);
-    const captureTs = eventTime(newestCapture.ts);
-    if (!Number.isFinite(pruneTs) || !Number.isFinite(captureTs) || pruneTs < captureTs) {
-      return {
-        listed: false,
-        pruned: false,
-        unreadable,
-        pruneInvalid: `receipt ${receipt.id} prune is timestamped before its capture`,
-        pruneWarn: false,
-      };
+    if (newestCapture) {
+      const pruneTs = eventTime(newestPrune?.ts);
+      const captureTs = eventTime(newestCapture.ts);
+      if (
+        !Number.isFinite(pruneTs) ||
+        !Number.isFinite(captureTs) ||
+        captureTs - pruneTs > PRUNE_BEFORE_CAPTURE_SKEW_MS
+      ) {
+        return {
+          listed: false,
+          pruned: false,
+          unreadable,
+          pruneInvalid: `receipt ${receipt.id} prune is timestamped before its capture`,
+          pruneWarn: null,
+        };
+      }
     }
     return {
       listed: false,
       pruned: true,
       unreadable,
       pruneInvalid: null,
-      pruneWarn: !retentionConfigured(cwd) && !recordedPruneSource,
+      pruneWarn: pruneWarning(cwd, newestPrune?.source),
     };
   }
   return {
@@ -1066,7 +1079,7 @@ function storeCatalog(cwd: string, receipt: ReportReceiptPayload): StoreCatalog 
     pruned: false,
     unreadable,
     pruneInvalid: null,
-    pruneWarn: false,
+    pruneWarn: null,
   };
 }
 
@@ -1083,8 +1096,9 @@ function storeCatalog(cwd: string, receipt: ReportReceiptPayload): StoreCatalog 
  * then requires that sidecar.
  * `--receipts` with no candidate exits 2. Without it, a receipt the store
  * index or audit log still lists exits 2 (deleted in place). A prune is
- * payload-only only when it is not before a capture, wrap, or watch event.
- * The note is "receipt absent; audit.jsonl (unsigned) records a prune".
+ * payload-only when this log has no capture, wrap, or watch event for that
+ * receipt, and when such an event exists and the prune is at most 5 seconds
+ * before it. The note is "receipt absent; audit.jsonl (unsigned) records a prune".
  * Every failure is recorded, not only the first.
  */
 function checkLocalReceipts(
@@ -1152,7 +1166,7 @@ function checkLocalReceipts(
         skipped += 1;
         notChecked += 1;
         if (!noteText) noteText = PRUNE_ABSENT_NOTE;
-        if (catalog.pruneWarn) warning = PRUNE_UNSIGNED_WARN;
+        if (catalog.pruneWarn) warning = catalog.pruneWarn;
         continue;
       }
       if (catalog.listed) {
@@ -1190,7 +1204,12 @@ function shownVerdict(result: ReportVerifyResult): ReportVerifyVerdict | null {
   return result.verdict;
 }
 
-function verdictLabel(verdict: ReportVerifyVerdict | null, notChecked: number): string {
+function verdictLabel(
+  verdict: ReportVerifyVerdict | null,
+  notChecked: number,
+  exitCode: 0 | 1 | 2,
+): string {
+  if (exitCode !== 0 && verdict === 'UNSIGNED') return 'FAILED (unsigned)';
   if (verdict === 'VERIFIED_PAYLOAD_ONLY') {
     return `VERIFIED (payload only; ${notChecked} receipts not checked)`;
   }
@@ -1209,7 +1228,7 @@ function emitVerify(result: ReportVerifyResult, json: boolean): 0 | 1 | 2 {
     console.error(color.red('Error:') + ` ${result.reason ?? 'report verify failed'}`);
     return 1;
   }
-  const label = verdictLabel(verdict, result.notChecked);
+  const label = verdictLabel(verdict, result.notChecked, result.exitCode);
   const paint =
     result.exitCode === 0 && verdict === 'VERIFIED' ? color.green : result.exitCode === 0 ? color.yellow : color.red;
   console.log(`${paint(label)}  report verify`);
@@ -1326,8 +1345,9 @@ function receiptsDirError(cwd: string, dir: string | undefined): string | null {
  * original fingerprint when that claim is set. A symlink exits 2.
  * `--receipts` requires every referenced receipt. Without it, a receipt
  * the store index or audit log still lists exits 2, unless the newest
- * audit event is a prune that is not timestamped before a capture, wrap,
- * or watch event. That case is payload-only and the reason is
+ * audit event is a prune. A missing capture is payload-only. A prune more
+ * than 5 seconds before a capture, wrap, or watch event that exists in
+ * this log exits 2. The payload-only reason is
  * "receipt absent; audit.jsonl (unsigned) records a prune". audit.jsonl
  * is not signed. A present `audit.jsonl` in the store being searched,
  * with a broken hash chain, exits 2 and counts as failed. A missing audit

@@ -1,7 +1,7 @@
 /**
  * Table-driven Release QA matrix for report verify, gates 88dad95, 985e363,
- * 74bca3d, and b9c376a. Tamper rows must exit 2 and must not print a
- * VERIFIED headline. Genuine rows must exit 0, including payload-only.
+ * 74bca3d, b9c376a, and re-gate 6. Tamper rows must exit 2 and must not
+ * print a VERIFIED headline. Genuine rows must exit 0, including payload-only.
  */
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,6 +38,8 @@ const HOST = 'planted-host.example';
 const PAGE_MISMATCH = 'page content does not match signed payload';
 const PRUNE_NOTE = 'receipt absent; audit.jsonl (unsigned) records a prune';
 const PRUNE_WARN = 'audit.jsonl is unsigned; no retention config and no recorded prune command';
+const PRUNE_RETENTION_WARN = `${PRUNE_WARN} (retention source claimed but no retention config found)`;
+const PRUNE_SKEW_MS = 5000;
 const dirs = [];
 
 function git(cwd, args) {
@@ -408,6 +410,7 @@ function appendAuditLine(dir, fields) {
     exitCode: 0,
     prev,
   };
+  if (fields.source) event.source = fields.source;
   const line = JSON.stringify(event);
   writeFileSync(join(dir, '.agent-receipt', 'audit.jsonl'), `${lines.concat(line).join('\n')}\n`);
   return event;
@@ -438,6 +441,9 @@ function autocrlfClone(attributes) {
   const dir = initRepo('matrix-autocrlf-');
   cli(dir, ['keygen']);
   commitFile(dir, 'note.txt', 'autocrlf\n');
+  // Two audit events, so the chain hash actually spans a CRLF line.
+  cli(dir, ['wrap', '--sign', '--message', 'audit line one']);
+  commitFile(dir, 'note2.txt', 'autocrlf-2\n');
   cli(dir, ['wrap', '--sign', '--session', 's-crlf', '--agent', 'qa', '--message', 'autocrlf session']);
   const made = parseJson(cli(dir, ['report', '--session', 's-crlf', '--out', 'docs-s.report.html', '--json']));
   assert.equal(made.verdict, 'VERIFIED');
@@ -449,6 +455,48 @@ function autocrlfClone(attributes) {
   dirs.push(clone);
   execFileSync('git', ['clone', '-c', 'core.autocrlf=true', dir, clone], { encoding: 'utf8' });
   return { dir, clone, html: join(clone, 'docs-s.report.html') };
+}
+
+/** Repo A exports a signed session to A.session. Repo B imports it and signs both reports. */
+function importerReports(slug) {
+  const dir = initRepo(`matrix-${slug}-a-`);
+  cli(dir, ['keygen']);
+  const sid = 's-impqa';
+  commitFile(dir, 'parent.txt', 'parent\n');
+  const parent = parseJson(cli(dir, ['wrap', '--sign', '--session', sid, '--agent', 'parent', '--message', 'parent', '--json']));
+  commitFile(dir, 'child.txt', 'child\n');
+  cli(dir, ['wrap', '--sign', '--session', sid, '--parent', parent.path, '--agent', 'child', '--message', 'child']);
+  const packageParent = mkdtempSync(join(tmpdir(), 'matrix-Asession-'));
+  dirs.push(packageParent);
+  const packagePath = join(packageParent, 'A.session');
+  const exported = parseJson(cli(dir, ['session', 'export', sid, '--out', packagePath, '--json']));
+  assert.equal(exported.packagePath, packagePath);
+  const dest = initRepo(`matrix-${slug}-b-`);
+  cli(dest, ['keygen']);
+  const imported = cliResult(dest, ['session', 'import', packagePath]);
+  assert.equal(imported.code, 0, imported.out + imported.err);
+  assert.equal(existsSync(join(dest, '.agent-receipt', 'audit.jsonl')), false, 'import must not write audit.jsonl');
+  const pkgReport = parseJson(cli(dest, ['report', packagePath, '--out', join(dest, 'pkg.report.html'), '--json']));
+  const sesReport = parseJson(cli(dest, ['report', '--session', sid, '--out', join(dest, 'ses.report.html'), '--json']));
+  assert.equal(pkgReport.verdict, 'VERIFIED');
+  assert.equal(sesReport.verdict, 'VERIFIED');
+  assertVerified(dest, ['report', 'verify', pkgReport.htmlPath], `${slug}-pkg-before`);
+  assertVerified(dest, ['report', 'verify', sesReport.htmlPath], `${slug}-ses-before`);
+  return { dest, pkgReport, sesReport };
+}
+
+function assertPrunePayload(dest, reports, label) {
+  for (const html of reports) {
+    const got = assertPayloadOnly(
+      dest,
+      ['report', 'verify', html],
+      label,
+      new RegExp(PRUNE_NOTE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    );
+    assert.equal(got.body.reason, PRUNE_NOTE);
+    assert.equal(got.body.warning, null);
+    assert.ok(got.body.notChecked >= 1);
+  }
 }
 
 const NARRATIVE = [
@@ -1428,6 +1476,9 @@ const CASES = [
       const audit = readFileSync(join(clone, '.agent-receipt', 'audit.jsonl'));
       const page = readFileSync(html);
       assert.ok(audit.includes(0x0d), 'audit.jsonl should be CRLF when only *.report.html is -text');
+      const auditEvents = audit.toString('utf8').split('\n').filter((line) => line.length > 0);
+      assert.ok(auditEvents.length >= 2, `CR strip must span a CRLF line, got ${auditEvents.length}`);
+      assert.ok(auditEvents.every((line) => line.endsWith('\r')), 'each audit line should end in CR');
       assert.equal(page.includes(0x0d), false, 'the report page should stay LF');
       const got = assertVerified(clone, ['report', 'verify', 'docs-s.report.html'], 'autocrlf-audit');
       assert.equal(got.body.failed, 0);
@@ -1569,8 +1620,8 @@ const CASES = [
   },
   {
     id: 'prune-no-capture',
-    gate: '3131122',
-    kind: 'tamper',
+    gate: 'regate6',
+    kind: 'genuine',
     run() {
       const { dir, made, receipt, sha256 } = signedOne('no-capture');
       removeReceipt(receipt);
@@ -1585,12 +1636,24 @@ const CASES = [
         path: relFrom(dir, receipt),
         sha256,
       });
-      assertTamper(
+      const got = assertPayloadOnly(
         dir,
         ['report', 'verify', made.htmlPath],
         'prune-no-capture',
-        new RegExp(`receipt ${payloadId(made)} is absent; audit\\.jsonl records a prune with no capture event`),
+        new RegExp(PRUNE_NOTE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
       );
+      assert.equal(got.body.reason, PRUNE_NOTE);
+      assert.equal(got.body.warning, PRUNE_WARN);
+      assert.doesNotMatch(`${got.body.reason}`, /no capture event/);
+      const help = cli(root, ['help', 'report']);
+      assert.match(help, /5 seconds/);
+      assert.match(help, /missing capture/);
+      assert.doesNotMatch(help, /A prune with no capture event exits 2/);
+      for (const name of ['README.md', 'CHANGELOG.md', 'docs/business.md']) {
+        const text = readFileSync(join(root, name), 'utf8');
+        assert.match(text, /5 seconds/);
+        assert.doesNotMatch(text, /A prune with no capture event exits 2/);
+      }
     },
   },
   {
@@ -1800,6 +1863,221 @@ const CASES = [
       );
       assert.equal(got.body.checked, 1);
       assertTamper(dir, ['report', 'verify', made.htmlPath], 'cwd-chain-still-fails', /audit log hash chain is broken/);
+    },
+  },
+  {
+    id: 'importer-prune-command',
+    gate: 'regate6',
+    kind: 'genuine',
+    run() {
+      const { dest, pkgReport, sesReport } = importerReports('imp-cmd');
+      const before = receiptFiles(dest);
+      assert.ok(before.length >= 2, `expected a session to prune, got ${before.length}`);
+      const pruned = cliResult(dest, ['prune', '--max-count', '1', '--json']);
+      assert.equal(pruned.code, 0, pruned.out + pruned.err);
+      assert.ok(receiptFiles(dest).length < before.length);
+      const events = auditLines(dest).map((line) => JSON.parse(line));
+      assert.ok(events.length >= 1);
+      assert.ok(events.every((event) => event.event === 'prune' && event.source === 'command'));
+      assertPrunePayload(dest, [pkgReport.htmlPath, sesReport.htmlPath], 'importer-cmd');
+    },
+  },
+  {
+    id: 'importer-auto-prune',
+    gate: 'regate6',
+    kind: 'genuine',
+    run() {
+      const { dest, pkgReport, sesReport } = importerReports('imp-ret');
+      const before = receiptFiles(dest);
+      writeFileSync(join(dest, '.agent-receipt.yml'), '\nmaxCount: 1\nautoPrune: true\n', { flag: 'a' });
+      commitFile(dest, 'extra.txt', 'extra\n');
+      const captured = cliResult(dest, ['capture', '--message', 'trigger-autoprune']);
+      assert.equal(captured.code, 0, captured.out + captured.err);
+      assert.ok(receiptFiles(dest).length < before.length, 'auto-prune should delete imported receipts');
+      const events = auditLines(dest).map((line) => JSON.parse(line));
+      const prunes = events.filter((event) => event.event === 'prune');
+      assert.ok(prunes.length >= 1);
+      assert.ok(prunes.every((event) => event.source === 'retention'));
+      assertPrunePayload(dest, [pkgReport.htmlPath, sesReport.htmlPath], 'importer-ret');
+    },
+  },
+  {
+    id: 'gitignored-audit-prune',
+    gate: 'regate6',
+    kind: 'genuine',
+    run() {
+      const dir = initRepo('matrix-gi-');
+      cli(dir, ['keygen']);
+      commitFile(dir, 'a.txt', 'a\n');
+      const first = parseJson(cli(dir, ['wrap', '--sign', '--message', 'first', '--json']));
+      commitFile(dir, 'b.txt', 'b\n');
+      cli(dir, ['wrap', '--sign', '--message', 'second']);
+      const made = parseJson(cli(dir, ['report', first.path, '--out', 'kept.report.html', '--json']));
+      assert.equal(made.verdict, 'VERIFIED');
+      writeFileSync(join(dir, '.gitignore'), '.agent-receipt/audit.jsonl\n');
+      git(dir, ['config', 'core.autocrlf', 'false']);
+      git(dir, ['add', '-A']);
+      git(dir, ['commit', '-m', 'receipts, audit gitignored']);
+      assert.ok(existsSync(join(dir, '.agent-receipt', 'audit.jsonl')));
+      assert.equal(git(dir, ['ls-files', '.agent-receipt/audit.jsonl']), '');
+      const clone = mkdtempSync(join(tmpdir(), 'matrix-gi-clone-'));
+      dirs.push(clone);
+      execFileSync('git', ['clone', '-c', 'core.autocrlf=false', dir, clone], { encoding: 'utf8' });
+      assert.equal(existsSync(join(clone, '.agent-receipt', 'audit.jsonl')), false);
+      assertVerified(clone, ['report', 'verify', 'kept.report.html'], 'gi-before');
+      const pruned = cliResult(clone, ['prune', '--max-count', '1', '--json']);
+      assert.equal(pruned.code, 0, pruned.out + pruned.err);
+      const events = auditLines(clone).map((line) => JSON.parse(line));
+      assert.ok(events.length >= 1);
+      assert.ok(events.every((event) => event.event === 'prune' && event.source === 'command'));
+      const got = assertPayloadOnly(
+        clone,
+        ['report', 'verify', 'kept.report.html'],
+        'gi-after',
+        new RegExp(PRUNE_NOTE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      );
+      assert.equal(got.body.reason, PRUNE_NOTE);
+      assert.equal(got.body.warning, null);
+    },
+  },
+  {
+    id: 'unsigned-stray-valid-sidecar',
+    gate: 'regate6',
+    kind: 'genuine',
+    run() {
+      const dir = initRepo('matrix-stray-');
+      commitFile(dir, 'note.txt', 'stray sidecar\n');
+      cli(dir, ['wrap', '--agent', 'qa', '--message', 'unsigned stray']);
+      const made = parseJson(cli(dir, ['report', 'last', '--json']));
+      const payload = payloadOf(readFileSync(made.htmlPath, 'utf8'));
+      assert.equal(payload.verdict, 'UNSIGNED');
+      assert.equal(payload.receipts[0].fingerprint ?? null, null);
+      assert.equal(payload.receipts[0].originalFingerprint ?? null, null);
+      const receipt = latestReceipt(dir);
+      sidecarFromOtherKey(dir, receipt);
+      const sig = cliResult(dir, ['verify', '--require-sig', receipt]);
+      assert.equal(sig.code, 0, sig.out + sig.err);
+      const got = verifyCall(dir, ['report', 'verify', made.htmlPath]);
+      assertCode(got, 0, 'stray-sidecar');
+      assert.equal(got.body.verdict, 'UNSIGNED');
+      assert.equal(got.body.failed, 0);
+      assert.equal(got.body.checked, 1);
+      assert.match(got.human.out, /^UNSIGNED  report verify/m);
+    },
+  },
+  {
+    id: 'forged-retention-source',
+    gate: 'regate6',
+    kind: 'genuine',
+    run() {
+      const { dir, made, receipt, sha256 } = signedOne('forged-retention');
+      const capture = auditLines(dir).map((line) => JSON.parse(line)).find((event) => event.sha256 === sha256);
+      assert.ok(capture);
+      removeReceipt(receipt);
+      appendAuditLine(dir, {
+        ts: new Date(Date.parse(capture.ts) + 60_000).toISOString(),
+        event: 'prune',
+        path: relFrom(dir, receipt),
+        sha256,
+        source: 'retention',
+      });
+      const got = assertPayloadOnly(dir, ['report', 'verify', made.htmlPath], 'forged-retention');
+      assert.equal(got.body.reason, PRUNE_NOTE);
+      assert.equal(got.body.warning, PRUNE_RETENTION_WARN);
+      assert.match(got.human.err, /retention source claimed but no retention config found/);
+      const help = cli(root, ['help', 'report']);
+      assert.match(help, /retention source claimed but no retention config found/);
+    },
+  },
+  {
+    id: 'prune-within-skew',
+    gate: 'regate6',
+    kind: 'genuine',
+    run() {
+      const reportSrc = readFileSync(join(root, 'src', 'commands', 'report.ts'), 'utf8');
+      assert.match(reportSrc, /PRUNE_BEFORE_CAPTURE_SKEW_MS = 5000/);
+      const { dir, made, receipt, sha256 } = signedOne('skew');
+      const capture = auditLines(dir).map((line) => JSON.parse(line)).find((event) => event.sha256 === sha256);
+      assert.ok(capture);
+      removeReceipt(receipt);
+      appendAuditLine(dir, {
+        ts: new Date(Date.parse(capture.ts) - PRUNE_SKEW_MS).toISOString(),
+        event: 'prune',
+        path: relFrom(dir, receipt),
+        sha256,
+      });
+      const got = assertPayloadOnly(dir, ['report', 'verify', made.htmlPath], 'prune-skew');
+      assert.equal(got.body.reason, PRUNE_NOTE);
+    },
+  },
+  {
+    id: 'audit-two-trailing-cr',
+    gate: 'regate6',
+    kind: 'tamper',
+    run() {
+      const { dir, made } = signedOne('two-cr');
+      const auditPath = join(dir, '.agent-receipt', 'audit.jsonl');
+      const original = readFileSync(auditPath, 'utf8');
+      const lines = original.split('\n');
+      assert.ok(lines[0].length > 0);
+      lines[0] = `${lines[0].replace(/\r+$/, '')}\r\r`;
+      writeFileSync(auditPath, lines.join('\n'));
+      const got = assertTamper(dir, ['report', 'verify', made.htmlPath], 'two-cr', /audit log hash chain is broken/);
+      assert.match(got.body.reason, /trailing CR/);
+      const audit = cliResult(dir, ['audit', '--verify']);
+      assert.notEqual(audit.code, 0);
+      assert.match(`${audit.out}\n${audit.err}`, /trailing CR/);
+      const help = cli(root, ['help', 'audit']);
+      assert.match(help, /Two\ntrailing CRs still fail/);
+    },
+  },
+  {
+    id: 'crlf-hint-on-failing-line',
+    gate: 'regate6',
+    kind: 'tamper',
+    run() {
+      const dir = initRepo('matrix-cr-hint-');
+      cli(dir, ['keygen']);
+      commitFile(dir, 'a.txt', 'hint-a\n');
+      cli(dir, ['wrap', '--sign', '--message', 'hint-a']);
+      commitFile(dir, 'b.txt', 'hint-b\n');
+      const second = parseJson(cli(dir, ['wrap', '--sign', '--message', 'hint-b', '--json']));
+      const made = parseJson(cli(dir, ['report', second.path, '--json']));
+      const auditPath = join(dir, '.agent-receipt', 'audit.jsonl');
+      const lines = auditLines(dir);
+      assert.ok(lines.length >= 2, `expected a chain, got ${lines.length}`);
+      const broken = JSON.parse(lines[1]);
+      broken.prev = 'd'.repeat(64);
+      lines[0] = `${lines[0].replace(/\r+$/, '')}\r`;
+      lines[1] = JSON.stringify(broken);
+      writeFileSync(auditPath, `${lines.join('\n')}\n`);
+      const quiet = assertTamper(dir, ['report', 'verify', made.htmlPath], 'hint-other-line', /audit log hash chain is broken/);
+      assert.doesNotMatch(quiet.body.reason, /autocrlf/);
+      assert.doesNotMatch(quiet.body.reason, /CRLF/);
+      lines[1] = `${JSON.stringify(broken)}\r`;
+      writeFileSync(auditPath, `${lines.join('\n')}\n`);
+      const named = assertTamper(dir, ['report', 'verify', made.htmlPath], 'hint-this-line', /audit log hash chain is broken/);
+      assert.match(named.body.reason, /CRLF \/ core\.autocrlf/);
+    },
+  },
+  {
+    id: 'unsigned-fail-headline',
+    gate: 'regate6',
+    kind: 'tamper',
+    run() {
+      const dir = initRepo('matrix-unsigned-fail-');
+      commitFile(dir, 'note.txt', 'headline\n');
+      cli(dir, ['wrap', '--agent', 'ci', '--message', 'unsigned headline']);
+      const made = parseJson(cli(dir, ['report', 'last', '--json']));
+      assert.equal(made.verdict, 'UNSIGNED');
+      replaceOnce(latestReceipt(dir), 'unsigned headline', 'unsigned headline edited');
+      const got = assertTamper(dir, ['report', 'verify', made.htmlPath], 'unsigned-fail');
+      assert.match(got.human.out, /^FAILED \(unsigned\)  report verify/m);
+      assert.doesNotMatch(got.human.out, /^UNSIGNED/m);
+      assert.equal(got.body.verdict, 'UNSIGNED');
+      assert.equal(got.body.exitCode, 2);
+      const help = cli(root, ['help', 'report']);
+      assert.match(help, /FAILED \(unsigned\)/);
     },
   },
 ];
