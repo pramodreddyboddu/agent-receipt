@@ -24,6 +24,7 @@ import {
 import { basename, dirname, join, resolve } from 'node:path';
 import { auditLogPath, loadAuditEvents, verifyAuditChain } from '../lib/audit.js';
 import { color } from '../lib/color.js';
+import { loadConfig } from '../lib/config.js';
 import { canonicalBody, extractEmbeddedHash, sha256Hex } from '../lib/hash.js';
 import {
   buildSessionNodes,
@@ -145,6 +146,8 @@ export interface ReportVerifyResult {
   /** Referenced receipts with no candidate and no store listing. */
   notChecked: number;
   reason: string | null;
+  /** Set when a payload-only prune has no retention config and no recorded source. */
+  warning: string | null;
 }
 
 interface BuiltReceipt {
@@ -289,12 +292,30 @@ function redactedCanonical(markdown: string, actual: string): string | null {
   return hash === actual ? null : hash;
 }
 
+/**
+ * Canonical hash of the local same-id receipt, when a package report is
+ * built while that file is still in this store. Prefer a hash that is not
+ * the packaged hash so a later deletion is still listed.
+ */
+function knownOriginalSha256(cwd: string, id: string, packagedSha: string): string | null {
+  const files: string[] = [];
+  collectMarkdown(receiptsDir(cwd), files, 0);
+  const same: string[] = [];
+  for (const file of files) {
+    const item = indexedReceipt(file);
+    if (!item || !item.verified || item.id !== id) continue;
+    same.push(item.sha256);
+  }
+  return same.find((hash) => hash !== packagedSha) ?? same[0] ?? null;
+}
+
 function buildOne(
   filePath: string,
   exposure: ReportExposure,
   store: TrustStore,
   provenance: Map<string, ResignClaim>,
   manifestEntry?: SessionManifestReceipt,
+  cwd?: string,
 ): BuiltReceipt {
   const original = readFileSync(filePath, 'utf8');
   const integrity = receiptIntegrity(original);
@@ -332,10 +353,12 @@ function buildOne(
     signature: sig.state,
     trusted: sig.trusted,
   };
+  const originalSha256 = manifestEntry && cwd ? knownOriginalSha256(cwd, id, integrity.actual) : null;
   const payload: ReportReceiptPayload = {
     id,
     sha256: integrity.actual,
     redactedSha256: redactedCanonical(original, integrity.actual),
+    originalSha256,
     parent,
     agent,
     verified: identity.verified,
@@ -621,7 +644,7 @@ function sessionPackageReport(cwd: string, pathArg: string, opts: ReportOptions)
     if (!existsSync(filePath)) {
       return emptyResult(1, `packaged receipt is missing: ${entry.path}`);
     }
-    built.push(buildOne(filePath, exposure, store, new Map(), entry));
+    built.push(buildOne(filePath, exposure, store, new Map(), entry, cwd));
   }
   const manifestSha256 = sha256FileBytes(located.manifestPath);
   return writeReport(
@@ -755,6 +778,7 @@ function isReceiptMarkdownName(name: string): boolean {
 /**
  * Markdown candidates for `report verify`. The depth cap of 4 means the
  * start directory is depth 0 and a directory four levels down is still read.
+ * A file at depth 5 or deeper is not a candidate.
  * The same walk applies equally to pages from report last, verify, and session.
  * Directory symlinks are not followed. `node_modules`, `.git`, and `keys`
  * are skipped.
@@ -845,9 +869,15 @@ interface LocalCheck {
   failed: number;
   notChecked: number;
   reason: string | null;
-  /** Payload-only note. "pruned per audit" when a missing receipt was pruned. */
+  /** Payload-only note when a missing receipt has an honest unsigned prune. */
   note: string | null;
+  /** Stderr warning for an unsigned prune with no retention and no recorded source. */
+  warning: string | null;
 }
+
+const PRUNE_ABSENT_NOTE = 'receipt absent; audit.jsonl (unsigned) records a prune';
+const PRUNE_UNSIGNED_WARN =
+  'audit.jsonl is unsigned; no retention config and no recorded prune command';
 
 /**
  * A session-package report records `manifestSha256`. Local-store reports leave
@@ -862,7 +892,29 @@ function isPackageReport(payload: ReportPayload): boolean {
 function acceptedHashes(receipt: ReportReceiptPayload): Set<string> {
   const accepted = new Set<string>([receipt.sha256]);
   if (receipt.redactedSha256) accepted.add(receipt.redactedSha256);
+  if (receipt.originalSha256) accepted.add(receipt.originalSha256);
   return accepted;
+}
+
+/**
+ * Fingerprint a byte-match sidecar must carry. The receipt file's own
+ * fingerprint wins. originalFingerprint is the pre-export key and is
+ * required on the redact-then-hash path instead, so a same-key package
+ * rewrite still matches the imported sidecar.
+ */
+function payloadSignedFingerprint(receipt: ReportReceiptPayload): string | null {
+  if (receipt.fingerprint) return receipt.fingerprint;
+  if (receipt.originalFingerprint) return receipt.originalFingerprint;
+  return null;
+}
+
+/** Unsigned payload: a valid stray sidecar is ignored. Invalid already failed. */
+function signedSidecarProblem(item: IndexedReceipt, required: string | null, where: string): string | null {
+  if (!required) return null;
+  if (item.signature !== 'valid' || (item.fingerprint ?? null) !== required) {
+    return `${where} signature mismatch`;
+  }
+  return null;
 }
 
 /** Redacted body equals the packaged hash (`sha256`) or a recorded `redactedSha256`. */
@@ -892,15 +944,11 @@ function unacceptableReason(
   if (item.symlink) return `${where} is a symlink`;
   if (!item.verified) return `${where} fails integrity`;
   if (item.signature === 'invalid') return `${where} signature mismatch`;
-  const rawMatch = item.sha256 === receipt.sha256;
-  if (rawMatch) {
-    if (item.signature !== receipt.signature) return `${where} signature mismatch`;
-    if ((item.fingerprint ?? null) !== (receipt.fingerprint ?? null)) return `${where} signature mismatch`;
-    return null;
-  }
-  // redactedSha256 is a signed value. Matching bytes are enough in a local
-  // store and in a package. An invalid sidecar already failed above.
-  if (receipt.redactedSha256 && item.sha256 === receipt.redactedSha256) return null;
+  const required = payloadSignedFingerprint(receipt);
+  const byteMatch =
+    item.sha256 === receipt.sha256 ||
+    Boolean(receipt.redactedSha256 && item.sha256 === receipt.redactedSha256);
+  if (byteMatch) return signedSidecarProblem(item, required, where);
   if (packageReport && redactedFormMatches(item, receipt)) {
     const required = requiredRedactedFingerprint(receipt);
     if (required && (item.signature !== 'valid' || (item.fingerprint ?? null) !== required)) {
@@ -920,15 +968,33 @@ function auditEventMatches(
   return Boolean(event.path && event.path.includes(receipt.id));
 }
 
+function retentionConfigured(cwd: string): boolean {
+  const cfg = loadConfig(cwd);
+  return typeof cfg.maxCount === 'number' || typeof cfg.maxAgeDays === 'number';
+}
+
+function eventTime(ts: string | undefined): number {
+  const parsed = Date.parse(ts ?? '');
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+interface StoreCatalog {
+  listed: boolean;
+  pruned: boolean;
+  unreadable: boolean;
+  /** Exit 2. A prune that is not a capture-after record. */
+  pruneInvalid: string | null;
+  /** Payload-only prune with no retention config and no recorded source. */
+  pruneWarn: boolean;
+}
+
 /**
- * The newest matching audit event wins. A prune is not "still listed".
- * A prune that removed the index row is the same result when a later event
- * for that receipt is absent.
+ * The newest matching audit event wins. A prune is not "still listed"
+ * only when a capture, wrap, or watch event exists and the prune timestamp
+ * is not before that event. The log is unsigned, so that is not proof the
+ * prune command ran.
  */
-function storeCatalog(
-  cwd: string,
-  receipt: ReportReceiptPayload,
-): { listed: boolean; pruned: boolean; unreadable: boolean } {
+function storeCatalog(cwd: string, receipt: ReportReceiptPayload): StoreCatalog {
   const hashes = acceptedHashes(receipt);
   let indexListed = false;
   let unreadable = false;
@@ -944,21 +1010,64 @@ function storeCatalog(
     unreadable = true;
   }
   let newest: { event: string } | null = null;
+  let newestPrune: { ts?: string; source?: string } | null = null;
+  let newestCapture: { ts?: string } | null = null;
   let sawPrune = false;
+  let recordedPruneSource = false;
   if (existsSync(auditLogPath(cwd))) {
     try {
       for (const event of loadAuditEvents(cwd)) {
         if (!auditEventMatches(event, receipt, hashes)) continue;
         newest = event;
-        if (event.event === 'prune') sawPrune = true;
+        if (event.event === 'prune') {
+          sawPrune = true;
+          newestPrune = event;
+          if (event.source === 'command' || event.source === 'retention') recordedPruneSource = true;
+        } else if (event.event === 'capture' || event.event === 'wrap' || event.event === 'watch') {
+          newestCapture = event;
+        }
       }
     } catch {
       unreadable = true;
     }
   }
-  const pruned = newest?.event === 'prune' || (sawPrune && !indexListed);
-  if (pruned) return { listed: false, pruned: true, unreadable };
-  return { listed: indexListed || newest !== null, pruned: false, unreadable };
+  const pruneExplains = newest?.event === 'prune' || (sawPrune && !indexListed);
+  if (pruneExplains) {
+    if (!newestCapture) {
+      return {
+        listed: false,
+        pruned: false,
+        unreadable,
+        pruneInvalid: `receipt ${receipt.id} is absent; audit.jsonl records a prune with no capture event`,
+        pruneWarn: false,
+      };
+    }
+    const pruneTs = eventTime(newestPrune?.ts);
+    const captureTs = eventTime(newestCapture.ts);
+    if (!Number.isFinite(pruneTs) || !Number.isFinite(captureTs) || pruneTs < captureTs) {
+      return {
+        listed: false,
+        pruned: false,
+        unreadable,
+        pruneInvalid: `receipt ${receipt.id} prune is timestamped before its capture`,
+        pruneWarn: false,
+      };
+    }
+    return {
+      listed: false,
+      pruned: true,
+      unreadable,
+      pruneInvalid: null,
+      pruneWarn: !retentionConfigured(cwd) && !recordedPruneSource,
+    };
+  }
+  return {
+    listed: indexListed || newest !== null,
+    pruned: false,
+    unreadable,
+    pruneInvalid: null,
+    pruneWarn: false,
+  };
 }
 
 /**
@@ -967,14 +1076,16 @@ function storeCatalog(
  * plus every file whose raw sha256 or embedded hash is in the accepted set.
  * Names, subdirectories, and sessions do not narrow the set. `.MD` counts.
  * A symlink candidate is never acceptable.
- * A raw sha256 match requires the payload signature status and fingerprint.
- * A raw sha256 equal to `redactedSha256` is a byte match in both stores.
+ * A raw sha256 match, and a raw sha256 equal to `redactedSha256`, both
+ * require a valid sidecar when the payload records a fingerprint or
+ * originalFingerprint. An unsigned payload ignores a valid stray sidecar.
  * Redact-then-hash is package-only, and a non-null original fingerprint
  * then requires that sidecar.
  * `--receipts` with no candidate exits 2. Without it, a receipt the store
- * index or audit log still lists exits 2 (deleted in place). A newest
- * prune event is not listed: the receipt is not checked and the note is
- * "pruned per audit". Every failure is recorded, not only the first.
+ * index or audit log still lists exits 2 (deleted in place). A prune is
+ * payload-only only when it is not before a capture, wrap, or watch event.
+ * The note is "receipt absent; audit.jsonl (unsigned) records a prune".
+ * Every failure is recorded, not only the first.
  */
 function checkLocalReceipts(
   cwd: string,
@@ -1006,6 +1117,7 @@ function checkLocalReceipts(
   let notChecked = 0;
   let reason: string | null = null;
   let noteText: string | null = null;
+  let warning: string | null = null;
   const note = (next: string): void => {
     reason = reason ? `${reason}; ${next}` : next;
   };
@@ -1031,10 +1143,16 @@ function checkLocalReceipts(
         note(`receipt ${receipt.id} is missing and the store index or audit log could not be read`);
         continue;
       }
+      if (catalog.pruneInvalid) {
+        failed += 1;
+        note(catalog.pruneInvalid);
+        continue;
+      }
       if (catalog.pruned) {
         skipped += 1;
         notChecked += 1;
-        if (!noteText) noteText = 'pruned per audit';
+        if (!noteText) noteText = PRUNE_ABSENT_NOTE;
+        if (catalog.pruneWarn) warning = PRUNE_UNSIGNED_WARN;
         continue;
       }
       if (catalog.listed) {
@@ -1058,7 +1176,7 @@ function checkLocalReceipts(
     }
     checked += 1;
   }
-  return { checked, skipped, failed, notChecked, reason, note: noteText };
+  return { checked, skipped, failed, notChecked, reason, note: noteText, warning };
 }
 
 /** A non-zero exit never reports VERIFIED. The page's claim is not a pass. */
@@ -1081,7 +1199,8 @@ function verdictLabel(verdict: ReportVerifyVerdict | null, notChecked: number): 
 
 function emitVerify(result: ReportVerifyResult, json: boolean): 0 | 1 | 2 {
   const verdict = shownVerdict(result);
-  const printed = { ...result, verdict, warning: null as string | null };
+  const warning = result.warning ?? null;
+  const printed = { ...result, verdict, warning };
   if (json) {
     console.log(JSON.stringify(printed));
     return result.exitCode;
@@ -1095,6 +1214,7 @@ function emitVerify(result: ReportVerifyResult, json: boolean): 0 | 1 | 2 {
     result.exitCode === 0 && verdict === 'VERIFIED' ? color.green : result.exitCode === 0 ? color.yellow : color.red;
   console.log(`${paint(label)}  report verify`);
   if (result.fingerprint) console.log(`  fingerprint: ${result.fingerprint}`);
+  if (warning) console.error(`warn: ${warning}`);
   if (result.reason) console.error(result.reason);
   const examined = result.checked + result.skipped + result.failed;
   if (examined > 0) {
@@ -1206,9 +1326,12 @@ function receiptsDirError(cwd: string, dir: string | undefined): string | null {
  * original fingerprint when that claim is set. A symlink exits 2.
  * `--receipts` requires every referenced receipt. Without it, a receipt
  * the store index or audit log still lists exits 2, unless the newest
- * audit event is a prune (`pruned per audit`, payload-only). A present
- * `audit.jsonl` with a broken hash chain exits 2. A missing audit file
- * is not a chain failure. A receipt the store does not list is not
+ * audit event is a prune that is not timestamped before a capture, wrap,
+ * or watch event. That case is payload-only and the reason is
+ * "receipt absent; audit.jsonl (unsigned) records a prune". audit.jsonl
+ * is not signed. A present `audit.jsonl` in the store being searched,
+ * with a broken hash chain, exits 2 and counts as failed. A missing audit
+ * file is not a chain failure. A receipt the store does not list is not
  * checked, and a VERIFIED page is reported as VERIFIED_PAYLOAD_ONLY.
  */
 function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions): 0 | 1 | 2 {
@@ -1230,6 +1353,7 @@ function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions
         failed: extra.failed ?? 0,
         notChecked: extra.notChecked ?? 0,
         reason,
+        warning: extra.warning ?? null,
       },
       json,
     );
@@ -1321,14 +1445,16 @@ function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions
   const explicitReceipts = Boolean(opts.receiptsDir);
   const dirs = explicitReceipts ? [resolve(cwd, opts.receiptsDir as string)] : [receiptsDir(cwd)];
   const local = checkLocalReceipts(cwd, payload, dirs, explicitReceipts);
+  const chainRoot = auditRootForVerify(cwd, opts.receiptsDir, explicitReceipts);
+  const chainError = chainRoot ? auditChainError(chainRoot) : null;
   const counts = {
     checked: local.checked,
     skipped: local.skipped,
-    failed: local.failed,
+    failed: local.failed + (chainError ? 1 : 0),
     notChecked: local.notChecked,
     trusted,
+    warning: local.warning,
   };
-  const chainError = auditChainError(cwd);
   if (chainError || local.reason) {
     const reason = [chainError, local.reason].filter((item): item is string => Boolean(item)).join('; ');
     return fail(2, reason, { ...base, ...counts });
@@ -1359,9 +1485,10 @@ function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions
         receiptCount: payload.receipts.length,
         checked: local.checked,
         skipped: local.skipped,
-        failed: local.failed,
+        failed: counts.failed,
         notChecked: local.notChecked,
         reason: local.note,
+        warning: local.warning,
       },
       json,
     );
@@ -1383,18 +1510,43 @@ function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions
       receiptCount: payload.receipts.length,
       checked: local.checked,
       skipped: local.skipped,
-      failed: local.failed,
+      failed: counts.failed,
       notChecked: local.notChecked,
       reason: local.note,
+      warning: local.warning,
     },
     json,
   );
 }
 
 /**
+ * Chain root for this verify. The current repo is used when `--receipts`
+ * is absent or names this repo's receipts directory. Another checkout's
+ * `.agent-receipt/receipts` uses that checkout. A package directory or any
+ * other directory does not consult an unrelated audit.jsonl in cwd.
+ */
+function auditRootForVerify(cwd: string, receiptsArg: string | undefined, explicit: boolean): string | null {
+  if (!explicit || !receiptsArg) return cwd;
+  const abs = resolve(cwd, receiptsArg);
+  const local = resolve(receiptsDir(cwd));
+  if (abs === local) return cwd;
+  const parent = dirname(abs);
+  if (
+    basename(parent) === '.agent-receipt' &&
+    basename(abs) === basename(local) &&
+    existsSync(join(parent, 'audit.jsonl'))
+  ) {
+    return dirname(parent);
+  }
+  if (existsSync(join(abs, '.agent-receipt', 'audit.jsonl'))) return abs;
+  return null;
+}
+
+/**
  * Same rule as `doctor --strict`. A missing audit file is not a failure.
  * An empty file is intact. A break exits 2 after receipt counts are known,
- * so deleting lines cannot fall through to payload-only.
+ * so deleting lines cannot fall through to payload-only. A chain-only
+ * failure still increments `failed`.
  */
 function auditChainError(cwd: string): string | null {
   if (!existsSync(auditLogPath(cwd))) return null;
@@ -1433,6 +1585,7 @@ export function cmdReportVerify(
         failed: 0,
         notChecked: 0,
         reason,
+        warning: null,
       },
       json,
     );

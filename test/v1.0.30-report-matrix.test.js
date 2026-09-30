@@ -7,6 +7,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
+  cpSync,
   copyFileSync,
   existsSync,
   lstatSync,
@@ -22,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { publishRedactedReceipt } from '../dist/lib/redact.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, 'bin', 'agent-receipt.js');
@@ -34,6 +36,8 @@ const LINK_ENV = [
 const AWS = 'AKIAIOSFODNN7EXAMPLE';
 const HOST = 'planted-host.example';
 const PAGE_MISMATCH = 'page content does not match signed payload';
+const PRUNE_NOTE = 'receipt absent; audit.jsonl (unsigned) records a prune';
+const PRUNE_WARN = 'audit.jsonl is unsigned; no retention config and no recorded prune command';
 const dirs = [];
 
 function git(cwd, args) {
@@ -352,6 +356,99 @@ function signedPackageAttack() {
   const receiptPayload = payload.receipts[0];
   assert.ok(receiptPayload.originalFingerprint, 'originalFingerprint must be set for the stripped-sig attack');
   return { dir, receipt, exported, packaged, id: receiptPayload.id, originalFingerprint: receiptPayload.originalFingerprint };
+}
+
+function signedOne(slug) {
+  const dir = initRepo(`matrix-${slug}-`);
+  cli(dir, ['keygen']);
+  commitFile(dir, 'note.txt', `${slug}\n`);
+  cli(dir, ['wrap', '--sign', '--message', slug]);
+  const made = parseJson(cli(dir, ['report', 'last', '--json']));
+  const receipt = latestReceipt(dir);
+  const payload = payloadOf(readFileSync(made.htmlPath, 'utf8'));
+  return { dir, made, receipt, id: payload.receipts[0].id, sha256: payload.receipts[0].sha256, payload };
+}
+
+function payloadId(made) {
+  return payloadOf(readFileSync(made.htmlPath, 'utf8')).receipts[0].id;
+}
+
+function removeReceipt(file) {
+  rmSync(file, { force: true });
+  for (const suffix of ['.sig.json', '.json']) {
+    const side = file.replace(/\.md$/i, suffix);
+    if (existsSync(side)) rmSync(side);
+  }
+}
+
+function auditLines(dir) {
+  const auditPath = join(dir, '.agent-receipt', 'audit.jsonl');
+  if (!existsSync(auditPath)) return [];
+  return readFileSync(auditPath, 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0);
+}
+
+function appendAuditLine(dir, fields) {
+  const lines = auditLines(dir);
+  const prev = lines.length
+    ? createHash('sha256').update(`${lines[lines.length - 1]}\n`, 'utf8').digest('hex')
+    : null;
+  const event = {
+    ts: fields.ts,
+    event: fields.event,
+    version: fields.version || '1.0.30',
+    experimental: true,
+    path: fields.path,
+    sha256: fields.sha256 ?? null,
+    agent: null,
+    redacted: false,
+    verified: true,
+    failedOn: false,
+    exitCode: 0,
+    prev,
+  };
+  const line = JSON.stringify(event);
+  writeFileSync(join(dir, '.agent-receipt', 'audit.jsonl'), `${lines.concat(line).join('\n')}\n`);
+  return event;
+}
+
+function relFrom(dir, file) {
+  return file.slice(dir.length + 1).split('\\').join('/');
+}
+
+/** Sign `file` with a key that is not the repo's key. Returns the sidecar path in `dir`. */
+function sidecarFromOtherKey(dir, file) {
+  const other = initRepo('matrix-other-key-');
+  cli(other, ['keygen']);
+  const destDir = join(other, '.agent-receipt', 'receipts');
+  mkdirSync(destDir, { recursive: true });
+  const dest = join(destDir, 'other.md');
+  copyFileSync(file, dest);
+  const signed = cliResult(other, ['sign', dest]);
+  assert.equal(signed.code, 0, signed.out + signed.err);
+  const sig = dest.replace(/\.md$/i, '.sig.json');
+  assert.ok(existsSync(sig), 'other key sidecar missing');
+  const back = file.replace(/\.md$/i, '.sig.json');
+  copyFileSync(sig, back);
+  return back;
+}
+
+function autocrlfClone(attributes) {
+  const dir = initRepo('matrix-autocrlf-');
+  cli(dir, ['keygen']);
+  commitFile(dir, 'note.txt', 'autocrlf\n');
+  cli(dir, ['wrap', '--sign', '--session', 's-crlf', '--agent', 'qa', '--message', 'autocrlf session']);
+  const made = parseJson(cli(dir, ['report', '--session', 's-crlf', '--out', 'docs-s.report.html', '--json']));
+  assert.equal(made.verdict, 'VERIFIED');
+  writeFileSync(join(dir, '.gitattributes'), attributes);
+  git(dir, ['config', 'core.autocrlf', 'false']);
+  git(dir, ['add', '-A']);
+  git(dir, ['commit', '-m', 'signed report']);
+  const clone = mkdtempSync(join(tmpdir(), 'matrix-autocrlf-clone-'));
+  dirs.push(clone);
+  execFileSync('git', ['clone', '-c', 'core.autocrlf=true', dir, clone], { encoding: 'utf8' });
+  return { dir, clone, html: join(clone, 'docs-s.report.html') };
 }
 
 const NARRATIVE = [
@@ -973,7 +1070,9 @@ const CASES = [
       const pruned = cliResult(dir, ['prune', '--max-count', '1', '--json']);
       assert.equal(pruned.code, 0, pruned.out + pruned.err);
       assert.equal(existsSync(oldest), false);
-      const got = assertPayloadOnly(dir, ['report', 'verify', made.htmlPath], 'prune', /pruned per audit/);
+      const got = assertPayloadOnly(dir, ['report', 'verify', made.htmlPath], 'prune', new RegExp(PRUNE_NOTE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      assert.equal(got.body.reason, PRUNE_NOTE);
+      assert.equal(got.body.warning, null);
       assert.ok(got.body.notChecked >= 1);
     },
   },
@@ -994,7 +1093,9 @@ const CASES = [
         cli(dir, ['capture', '--sign', '--message', `more${i}`]);
       }
       assert.equal(existsSync(first.path), false, 'auto-prune should have deleted the reported receipt');
-      assertPayloadOnly(dir, ['report', 'verify', made.htmlPath], 'auto-prune', /pruned per audit/);
+      const got = assertPayloadOnly(dir, ['report', 'verify', made.htmlPath], 'auto-prune', new RegExp(PRUNE_NOTE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      assert.equal(got.body.reason, PRUNE_NOTE);
+      assert.equal(got.body.warning, null);
     },
   },
   {
@@ -1285,11 +1386,420 @@ const CASES = [
     run() {
       const report = readFileSync(join(root, 'src', 'commands', 'report.ts'), 'utf8');
       const help = readFileSync(join(root, 'src', 'lib', 'help.ts'), 'utf8');
+      const readme = readFileSync(join(root, 'README.md'), 'utf8');
       assert.match(report, /depth cap of 4/);
       assert.match(report, /last, verify, and session/);
+      assert.match(report, /depth 5/);
       assert.match(help, /depth of 4/);
+      assert.match(help, /depth 5/);
       assert.match(help, /report last/);
       assert.match(help, /report --session/);
+      assert.match(readme, /depth 5/);
+    },
+  },
+  {
+    id: 'autocrlf-clone-attributes',
+    gate: '3131122',
+    kind: 'genuine',
+    run() {
+      const attrs = readFileSync(join(root, '.gitattributes'), 'utf8');
+      assert.match(attrs, /\*\.report\.html -text/);
+      assert.match(attrs, /\.agent-receipt\/\*\* -text/);
+      const readme = readFileSync(join(root, 'README.md'), 'utf8');
+      const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
+      assert.match(readme, /\.agent-receipt\/\*\* -text/);
+      assert.match(changelog, /\.agent-receipt\/\*\* -text/);
+      const { clone, html } = autocrlfClone('*.report.html -text\n.agent-receipt/** -text\n');
+      const audit = readFileSync(join(clone, '.agent-receipt', 'audit.jsonl'));
+      const page = readFileSync(html);
+      assert.equal(audit.includes(0x0d), false, 'both -text rules should keep audit.jsonl as LF');
+      assert.equal(page.includes(0x0d), false, 'the report page should stay LF');
+      const got = assertVerified(clone, ['report', 'verify', 'docs-s.report.html'], 'autocrlf-both');
+      assert.equal(got.body.failed, 0);
+      assert.equal(cliResult(clone, ['audit', '--verify']).code, 0);
+    },
+  },
+  {
+    id: 'autocrlf-clone-audit-crlf',
+    gate: '3131122',
+    kind: 'genuine',
+    run() {
+      const { clone, html } = autocrlfClone('*.report.html -text\n');
+      const audit = readFileSync(join(clone, '.agent-receipt', 'audit.jsonl'));
+      const page = readFileSync(html);
+      assert.ok(audit.includes(0x0d), 'audit.jsonl should be CRLF when only *.report.html is -text');
+      assert.equal(page.includes(0x0d), false, 'the report page should stay LF');
+      const got = assertVerified(clone, ['report', 'verify', 'docs-s.report.html'], 'autocrlf-audit');
+      assert.equal(got.body.failed, 0);
+      assert.equal(cliResult(clone, ['audit', '--verify']).code, 0);
+      const doctor = cliResult(clone, ['doctor', '--json']);
+      assert.equal(doctor.code === 0 || doctor.code === 1, true, doctor.out + doctor.err);
+      const checks = parseJson(doctor.out);
+      const auditRow = (checks.checks || checks).find?.((row) => row.name === 'audit')
+        || (Array.isArray(checks) ? checks.find((row) => row.name === 'audit') : null);
+      const blob = doctor.out + doctor.err;
+      assert.doesNotMatch(blob, /chain broken/i);
+      if (auditRow) assert.notEqual(auditRow.status, 'fail');
+    },
+  },
+  {
+    id: 'm6-local-unsigned-rehash',
+    gate: '3131122',
+    kind: 'tamper',
+    run() {
+      const { dir, made, receipt, id } = secretReport();
+      const payload = payloadOf(readFileSync(made.htmlPath, 'utf8'));
+      assert.equal(payload.manifestSha256, null);
+      replaceOnce(receipt, '- **Host**: hostA-secret', '- **Host**: attacker-box');
+      writeFileSync(receipt, sealReceipt(readFileSync(receipt, 'utf8')));
+      rmSync(receipt.replace(/\.md$/i, '.sig.json'));
+      assert.equal(cliResult(dir, ['verify', receipt]).code, 0);
+      for (const extra of [[], ['--require-sig']]) {
+        assertTamper(
+          dir,
+          ['report', 'verify', made.htmlPath, ...extra],
+          `m6${extra.join('')}`,
+          new RegExp(`receipt ${id} at .* differs from the signed payload`),
+        );
+      }
+    },
+  },
+  {
+    id: 'm7-raw-stripped',
+    gate: '3131122',
+    kind: 'tamper',
+    run() {
+      const { dir, made, receipt, id } = secretReport();
+      rmSync(receipt.replace(/\.md$/i, '.sig.json'));
+      assert.equal(cliResult(dir, ['verify', receipt]).code, 0);
+      for (const extra of [[], ['--require-sig']]) {
+        assertTamper(
+          dir,
+          ['report', 'verify', made.htmlPath, ...extra],
+          `raw-stripped${extra.join('')}`,
+          new RegExp(`receipt ${id} at .* signature mismatch`),
+        );
+      }
+    },
+  },
+  {
+    id: 'm7-raw-other-key',
+    gate: '3131122',
+    kind: 'tamper',
+    run() {
+      const { dir, made, receipt, id } = secretReport();
+      sidecarFromOtherKey(dir, receipt);
+      assert.equal(cliResult(dir, ['verify', receipt]).code, 0);
+      for (const extra of [[], ['--require-sig']]) {
+        assertTamper(
+          dir,
+          ['report', 'verify', made.htmlPath, ...extra],
+          `raw-other${extra.join('')}`,
+          new RegExp(`receipt ${id} at .* signature mismatch`),
+        );
+      }
+    },
+  },
+  {
+    id: 'm7-redacted-byte-stripped',
+    gate: '3131122',
+    kind: 'tamper',
+    run() {
+      const { dir, made, receipt, id } = secretReport();
+      const payload = payloadOf(readFileSync(made.htmlPath, 'utf8')).receipts[0];
+      assert.ok(payload.fingerprint, 'payload must record the receipt as signed');
+      assert.ok(payload.redactedSha256);
+      const redacted = publishRedactedReceipt(readFileSync(receipt, 'utf8'), { maskHost: true });
+      writeFileSync(receipt, redacted);
+      rmSync(receipt.replace(/\.md$/i, '.sig.json'));
+      assert.equal(cliResult(dir, ['verify', receipt]).code, 0);
+      for (const extra of [[], ['--require-sig']]) {
+        assertTamper(
+          dir,
+          ['report', 'verify', made.htmlPath, ...extra],
+          `redacted-stripped${extra.join('')}`,
+          new RegExp(`receipt ${id} at .* signature mismatch`),
+        );
+      }
+    },
+  },
+  {
+    id: 'm7-redacted-byte-other-key',
+    gate: '3131122',
+    kind: 'tamper',
+    run() {
+      const { dir, made, receipt, id } = secretReport();
+      const payload = payloadOf(readFileSync(made.htmlPath, 'utf8')).receipts[0];
+      assert.ok(payload.fingerprint);
+      const redacted = publishRedactedReceipt(readFileSync(receipt, 'utf8'), { maskHost: true });
+      writeFileSync(receipt, redacted);
+      sidecarFromOtherKey(dir, receipt);
+      for (const extra of [[], ['--require-sig']]) {
+        assertTamper(
+          dir,
+          ['report', 'verify', made.htmlPath, ...extra],
+          `redacted-other${extra.join('')}`,
+          new RegExp(`receipt ${id} at .* signature mismatch`),
+        );
+      }
+    },
+  },
+  {
+    id: 'prune-before-capture',
+    gate: '3131122',
+    kind: 'tamper',
+    run() {
+      const { dir, made, receipt, sha256 } = signedOne('before-capture');
+      const capture = auditLines(dir).map((line) => JSON.parse(line)).find((event) => event.sha256 === sha256);
+      assert.ok(capture, 'expected a capture event');
+      removeReceipt(receipt);
+      appendAuditLine(dir, {
+        ts: new Date(Date.parse(capture.ts) - 60_000).toISOString(),
+        event: 'prune',
+        path: relFrom(dir, receipt),
+        sha256,
+      });
+      assertTamper(
+        dir,
+        ['report', 'verify', made.htmlPath],
+        'prune-before',
+        new RegExp(`receipt ${payloadId(made)} prune is timestamped before its capture`),
+      );
+    },
+  },
+  {
+    id: 'prune-no-capture',
+    gate: '3131122',
+    kind: 'tamper',
+    run() {
+      const { dir, made, receipt, sha256 } = signedOne('no-capture');
+      removeReceipt(receipt);
+      const indexPath = join(dir, '.agent-receipt', 'index.json');
+      const index = JSON.parse(readFileSync(indexPath, 'utf8'));
+      index.receipts = [];
+      writeFileSync(indexPath, JSON.stringify(index));
+      writeFileSync(join(dir, '.agent-receipt', 'audit.jsonl'), '');
+      appendAuditLine(dir, {
+        ts: new Date().toISOString(),
+        event: 'prune',
+        path: relFrom(dir, receipt),
+        sha256,
+      });
+      assertTamper(
+        dir,
+        ['report', 'verify', made.htmlPath],
+        'prune-no-capture',
+        new RegExp(`receipt ${payloadId(made)} is absent; audit\\.jsonl records a prune with no capture event`),
+      );
+    },
+  },
+  {
+    id: 'forged-prune-wording',
+    gate: '3131122',
+    kind: 'genuine',
+    run() {
+      const { dir, made, receipt, sha256 } = signedOne('forged-prune');
+      const capture = auditLines(dir).map((line) => JSON.parse(line)).find((event) => event.sha256 === sha256);
+      assert.ok(capture);
+      removeReceipt(receipt);
+      appendAuditLine(dir, {
+        ts: new Date(Date.parse(capture.ts) + 60_000).toISOString(),
+        event: 'prune',
+        path: relFrom(dir, receipt),
+        sha256,
+      });
+      const got = assertPayloadOnly(dir, ['report', 'verify', made.htmlPath], 'forged-prune');
+      assert.equal(got.body.reason, PRUNE_NOTE);
+      assert.equal(got.body.warning, PRUNE_WARN);
+      assert.match(got.human.err, new RegExp(PRUNE_WARN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      assert.doesNotMatch(`${got.body.reason}`, /legitimate|pruned per audit/);
+      const readme = readFileSync(join(root, 'README.md'), 'utf8');
+      const help = cli(root, ['help', 'report']);
+      assert.match(readme, /audit\.jsonl is not signed/);
+      assert.match(readme, /write access/);
+      assert.match(help, /audit\.jsonl is not signed/);
+    },
+  },
+  {
+    id: 'depth-5-plus',
+    gate: '3131122',
+    kind: 'genuine',
+    run() {
+      const { dir, made, receipt } = signedOne('depth5');
+      const plant = (levels) => {
+        let destDir = join(dir, '.agent-receipt', 'receipts');
+        for (let i = 0; i < levels; i += 1) destDir = join(destDir, `n${i}`);
+        mkdirSync(destDir, { recursive: true });
+        const dest = join(destDir, 'planted.md');
+        copyReceiptPair(receipt, dest);
+        replaceOnce(dest, 'depth5', 'depth5-tampered');
+        return dest;
+      };
+      plant(5);
+      assertVerified(dir, ['report', 'verify', made.htmlPath], 'depth-5-ignored');
+      const deep = plant(4);
+      assertTamper(dir, ['report', 'verify', made.htmlPath], 'depth-4-read', new RegExp(basename(deep)));
+    },
+  },
+  {
+    id: 'package-original-deleted',
+    gate: '3131122',
+    kind: 'tamper',
+    run() {
+      const { dir, packaged } = exporterSession();
+      const payload = payloadOf(readFileSync(packaged.htmlPath, 'utf8'));
+      assert.ok(payload.manifestSha256);
+      for (const item of payload.receipts) {
+        assert.ok(item.originalSha256, `originalSha256 missing for ${item.id}`);
+        assert.notEqual(item.originalSha256, item.sha256);
+      }
+      for (const file of receiptFiles(dir)) removeReceipt(file);
+      assertTamper(
+        dir,
+        ['report', 'verify', packaged.htmlPath],
+        'deleted-original',
+        /still lists it/,
+      );
+    },
+  },
+  {
+    id: 'unsigned-source-package',
+    gate: '3131122',
+    kind: 'genuine',
+    run() {
+      const dir = initRepo('matrix-unsigned-src-');
+      commitFile(dir, 'note.txt', 'unsigned source\n');
+      cli(dir, ['wrap', '--session', 's-usrc', '--agent', 'qa', '--host', HOST, '--message', 'unsigned source']);
+      cli(dir, ['keygen']);
+      const exportedRun = cliResult(dir, ['session', 'export', 's-usrc', '--json']);
+      assert.equal(exportedRun.code, 0, exportedRun.out + exportedRun.err);
+      assert.match(exportedRun.err, /originalFingerprint is null|signedBy/);
+      const exported = parseJson(exportedRun.out);
+      const packaged = parseJson(cli(dir, ['report', exported.packagePath, '--json']));
+      const payload = payloadOf(readFileSync(packaged.htmlPath, 'utf8'));
+      assert.ok(payload.manifestSha256);
+      assert.equal(payload.receipts[0].originalFingerprint, null);
+      assert.ok(payload.receipts[0].signedBy);
+      const got = assertVerified(dir, ['report', 'verify', packaged.htmlPath], 'unsigned-source');
+      assert.equal(got.body.checked, 1);
+      assert.equal(got.body.failed, 0);
+    },
+  },
+  {
+    id: 'trust-removed-require-sig',
+    gate: '3131122',
+    kind: 'tamper',
+    run() {
+      const { dir, made } = signedOne('trust-rm');
+      cli(dir, ['trust', 'add', '--self']);
+      const shown = parseJson(cli(dir, ['trust', 'show', '--json']));
+      assert.equal(shown.localListed, true);
+      assertVerified(dir, ['report', 'verify', made.htmlPath, '--require-sig'], 'trusted');
+      // An empty file is not an allowlist. Keep one other key so removal stays active.
+      cli(dir, ['trust', 'add', 'ab'.repeat(32)]);
+      const removed = cliResult(dir, ['trust', 'rm', shown.localFingerprint]);
+      assert.equal(removed.code, 0, removed.out + removed.err);
+      assertTamper(
+        dir,
+        ['report', 'verify', made.htmlPath, '--require-sig'],
+        'trust-removed',
+        /not trusted/,
+      );
+    },
+  },
+  {
+    id: 'legacy-audit-1.0.16-through-1.0.29',
+    gate: '3131122',
+    kind: 'genuine',
+    run() {
+      const { dir, made } = signedOne('legacy-audit');
+      const versions = [];
+      for (let minor = 16; minor <= 29; minor += 1) versions.push(`1.0.${minor}`);
+      let prev = null;
+      const lines = [];
+      for (const version of versions) {
+        const event = {
+          ts: '2020-01-01T00:00:00.000Z',
+          event: 'capture',
+          version,
+          experimental: true,
+          path: 'legacy/not-a-receipt.md',
+          sha256: 'a'.repeat(64),
+          agent: null,
+          redacted: false,
+          verified: true,
+          failedOn: false,
+          exitCode: 0,
+          prev,
+        };
+        const line = JSON.stringify(event);
+        lines.push(line);
+        prev = createHash('sha256').update(`${line}\n`, 'utf8').digest('hex');
+      }
+      writeFileSync(join(dir, '.agent-receipt', 'audit.jsonl'), `${lines.join('\n')}\n`);
+      assert.equal(cliResult(dir, ['audit', '--verify']).code, 0);
+      const got = assertVerified(dir, ['report', 'verify', made.htmlPath], 'legacy-audit');
+      assert.equal(got.body.checked, 1);
+      assert.equal(got.body.failed, 0);
+    },
+  },
+  {
+    id: 'whole-store-wipe',
+    gate: '3131122',
+    kind: 'genuine',
+    run() {
+      const { dir, made, receipt } = signedOne('wipe');
+      removeReceipt(receipt);
+      rmSync(join(dir, '.agent-receipt', 'receipts'), { recursive: true, force: true });
+      rmSync(join(dir, '.agent-receipt', 'index.json'), { force: true });
+      rmSync(join(dir, '.agent-receipt', 'audit.jsonl'), { force: true });
+      const got = assertPayloadOnly(dir, ['report', 'verify', made.htmlPath], 'wipe');
+      assert.equal(got.body.reason, null);
+      assert.equal(got.body.notChecked, 1);
+      assert.match(got.human.out, /^VERIFIED \(payload only; 1 receipts not checked\)  report verify/m);
+      assert.doesNotMatch(`${got.human.out}\n${got.human.err}\n${got.json.out}`, /records a prune|pruned per audit/);
+    },
+  },
+  {
+    id: 'chain-only-counts',
+    gate: '3131122',
+    kind: 'tamper',
+    run() {
+      const { dir, made } = signedOne('chain-only');
+      const lines = auditLines(dir);
+      assert.ok(lines.length >= 1);
+      const event = JSON.parse(lines[0]);
+      event.prev = 'b'.repeat(64);
+      lines[0] = JSON.stringify(event);
+      writeFileSync(join(dir, '.agent-receipt', 'audit.jsonl'), `${lines.join('\n')}\n`);
+      const got = assertTamper(dir, ['report', 'verify', made.htmlPath], 'chain-only', /audit log hash chain is broken/);
+      assert.ok(got.body.checked >= 1, JSON.stringify(got.body));
+      assert.notEqual(got.body.failed, 0);
+      assert.match(got.human.out, /failed: [1-9]/);
+      assert.doesNotMatch(got.human.out, /failed: 0/);
+    },
+  },
+  {
+    id: 'receipts-elsewhere-ignores-cwd-audit',
+    gate: '3131122',
+    kind: 'genuine',
+    run() {
+      const { dir, made } = signedOne('elsewhere');
+      const pocket = mkdtempSync(join(tmpdir(), 'matrix-pocket-'));
+      dirs.push(pocket);
+      cpSync(join(dir, '.agent-receipt', 'receipts'), join(pocket, 'receipts'), { recursive: true });
+      const lines = auditLines(dir);
+      const event = JSON.parse(lines[0]);
+      event.prev = 'c'.repeat(64);
+      lines[0] = JSON.stringify(event);
+      writeFileSync(join(dir, '.agent-receipt', 'audit.jsonl'), `${lines.join('\n')}\n`);
+      const got = assertVerified(
+        dir,
+        ['report', 'verify', made.htmlPath, '--receipts', join(pocket, 'receipts')],
+        'elsewhere',
+      );
+      assert.equal(got.body.checked, 1);
+      assertTamper(dir, ['report', 'verify', made.htmlPath], 'cwd-chain-still-fails', /audit log hash chain is broken/);
     },
   },
 ];

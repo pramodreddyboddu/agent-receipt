@@ -81,8 +81,12 @@ export interface ReportRisk {
  * One receipt as the page shows it, plus the hashes verify may re-check.
  * `sha256` is the canonical hash of the file the report was built from.
  * `redactedSha256` is the canonical hash of the default redacted body when
- * that hash differs. A file whose raw sha256 equals `sha256` or
- * `redactedSha256` matches in a local store and in a package. Only a
+ * that hash differs. `originalSha256` is the pre-redaction canonical hash
+ * of a packaged receipt when the exporter store still had that file.
+ * A file whose raw sha256 equals `sha256` or `redactedSha256` matches in
+ * a local store and in a package. When the payload records a fingerprint
+ * or originalFingerprint, that match requires a valid sidecar with that
+ * fingerprint. An unsigned payload ignores a valid stray sidecar. Only a
  * session-package report may also accept a redact-then-hash of the body,
  * and then a non-null originalFingerprint requires that sidecar.
  */
@@ -90,6 +94,8 @@ export interface ReportReceiptPayload {
   id: string;
   sha256: string;
   redactedSha256: string | null;
+  /** Pre-redaction canonical hash for a package report, or null. */
+  originalSha256: string | null;
   parent: string | null;
   agent: string | null;
   verified: boolean;
@@ -319,7 +325,7 @@ article{margin:16px 0;padding-top:4px}
 `.trim();
 
 const COVERAGE_NOTE =
-  'The Ed25519 signature covers the canonical JSON payload embedded in this file (sorted keys, no whitespace). report verify re-renders this page from that payload and the signature block and requires the same bytes. A single missing trailing newline is ignored. Any other difference, including this sentence, the banner, the pills, the narrative, and the exposure marker, fails verify. renderVersion selects this HTML renderer. Every same-id file, and every file whose raw or embedded hash is the recorded sha256 or redactedSha256, must pass integrity. A raw sha256 equal to the recorded sha256 or redactedSha256 matches. A session-package report may also match the redacted form, and a non-null originalFingerprint then requires a valid sidecar with that fingerprint. A symlink fails verify. originalFingerprint, resignedBy, and signedBy are the manifest signer\'s claims when they come from a session package. This is not a certificate authority.';
+  'The Ed25519 signature covers the canonical JSON payload embedded in this file (sorted keys, no whitespace). report verify re-renders this page from that payload and the signature block and requires the same bytes. A single missing trailing newline is ignored. Any other difference, including this sentence, the banner, the pills, the narrative, and the exposure marker, fails verify. renderVersion selects this HTML renderer. Every same-id file, and every file whose raw or embedded hash is the recorded sha256 or redactedSha256, must pass integrity. A raw sha256 equal to the recorded sha256 or redactedSha256 matches. When the payload records a fingerprint or originalFingerprint, that match requires a valid sidecar with that fingerprint. When the payload is unsigned, a valid stray sidecar is ignored. An invalid sidecar fails. A session-package report may also match the redacted form, and a non-null originalFingerprint then requires a valid sidecar with that fingerprint. A symlink fails verify. originalFingerprint, resignedBy, and signedBy are the manifest signer\'s claims when they come from a session package. This is not a certificate authority.';
 
 /**
  * Bidi controls are rendered as \\uXXXX so a receipt cannot reorder the page.
@@ -730,6 +736,7 @@ const RECEIPT_KEYS = [
   'id',
   'sha256',
   'redactedSha256',
+  'originalSha256',
   'parent',
   'agent',
   'verified',
@@ -783,6 +790,7 @@ function parseReceipt(value: unknown, index: number): ReportReceiptPayload {
     id: doc.id,
     sha256: doc.sha256,
     redactedSha256: hexOrNull(doc.redactedSha256, `receipts[${index}].redactedSha256`),
+    originalSha256: hexOrNull(doc.originalSha256, `receipts[${index}].originalSha256`),
     parent: doc.parent,
     agent: doc.agent,
     verified: doc.verified,

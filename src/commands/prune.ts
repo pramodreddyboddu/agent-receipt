@@ -186,10 +186,17 @@ function toJsonDeleted(
  * One audit line per receipt this run actually deletes.
  * The sibling `.json` is not a second event. Dry-run must not call this.
  */
+/** A flag is the command. Config, including auto-prune, is retention. */
+function pruneAuditSource(opts: PruneOptions): 'command' | 'retention' {
+  if (typeof opts.maxCount === 'number' || typeof opts.maxAgeDays === 'number') return 'command';
+  return 'retention';
+}
+
 function auditDeleted(
   cwd: string,
   items: PruneCandidate[],
   meta: Map<string, PruneIdentity>,
+  source: 'command' | 'retention',
 ): number {
   let n = 0;
   for (const item of items) {
@@ -203,6 +210,7 @@ function auditDeleted(
       verified: id.verified,
       failedOn: false,
       exitCode: 0,
+      source,
     });
     if (wrote) n++;
   }
@@ -365,7 +373,7 @@ export function cmdPrune(cwd: string, opts: PruneOptions = {}): PruneReport {
 
   deletePlanned(cwd, plan.delete);
   // Record deletes even if the index rewrite fails — the files are already gone.
-  const audited = plan.delete.length ? auditDeleted(cwd, plan.delete, meta) : 0;
+  const audited = plan.delete.length ? auditDeleted(cwd, plan.delete, meta, pruneAuditSource(opts)) : 0;
   let removed = 0;
   try {
     removed = refreshIndexAfterPrune(cwd, index);

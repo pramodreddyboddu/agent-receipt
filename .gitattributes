@@ -1,1 +1,2 @@
 *.report.html -text
+.agent-receipt/** -text

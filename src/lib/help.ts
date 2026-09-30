@@ -741,31 +741,42 @@ ignored. Any other difference exits 2 with
 "page content does not match signed payload". CRLF (a CR followed by LF)
 exits 2 with "page has CRLF line endings" and names \`core.autocrlf\`.
 A lone CR exits 2 with "page has CR line endings". A leading UTF-8 BOM
-exits 2. Add \`*.report.html -text\` to \`.gitattributes\`. Those bytes
-are not rewritten. Invalid UTF-8 exits 2. \`renderVersion\` selects the
+exits 2. Add \`*.report.html -text\` and \`.agent-receipt/** -text\` to
+\`.gitattributes\`. Those bytes are not rewritten. The report page is not
+normalized. \`audit.jsonl\` is a separate check: one trailing CR on each
+line is stripped before the chain hash. Invalid UTF-8 exits 2. \`renderVersion\` selects the
 renderer. Version 1 is this page. An unknown renderVersion exits 2. Bidi controls in rendered
 fields, including agent names, are shown as \`\\uXXXX\`. Share HTML uses the same escape.
 
 Candidate receipts come from outDir. \`--receipts <dir>\` searches that
 directory instead, including subdirectories, and does not fall back to
 outDir. The candidate walk has a depth of 4. It applies equally to a page
-from report last, \`report verify\`, or report --session. For each payload
+from report last, \`report verify\`, or report --session. The start
+directory is depth 0. A file four directories down is still read. A file
+at depth 5 or deeper is not a candidate. For each payload
 receipt, every candidate must be acceptable. A candidate is any file whose
 parsed id equals that receipt, or whose raw sha256 or embedded hash is the
-recorded sha256 or redactedSha256. The file name, subdirectory, and session
+recorded sha256, redactedSha256, or originalSha256. The file name, subdirectory, and session
 do not matter. \`.md\` is matched case-insensitively, so \`file.MD\` is a
 candidate. A symlink candidate exits 2 ("receipt <id> at <path> is a symlink").
 
 A candidate is acceptable only when it passes receipt integrity (the
-embedded hash is correct) and its bytes match. When the raw sha256 equals
-the payload sha256, the sidecar's signature status and fingerprint must
-match the payload. A present sidecar that does not verify is
-"signature mismatch". A file whose raw sha256 equals the recorded
-redactedSha256 is a byte match in a local-store report and in a
-session-package report, because that hash is a signed value. An invalid
-sidecar still fails. Computing \`publishRedactedReceipt\` and comparing
-that hash is limited to a session-package report (\`manifestSha256\` is
-set, as with \`report <package>.session\`). A local-store report, including
+embedded hash is correct) and its bytes match. A present sidecar that
+does not verify is "signature mismatch" before any hash is accepted.
+On every acceptance path (raw sha256, raw sha256 equal to redactedSha256,
+and redact-then-hash), when the payload records that receipt as signed
+(a fingerprint or originalFingerprint is present), a valid sidecar whose
+fingerprint matches is required, with or without \`--require-sig\`.
+A raw or redactedSha256 byte match uses the payload fingerprint when it
+is set, otherwise originalFingerprint. When the payload is unsigned
+(neither fingerprint nor originalFingerprint), a valid stray sidecar is
+ignored. An invalid sidecar is never ignored. A file whose raw sha256
+equals the recorded redactedSha256 is a byte match in a local-store
+report and in a session-package report, because that hash is a signed
+value, and the sidecar rule above still applies. Computing
+\`publishRedactedReceipt\` and comparing that hash is limited to a
+session-package report (\`manifestSha256\` is set, as with
+\`report <package>.session\`). A local-store report, including
 \`--include-host\`, \`--no-redact\`, and \`report --session\`, does not
 accept that redact-then-hash stand-in. On the redact-then-hash path, a
 non-null originalFingerprint (or the recorded fingerprint when signedBy
@@ -784,18 +795,33 @@ With \`--receipts\`, a referenced receipt that is absent exits 2
 ("receipt <id> referenced by report not found in --receipts").
 Without \`--receipts\`, a missing receipt that is still listed in
 \`.agent-receipt/index.json\` or \`.agent-receipt/audit.jsonl\` exits 2
-("still lists it"). The newest audit event for that sha256 or path wins.
-When that event is \`prune\`, or a prune event removed the index row, the
-receipt is not still listed. The result is exit 0 and the note is
-"pruned per audit", under the headline
-"VERIFIED (payload only; N receipts not checked)". If this store does not
-list it at all, the page can still be exit 0 with that same headline.
-\`--json\` then uses verdict \`VERIFIED_PAYLOAD_ONLY\` and \`notChecked\`.
-It does not print a plain VERIFIED. When \`audit.jsonl\` exists, verify
-checks its hash chain the same way \`doctor --strict\` does and exits 2
-with "audit log hash chain is broken" on a break. A store with no
-\`audit.jsonl\` is not a chain failure. On failure the counts are checked,
-skipped, and failed, and the reason lists every problem, not only the first.
+("still lists it"). The newest audit event for that sha256, originalSha256,
+or path wins. When that event is \`prune\`, or a prune event removed the
+index row, the receipt is not still listed only if a capture, wrap, or
+watch event exists and the prune timestamp is not before that capture.
+A prune with no capture event exits 2. A prune timestamped before that
+capture exits 2. Otherwise the result is exit 0 and the reason is
+"receipt absent; audit.jsonl (unsigned) records a prune", under the headline
+"VERIFIED (payload only; N receipts not checked)". audit.jsonl is not signed.
+Anyone with write access can extend it, so that reason does not mean the
+prune was legitimate. When the store has no retention config and no
+recorded prune command, verify also warns
+"audit.jsonl is unsigned; no retention config and no recorded prune command".
+If this store does not list it at all, the page can still be exit 0 with
+that same headline. \`--json\` then uses verdict \`VERIFIED_PAYLOAD_ONLY\`
+and \`notChecked\`. It does not print a plain VERIFIED. When \`audit.jsonl\`
+exists in the store being searched, verify checks its hash chain the same
+way \`doctor --strict\` does and exits 2 with "audit log hash chain is broken"
+on a break. \`--receipts\` pointing elsewhere does not use an unrelated
+audit.jsonl in the current directory. One trailing CR is stripped from
+each audit line before the hash, so a \`core.autocrlf\` checkout of the
+log still verifies. If the chain still fails and the file contains CR,
+the reason names CRLF and \`core.autocrlf\`. Add \`.agent-receipt/** -text\`
+next to \`*.report.html -text\` in \`.gitattributes\`. A store with no
+\`audit.jsonl\` is not a chain failure. A chain-only failure still counts
+as failed, so the line is not "failed: 0" beside FAILED. On failure the
+counts are checked, skipped, and failed, and the reason lists every
+problem, not only the first.
 A leading UTF-8 BOM (EF BB BF) exits 2 ("page starts with a UTF-8 BOM").
 The decoder is created with \`ignoreBOM: true\` and the bytes are checked
 explicitly. A CR that is part of CRLF is "page has CRLF line endings".
@@ -816,7 +842,9 @@ Exit codes:
      log still lists it, a broken audit hash chain, a missing --receipts entry, verdict FAILED, verdict
      UNTRUSTED, or UNSIGNED with --require-sig
 A non-zero exit never prints VERIFIED. \`--require-sig\` enforces the
-trust allowlist when one is configured. With no trust store,
+trust allowlist when one is configured. Removing the page key from a
+store that still lists another key exits 2 (\`fingerprint not trusted\`).
+An empty allowlist is inactive. With no trust store,
 \`--require-sig\` accepts any valid self-signed page and prints a one-line
 note. Use a trust allowlist (\`agent-receipt trust add --self\`) so a
 reviewer accepts only known keys. originalFingerprint, resignedBy, and
@@ -1264,9 +1292,17 @@ It does **not** store diff bodies or the session \`--message\`.
 \`share\` (not a second \`export\` line). \`watch\` records \`watch\` per capture.
 
 Each line's \`prev\` is the SHA-256 of the previous line (or null on the
-first). \`audit --verify\` checks that chain. Exit 0 = intact, exit 2 =
-mismatch, exit 1 = unreadable or a bad flag. This is **experimental**
-tamper-evidence for the log — not a signature and not PKI.
+first). One trailing CR is stripped before that hash, so a
+\`core.autocrlf\` checkout does not break the chain by itself. If the
+chain still fails and the file contains CR, the reason names CRLF and
+\`core.autocrlf\`. \`audit --verify\` checks that chain. Exit 0 = intact,
+exit 2 = mismatch, exit 1 = unreadable or a bad flag. This is
+**experimental** tamper-evidence for the log — not a signature and not
+PKI. audit.jsonl is not signed. Anyone with write access can extend it.
+A prune line written by this version records \`source\` \`command\` when
+\`--max-count\` or \`--max-age-days\` was passed, and \`source\`
+\`retention\` when the limit came from config, including auto-prune.
+Older logs omit \`source\`.
 
 \`--json\` prints a JSON array, oldest first. \`--verify --json\` prints
 \`{ ok, command, version, events, brokenAt, reason }\`.
@@ -1348,8 +1384,11 @@ Rows that already point at missing files under outDir are dropped too.
 \`--dry-run\` prints the plan and does not delete, rewrite the index, or
 append \`audit.jsonl\`. An applied delete appends one \`prune\` audit line
 per receipt (path, sha256, agent, redacted, verified, exit — no diff body
-and no \`--message\`). The sibling \`.json\` is not a second event. A run
-that deletes nothing does not append.
+and no \`--message\`). The line records \`source\` \`command\` when
+\`--max-count\` or \`--max-age-days\` was passed, and \`source\`
+\`retention\` when the limit came from config, including auto-prune.
+The sibling \`.json\` is not a second event. A run
+that deletes nothing does not append. audit.jsonl is not signed.
 
 \`--json\` adds \`command\`, \`version\`, \`exitCode\`, and \`audited\` (lines
 appended; 0 on dry-run). Each \`deleted\` row has the same identity fields
