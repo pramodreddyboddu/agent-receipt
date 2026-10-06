@@ -20,8 +20,11 @@ import type { SignatureDocument } from './sign.js';
 
 export const REPORT_PAYLOAD_KIND = 'agent-receipt-report';
 export const REPORT_PAYLOAD_VERSION = 1;
-/** HTML template id. The next template is a new renderer; this one stays. */
-export const REPORT_RENDER_VERSION = 1;
+/**
+ * HTML template id. 2 is the v1.0.31 page (tool calls). 1 is the v1.0.30
+ * page and stays registered.
+ */
+export const REPORT_RENDER_VERSION = 2;
 export const REPORT_SCRIPT_ID = 'agent-receipt-report';
 export const REPORT_SIG_SCRIPT_ID = 'agent-receipt-report-sig';
 /** Opening tag of the signed payload block. `report` refuses any file that contains it. */
@@ -118,6 +121,11 @@ export interface ReportReceiptPayload {
   review: string;
   commits: string;
   diffs: string;
+  /**
+   * Tool-call section shown on a renderVersion 2 page. Omitted on v1 pages
+   * so their canonical JSON stays the same.
+   */
+  toolCalls?: string;
 }
 
 /**
@@ -130,8 +138,8 @@ export interface ReportPayload {
   kind: typeof REPORT_PAYLOAD_KIND;
   version: typeof REPORT_PAYLOAD_VERSION;
   /**
-   * Which HTML renderer wrote the page. 1 is this template.
-   * Verify selects the renderer by this integer.
+   * Which HTML renderer wrote the page. 2 is the v1.0.31 page.
+   * 1 is the v1.0.30 page. Verify selects the renderer by this integer.
    */
   renderVersion: number;
   cliVersion: string;
@@ -327,6 +335,9 @@ article{margin:16px 0;padding-top:4px}
 const COVERAGE_NOTE =
   'The Ed25519 signature covers the canonical JSON payload embedded in this file (sorted keys, no whitespace). report verify re-renders this page from that payload and the signature block and requires the same bytes. A single missing trailing newline is ignored. Any other difference, including this sentence, the banner, the pills, the narrative, and the exposure marker, fails verify. renderVersion selects this HTML renderer. Every same-id file, and every file whose raw or embedded hash is the recorded sha256 or redactedSha256, must pass integrity. A raw sha256 equal to the recorded sha256 or redactedSha256 matches. When the payload records a fingerprint or originalFingerprint, that match requires a valid sidecar with that fingerprint. When the payload is unsigned, a valid stray sidecar is ignored. An invalid sidecar fails. A session-package report may also match the redacted form, and a non-null originalFingerprint then requires a valid sidecar with that fingerprint. A symlink fails verify. originalFingerprint, resignedBy, and signedBy are the manifest signer\'s claims when they come from a session package. This is not a certificate authority.';
 
+const COVERAGE_NOTE_V2 =
+  `${COVERAGE_NOTE} renderVersion 2 includes the tool-call section in this signed payload when the receipt has one.`;
+
 /**
  * Bidi controls are rendered as \\uXXXX so a receipt cannot reorder the page.
  * U+202A–U+202E, U+2066–U+2069, and the LRM/RLM marks U+200E/U+200F.
@@ -362,7 +373,7 @@ function codeOr(value: string | null, empty: string): string {
   return value ? `<code>${showText(value)}</code>` : showText(empty);
 }
 
-function receiptArticle(receipt: ReportReceiptPayload): string {
+function receiptArticle(receipt: ReportReceiptPayload, includeToolCalls = false): string {
   const files = receipt.files.slice(0, 50).map((file) => `<li><code>${showText(file)}</code></li>`).join('');
   const moreFiles = receipt.files.length > 50 ? `<li class="muted">+${receipt.files.length - 50} more</li>` : '';
   const risks = receipt.risks
@@ -376,7 +387,7 @@ function receiptArticle(receipt: ReportReceiptPayload): string {
   const signature = receipt.fingerprint
     ? `${pill(receipt.pills.signature)} <code>${showText(receipt.fingerprint)}</code>`
     : `${pill(receipt.pills.signature)} no sidecar`;
-  return [
+  const parts = [
     '<article>',
     `<h3><code>${showText(receipt.id)}</code></h3>`,
     '<table><tbody>',
@@ -408,8 +419,13 @@ function receiptArticle(receipt: ReportReceiptPayload): string {
     `<pre>${showText(receipt.commits)}</pre>`,
     '<h2>Diff lines</h2>',
     `<pre>${showText(receipt.diffs)}</pre>`,
-    '</article>',
-  ].join('\n');
+  ];
+  if (includeToolCalls) {
+    const body = receipt.toolCalls && receipt.toolCalls.trim() ? receipt.toolCalls : 'No tool-call section.';
+    parts.push('<h2>Tool calls</h2>', `<pre>${showText(body)}</pre>`);
+  }
+  parts.push('</article>');
+  return parts.join('\n');
 }
 
 function canonicalSignature(doc: SignatureDocument): SignatureDocument {
@@ -480,11 +496,68 @@ function renderReportHtmlV1(payload: ReportPayload, signature: SignatureDocument
 }
 
 /**
+ * v2 page. Same shell as v1, plus a Tool calls block per receipt and a
+ * coverage sentence that names that block. v1 is unchanged.
+ */
+function renderReportHtmlV2(payload: ReportPayload, signature: SignatureDocument | null): string {
+  const banner = payload.banner;
+  const commands = payload.verifyCommands.map((command) => `<li>${showText(command)}</li>`).join('');
+  const unredacted = payload.unredacted
+    ? `<div class="banner unredacted" role="status"><strong>${showText(payload.unredacted.marker)}</strong> — ${showText(payload.unredacted.detail)}</div>`
+    : '';
+  const tree =
+    payload.tree === null
+      ? ''
+      : `<h2>Session tree</h2>\n<pre>${showText(payload.tree)}</pre>`;
+  const sigJson = signature ? embedJson(canonicalSignature(signature)) : 'null';
+  return [
+    '<!DOCTYPE html>',
+    '<html lang="en">',
+    '<head>',
+    '<meta charset="utf-8">',
+    `<meta http-equiv="Content-Security-Policy" content="${OFFLINE_HTML_CSP}">`,
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    '<meta name="referrer" content="no-referrer">',
+    `<title>${showText(payload.title)}</title>`,
+    `<style>${STYLE}</style>`,
+    '</head>',
+    '<body>',
+    '<!-- style-src unsafe-inline: the stylesheet is in this file so it opens offline. script-src none: the JSON blocks are data, not script. No remote sources. -->',
+    `<div class="banner ${banner.className}" role="status">`,
+    `<div class="verdict">${showText(banner.verdict)}</div>`,
+    `<p>${showText(banner.signatureStatus)}</p>`,
+    `<p>Fingerprint: <code>${showText(banner.fingerprint)}</code></p>`,
+    '</div>',
+    unredacted,
+    '<h1>Agent Receipt — signed report</h1>',
+    `<p class="muted">CLI ${showText(payload.cliVersion)} · generated ${showText(payload.generatedAt)}</p>`,
+    '<table><tbody>',
+    row('Subject', showText(payload.subject)),
+    row('Session', showText(payload.session ?? 'none')),
+    row('Manifest SHA-256', showText(payload.manifestSha256 ?? 'none')),
+    row('Exposure', showText(payload.exposure)),
+    '</tbody></table>',
+    '<h2>What the agent did</h2>',
+    payload.receipts.map((receipt) => receiptArticle(receipt, true)).join('\n'),
+    tree,
+    '<h2>Re-verify offline</h2>',
+    `<ol>${commands}</ol>`,
+    `<footer><p>${showText(COVERAGE_NOTE_V2)}</p></footer>`,
+    `<script type="application/json" id="${REPORT_SCRIPT_ID}">${embedJson(canonicalReportJson(payload))}</script>`,
+    `<script type="application/json" id="${REPORT_SIG_SCRIPT_ID}">${sigJson}</script>`,
+    '</body>',
+    '</html>',
+    '',
+  ].join('\n');
+}
+
+/**
  * HTML renderers keyed by payload.renderVersion.
  * A template change adds the next function here and leaves the old one.
  */
 const REPORT_RENDERERS: Record<number, typeof renderReportHtmlV1> = {
   1: renderReportHtmlV1,
+  2: renderReportHtmlV2,
 };
 
 /**
@@ -759,6 +832,7 @@ const RECEIPT_KEYS = [
   'review',
   'commits',
   'diffs',
+  'toolCalls',
 ] as const;
 
 function parseReceipt(value: unknown, index: number): ReportReceiptPayload {
@@ -785,6 +859,9 @@ function parseReceipt(value: unknown, index: number): ReportReceiptPayload {
   }
   if (doc.trusted !== null && typeof doc.trusted !== 'boolean') {
     throw new ReportHtmlError(2, `report payload receipts[${index}].trusted is invalid`);
+  }
+  if (doc.toolCalls !== undefined && typeof doc.toolCalls !== 'string') {
+    throw new ReportHtmlError(2, `report payload receipts[${index}].toolCalls is invalid`);
   }
   return {
     id: doc.id,
@@ -813,6 +890,7 @@ function parseReceipt(value: unknown, index: number): ReportReceiptPayload {
     review: requiredString(doc.review, `receipts[${index}].review`),
     commits: requiredString(doc.commits, `receipts[${index}].commits`),
     diffs: requiredString(doc.diffs, `receipts[${index}].diffs`),
+    ...(typeof doc.toolCalls === 'string' ? { toolCalls: doc.toolCalls } : {}),
   };
 }
 

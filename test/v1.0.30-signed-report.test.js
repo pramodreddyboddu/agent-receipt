@@ -207,13 +207,13 @@ describe('v1.0.30 signed one-page report', () => {
 
   it('documents 1.0.30, the report payload, and no new runtime dependencies', () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.30');
+    assert.equal(pkg.version, '1.0.31');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.30');
-    assert.equal(lock.packages[''].version, '1.0.30');
+    assert.equal(lock.version, '1.0.31');
+    assert.equal(lock.packages[''].version, '1.0.31');
     assert.equal(lock.packages[''].dependencies, undefined);
-    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.30/);
+    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.31/);
     const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     assert.match(changelog, /## \[1\.0\.30\]/);
     assert.match(changelog, /agent-receipt report/);
@@ -297,7 +297,7 @@ describe('v1.0.30 signed one-page report', () => {
     assert.equal(made.code, 0, made.err);
     const body = parseJson(made.out);
     assert.equal(body.command, 'report');
-    assert.equal(body.version, '1.0.30');
+    assert.equal(body.version, '1.0.31');
     assert.equal(body.exitCode, 0);
     assert.equal(body.verdict, 'UNSIGNED');
     assert.equal(body.signed, false);
@@ -318,8 +318,8 @@ describe('v1.0.30 signed one-page report', () => {
     const payload = payloadOf(html);
     assert.equal(payload.kind, 'agent-receipt-report');
     assert.equal(payload.version, 1);
-    assert.equal(payload.renderVersion, 1);
-    assert.equal(payload.cliVersion, '1.0.30');
+    assert.equal(payload.renderVersion, 2);
+    assert.equal(payload.cliVersion, '1.0.31');
     assert.equal(payload.subject, 'receipt');
     assert.equal(payload.session, 's-unsigned');
     assert.equal(payload.manifestSha256, null);
@@ -1315,8 +1315,8 @@ describe('v1.0.30 signed one-page report', () => {
     const made = parseJson(cli(dir, ['report', 'last', '--json']));
     const html = readFileSync(made.htmlPath, 'utf8');
     const payload = payloadOf(html);
-    assert.equal(payload.renderVersion, 1);
-    payload.renderVersion = 2;
+    assert.equal(payload.renderVersion, 2);
+    payload.renderVersion = 99;
     const keys = loadKeys(dir);
     const signature = createSignatureDocument(reportPayloadHash(payload), keys);
     const payloadRe = /(<script type="application\/json" id="agent-receipt-report">)[\s\S]*?(<\/script>)/;
@@ -1328,7 +1328,7 @@ describe('v1.0.30 signed one-page report', () => {
     writeFileSync(file, next);
     const checked = cliResult(dir, ['report', 'verify', file, '--require-sig', '--json']);
     assert.equal(checked.code, 2, checked.out + checked.err);
-    assert.match(parseJson(checked.out).reason, /unsupported report renderVersion 2/);
+    assert.match(parseJson(checked.out).reason, /unsupported report renderVersion 99/);
     assert.notEqual(parseJson(checked.out).verdict, 'VERIFIED');
     const badPayload = { ...payloadOf(html), renderVersion: 'nope' };
     const badFile = join(dir, 'bad-render.report.html');

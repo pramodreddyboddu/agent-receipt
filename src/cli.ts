@@ -33,6 +33,7 @@ import { cmdAudit } from './commands/audit.js';
 import { cmdPrune } from './commands/prune.js';
 import { cmdTrust } from './commands/trust.js';
 import { cmdReport, cmdReportVerify } from './commands/report.js';
+import { cmdAdapters } from './commands/adapters.js';
 
 const JSON_GATE_COMMANDS = new Set(['capture', 'wrap', 'share', 'verify', 'import']);
 
@@ -306,6 +307,15 @@ function resolveShareRedact(flags: Record<string, string | boolean>): boolean {
   return true;
 }
 
+/** A path flag. Bare `--name` (no value) is a usage error, not a silent skip. */
+function flagPath(flags: Record<string, string | boolean>, name: string): string | undefined {
+  if (flags[name] === undefined) return undefined;
+  if (typeof flags[name] !== 'string' || !flags[name].trim()) {
+    throw new Error(`--${name} requires a value`);
+  }
+  return flags[name];
+}
+
 function flagMd(flags: Record<string, string | boolean>): string | boolean | undefined {
   const v = flags.md !== undefined ? flags.md : flags.markdown;
   if (v === undefined) return undefined;
@@ -341,11 +351,43 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         cmdInit(cwd, {
           cursor: flagBool(flags, 'cursor'),
           grok: flagBool(flags, 'grok'),
+          claude: flagBool(flags, 'claude'),
+          codex: flagBool(flags, 'codex'),
           org: flagBool(flags, 'org', 'policy'),
           retention: flagBool(flags, 'retention'),
           autoPrune: flagBool(flags, 'auto-prune'),
         });
         return 0;
+      case 'adapters': {
+        const adapterFlags = new Set(['cwd', 'json', 'dry-run', 'stop', 'no-stop']);
+        for (const key of Object.keys(flags)) {
+          if (!adapterFlags.has(key)) {
+            throw new Error(
+              `Unknown flag: --${key}. adapters accepts --json, --dry-run, --stop, --no-stop, and --cwd.`,
+            );
+          }
+        }
+        if (flagBool(flags, 'stop') && flagBool(flags, 'no-stop')) {
+          throw new Error('Pass only one of --stop and --no-stop.');
+        }
+        const actionRaw = (positional[0] ?? 'list').toLowerCase();
+        if (actionRaw !== 'list' && actionRaw !== 'status' && actionRaw !== 'install' && actionRaw !== 'uninstall') {
+          throw new Error(
+            `Unknown adapters action "${positional[0]}". Use list, status, install, or uninstall.`,
+          );
+        }
+        if (positional.length > 2) {
+          throw new Error('adapters accepts one agent name: claude-code, codex, grok, or cursor.');
+        }
+        const stop = flagBool(flags, 'no-stop') ? false : flagBool(flags, 'stop') ? true : undefined;
+        return cmdAdapters(cwd, {
+          action: actionRaw,
+          adapter: positional[1],
+          json: flagBool(flags, 'json'),
+          dryRun: flagBool(flags, 'dry-run'),
+          stop,
+        });
+      }
       case 'capture': {
         if (flagBool(flags, 'link')) {
           throw new Error('--link is only valid on wrap. Pass --session on capture.');
@@ -376,6 +418,8 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           redact: resolveRedact(cwd, flags),
           sign: resolveSign(cwd, flags),
           autoPrune: resolveAutoPrune(cwd, flags),
+          transcript: flagPath(flags, 'transcript'),
+          adapter: flagPath(flags, 'adapter'),
         });
         return result.failedOn ? 2 : 0;
       }
@@ -400,6 +444,8 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           uncommitted: flagBool(flags, 'uncommitted'),
           sign: resolveSign(cwd, flags),
           autoPrune: resolveAutoPrune(cwd, flags),
+          transcript: flagPath(flags, 'transcript'),
+          adapter: flagPath(flags, 'adapter'),
         });
         if (result.failedOn) return 2;
         return result.verified ? 0 : 2;

@@ -11,12 +11,20 @@ import {
   GROK_WRAP_SCRIPT_REL,
 } from '../lib/grok-rule.js';
 import { color } from '../lib/color.js';
+import { claudeAdapter } from '../lib/adapters/claude.js';
+import { codexAdapter } from '../lib/adapters/codex.js';
+import { cursorAdapter } from '../lib/adapters/cursor.js';
+import { grokAdapter } from '../lib/adapters/grok.js';
 
 export interface InitOptions {
   /** Write .cursor/rules/agent-receipt.mdc so Cursor agents capture on wrap-up. */
   cursor?: boolean;
   /** Write .grok rule + SessionEnd hook so Grok Build sessions can wrap. */
   grok?: boolean;
+  /** Write Claude Code SessionEnd/Stop hook, wrap script, and a project rule. */
+  claude?: boolean;
+  /** Write a Codex Stop hook, wrap script, and a marked AGENTS.md block. */
+  codex?: boolean;
   /**
    * Set `redact: true` and `failOn: high` on `.agent-receipt.yml`.
    * Missing config is written like `init`, with those keys enabled.
@@ -366,13 +374,24 @@ export function cmdInit(cwd: string, opts: InitOptions = {}): void {
     console.log(`  autoPrune: true (${autoPrune.autoPruneChanged ? 'set' : 'unchanged'})`);
   }
   if (opts.cursor) {
-    const rule = writeCursorRule(cwd);
-    console.log(`  cursor: ${rule}`);
+    const installed = cursorAdapter.install(cwd);
+    console.log(`  cursor: ${installed.files[0]}`);
+    console.log(`  hook:   ${installed.files[1]}`);
   }
   if (opts.grok) {
-    const grok = writeGrokIntegration(cwd);
-    console.log(`  grok:   ${grok.rule}`);
-    console.log(`  hook:   ${grok.hook}`);
+    const grok = grokAdapter.install(cwd);
+    console.log(`  grok:   ${grok.files[0]}`);
+    console.log(`  hook:   ${grok.files[1]}`);
+  }
+  if (opts.claude) {
+    const installed = claudeAdapter.install(cwd);
+    console.log(`  claude: ${installed.files[0]}`);
+    console.log(`  rule:   ${installed.files[1]}`);
+  }
+  if (opts.codex) {
+    const installed = codexAdapter.install(cwd);
+    console.log(`  codex:  ${installed.files[0]}`);
+    console.log(`  agents: ${installed.files[2]}`);
   }
   console.log('');
   console.log('Next steps:');
@@ -382,7 +401,18 @@ export function cmdInit(cwd: string, opts: InitOptions = {}): void {
   console.log('  agent-receipt install-hooks   # optional auto-capture on commit');
   console.log('  agent-receipt watch --once    # capture after the next commit');
   if (!opts.cursor) {
-    console.log('  agent-receipt init --cursor   # drop Cursor rule (agent runs capture)');
+    console.log('  agent-receipt init --cursor   # Cursor rule + sessionEnd hook');
+  }
+  if (!opts.claude) {
+    console.log('  agent-receipt init --claude   # Claude Code SessionEnd hook + rule');
+  } else {
+    console.log('  agent-receipt wrap --agent claude-code --redact --message "what changed"');
+  }
+  if (!opts.codex) {
+    console.log('  agent-receipt init --codex    # Codex Stop hook + AGENTS.md block');
+  } else {
+    console.log('  agent-receipt wrap --agent codex --redact --message "what changed"');
+    console.log('  Enable Codex features.hooks and trust project hooks before the Stop hook runs');
   }
   if (!opts.grok) {
     console.log('  agent-receipt init --grok     # Grok rule + SessionEnd hook (--redact)');

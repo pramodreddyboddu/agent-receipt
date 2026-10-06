@@ -4,11 +4,13 @@ const TOPICS: Record<string, string> = {
   init: `agent-receipt init — write config + setup notes
 
 Usage:
-  agent-receipt init [--cursor] [--grok] [--org] [--retention] [--auto-prune] [--cwd <path>]
+  agent-receipt init [--cursor] [--grok] [--claude] [--codex] [--org] [--retention] [--auto-prune] [--cwd <path>]
 
 Options:
-  --cursor               Drop .cursor/rules/agent-receipt.mdc (agent runs capture)
+  --cursor               Drop .cursor/rules/agent-receipt.mdc and a sessionEnd hook
   --grok                 Drop .grok rule + SessionEnd hook (dirty-tree wrap, --redact)
+  --claude               Drop Claude Code SessionEnd and Stop hooks plus a project rule
+  --codex                Drop a Codex Stop hook plus a marked AGENTS.md block
   --org                  Set redact: true and failOn: high (alias: --policy)
   --policy               Alias of --org
   --retention            Set maxCount: 100 and maxAgeDays: 30 (does not set autoPrune)
@@ -59,6 +61,10 @@ Creates:
   .cursor/rules/…             only with --cursor
   .grok/rules/…               only with --grok (loaded every Grok session)
   .grok/hooks/…               only with --grok (SessionEnd; needs grok --trust)
+  .claude/settings.json       only with --claude (SessionEnd and Stop)
+  .codex/hooks.json           only with --codex (Stop; AGENTS.md markers)
+
+\`init --claude\`, \`init --codex\`, \`init --cursor\`, and \`init --grok\` call the same installers as \`adapters install\`. The first install snapshots the previous file bytes. Re-running does not replace that snapshot. See \`help adapters\`.
 
 Examples:
   agent-receipt init
@@ -69,7 +75,34 @@ Examples:
   agent-receipt init --retention --auto-prune
   agent-receipt init --cursor
   agent-receipt init --grok
+  agent-receipt init --claude
+  agent-receipt init --codex
   agent-receipt init --cwd ~/code/my-app
+`,
+
+  adapters: `agent-receipt adapters — native capture hooks for Claude Code, Cursor, Grok, and Codex
+
+Usage:
+  agent-receipt adapters [list|status|install|uninstall] [name] [--dry-run] [--json] [--stop|--no-stop]
+
+\`list\` (default) and \`status\` print whether each agent command is on PATH and whether this repo has the project hook. \`install\` merges the hook into the project config. \`uninstall\` puts the pre-install bytes back.
+
+Names: \`claude-code\` (alias \`claude\`), \`cursor\`, \`grok\`, \`codex\`. Omit the name to install or uninstall every adapter.
+
+The first install copies each file it is about to change. The copy lives under the git dir (\`git rev-parse --git-path\`), not as an untracked work-tree file. A later install does not replace that snapshot. Uninstall writes those bytes back, or deletes a file that did not exist. Existing keys and other hooks stay. Invalid JSON is refused and is not rewritten. A symlink is refused.
+
+\`--dry-run\` reports the paths and writes nothing, including no snapshot.
+\`--no-stop\` skips the extra Stop hook on Claude Code and Cursor. SessionEnd stays. Codex has no SessionEnd in its documented hook list, so Stop stays. Grok uses SessionEnd only.
+\`--json\` prints one object: \`list\` / \`status\` use \`adapters\`; \`install\` / \`uninstall\` use \`results\` (\`files\`, \`changed\`).
+
+Hook scripts exit 0. They wrap only when the tree is dirty, pass \`--redact\`, and pass \`--transcript\` when the host sends \`transcript_path\`.
+
+Examples:
+  agent-receipt adapters
+  agent-receipt adapters status --json
+  agent-receipt adapters install claude-code --dry-run
+  agent-receipt adapters install cursor --no-stop
+  agent-receipt adapters uninstall grok
 `,
 
   capture: `agent-receipt capture — snapshot a git range into a Markdown receipt
@@ -117,7 +150,21 @@ Options:
                          A broken audit chain skips the delete, warns on
                          stderr, and does not change this command's exit code.
   --no-prune             Force auto-prune off (overrides config and --prune)
+  --transcript <file>    Record tool calls from this transcript (JSONL or JSON)
+  --adapter <name>       Parser: claude-code, cursor, grok, or codex
   --cwd <path>           Run as if started in this directory
+
+\`--transcript\` adds a \`## Tool calls\` section inside the hashed body.
+MCP calls (\`mcp__server__tool\`, CallMcpTool, Codex \`mcp_tool_call\`,
+JSON-RPC \`tools/call\`) are labeled \`mcp:<server>/<tool>\`. Arguments
+are redacted with the same secret patterns as \`--redact\`, even when
+\`--redact\` is off. A shell command is not scanned for paths. A missing
+or unparseable file warns on stderr, omits the section, and still exits 0.
+An unknown \`--adapter\` exits 1. Omit \`--adapter\` to use \`--agent\`
+when that label is a known adapter. The companion JSON adds \`toolCalls\`.
+Low-severity risks: \`tool-call-unmentioned-diff\` (a diff path no call
+mentions) and \`tool-call-write-not-in-diff\` (a write tool whose path
+is absent from the diff).
 
 \`--no-prune\` wins, then \`--prune\`, then config \`autoPrune: true\`.
 Absent or false: this command does not delete. \`autoPrune: true\` with no
@@ -203,7 +250,13 @@ Options:
                          autoPrune: true). No --force. A broken audit chain
                          warns and does not change the exit code.
   --no-prune             Force auto-prune off (overrides config and --prune)
+  --transcript <file>    Record tool calls from this transcript (same as capture)
+  --adapter <name>       Parser: claude-code, cursor, grok, or codex
   --cwd <path>           Run as if started in this directory
+
+\`--transcript\` and \`--adapter\` match \`capture\`. Tool arguments are
+redacted even when \`--redact\` is off. A missing transcript warns and
+the receipt is still written. An unknown adapter exits 1.
 
 \`--no-prune\` wins, then \`--prune\`, then config \`autoPrune: true\`.
 \`--json\` adds \`autoPrune\`, \`pruned\`, and \`pruneReason\` only when this
@@ -746,7 +799,7 @@ exits 2. Add \`*.report.html -text\` and \`.agent-receipt/** -text\` to
 normalized. \`audit.jsonl\` is a separate check: exactly one trailing CR on each
 line is stripped before the chain hash. A second trailing CR fails the chain.
 Invalid UTF-8 exits 2. \`renderVersion\` selects the
-renderer. Version 1 is this page. An unknown renderVersion exits 2. Bidi controls in rendered
+renderer. Version 2 is this page and includes the tool-call section when the receipt has one. Version 1 stays for pages written before that. An unknown renderVersion exits 2. Bidi controls in rendered
 fields, including agent names, are shown as \`\\uXXXX\`. Share HTML uses the same escape.
 
 Candidate receipts come from outDir. \`--receipts <dir>\` searches that
@@ -1491,6 +1544,8 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
   git-clean     working tree clean? Dirty is a warning, not a failure
   cursor        init --cursor rule present?
   grok          init --grok rule + SessionEnd hook present?
+  adapters      Native capture adapters (claude-code, codex, grok, cursor).
+                Always INFO, including under --strict. Does not fail doctor.
 
 Exit 0 if no FAIL checks; exit 1 otherwise. WARN/INFO are non-fatal.
 Default \`doctor\` does not fail when org policy or retention is unset.
@@ -1614,8 +1669,9 @@ Usage:
   agent-receipt <command> [options]
 
 Commands:
-  init                   Write config + notes (--org sets redact + failOn; --retention; --auto-prune; --cursor, --grok)
-  capture                Capture a git snapshot receipt (Markdown)
+  init                   Write config + notes (--org sets redact + failOn; --retention; --auto-prune; --cursor, --grok, --claude, --codex)
+  adapters               Native hooks: list, status, install, uninstall (--dry-run, --json, --no-stop)
+  capture                Capture a git snapshot receipt (Markdown; --transcript records tool calls)
   wrap                   End-of-session: capture + TL;DR + verify
   share [path]           Redact + HTML (+ optional md, or --package handoff dir) + verify + TL;DR
   export [path]          Write self-contained HTML (or Markdown) receipt
@@ -1664,6 +1720,11 @@ Examples:
   agent-receipt init --auto-prune
   agent-receipt init --cursor
   agent-receipt init --grok
+  agent-receipt init --claude
+  agent-receipt init --codex
+  agent-receipt adapters
+  agent-receipt adapters install claude-code --dry-run
+  agent-receipt capture --agent claude-code --transcript session.jsonl --adapter claude-code
   agent-receipt wrap --agent cursor --message "session done"
   agent-receipt wrap --json --fail-on high
   agent-receipt share --out share.html --md share.md

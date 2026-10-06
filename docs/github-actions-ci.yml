@@ -15,6 +15,8 @@
 # v1.0.6 through v1.0.30: live .github/workflows/ci.yml was left
 # unchanged because the checkout token's scopes were gist, read:org, repo
 # (no workflow).
+# v1.0.31 left that live file unchanged for the same reason. The smoke
+# below includes adapters install --dry-run.
 name: CI
 
 on:
@@ -289,3 +291,9 @@ jobs:
           html=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).htmlPath)' "$tmp/report.json")
           node bin/agent-receipt.js report verify "$html" --json --cwd "$tmp" > "$tmp/report-verify.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="report-verify"||g.exitCode!==0||g.signed!==true||g.verdict!=="VERIFIED"||g.checked<1){console.error(g); process.exit(1)}' "$tmp/report-verify.json"
+          # v1.0.31: native adapters. Dry-run writes nothing, including no .claude tree.
+          node bin/agent-receipt.js adapters --json --cwd "$tmp" > "$tmp/adapters.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.command!=="adapters"||g.action!=="list"||!Array.isArray(g.adapters)||g.adapters.length<4){console.error(g); process.exit(1)}' "$tmp/adapters.json"
+          node bin/agent-receipt.js help adapters >/dev/null
+          node bin/agent-receipt.js adapters install claude-code --dry-run --cwd "$tmp"
+          test ! -e "$tmp/.claude"

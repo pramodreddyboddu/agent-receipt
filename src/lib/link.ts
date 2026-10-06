@@ -907,6 +907,19 @@ export function buildSessionNodes(
   });
 }
 
+/** Count from a `## Tool calls` section, or null when that heading is absent. */
+function toolCallCount(filePath: string): number | null {
+  try {
+    const text = readFileSync(filePath, 'utf8');
+    const body = text.split(/^## Tool calls$/m)[1]?.split(/^## /m)[0];
+    if (body === undefined) return null;
+    const match = body.match(/^- \*\*Count\*\*: (\d+)\s*$/m);
+    return match ? Number(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Parent/child lines for human `session` output. Cycle nodes stay at the root.
  * `aliasToId` maps a stored parent reference (link id or sha256) onto the
@@ -960,6 +973,8 @@ export function formatSessionTree(
       bits.push(`resignedBy=${claim.resignedBy ?? 'null'}`);
       if (claim.signedBy) bits.push(`signedBy=${claim.signedBy}`);
     }
+    const tools = toolCallCount(node.path);
+    if (tools !== null) bits.push(`tools=${tools}`);
     lines.push(`${indent}- ${bits.join('  ')}`);
     for (const child of children.get(node.id) ?? []) walk(child, `${indent}  `);
   };

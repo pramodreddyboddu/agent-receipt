@@ -28,6 +28,8 @@ export interface ReceiptGlance {
   sha?: string;
   /** True when the session snapshot line marks a dirty working tree. */
   uncommitted?: boolean;
+  /** Body of `## Tool calls` when that heading is present. */
+  toolCalls?: string;
 }
 
 /** List receipt .md files newest-first under configured outDir. */
@@ -105,6 +107,9 @@ export function parseReceiptGlance(path: string): ReceiptGlance {
     const m = line.match(/^\|\s*\w+\s*\|\s*`([^`]+)`\s*\|/);
     if (m) glance.files.push(m[1]);
   }
+
+  const toolSection = text.split(/^## Tool calls$/m)[1]?.split(/^## /m)[0];
+  if (toolSection !== undefined) glance.toolCalls = toolSection.trim();
 
   const riskSection = text.split('## Risk findings')[1]?.split(/^## /m)[0] || '';
   for (const line of riskSection.split('\n')) {

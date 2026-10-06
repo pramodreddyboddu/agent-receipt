@@ -1,4 +1,6 @@
 import { appendHashFooter, sha256Hex, canonicalBody } from './hash.js';
+import type { ToolCallSection } from './adapters/tool-calls.js';
+import { formatToolCallSection } from './adapters/tool-calls.js';
 import type { FileStat } from './git.js';
 import { summarizeRisks, sortRisks, type RiskHint } from './risk.js';
 import { summarizeNotableChanges, formatDiffStatTable } from './summary.js';
@@ -76,6 +78,11 @@ export interface ReceiptData {
   cwd: string;
   /** True when this receipt snapshots the dirty working tree (not commits). */
   uncommitted?: boolean;
+  /**
+   * Parsed transcript. Omitted when no transcript was passed or it did not
+   * parse. Present for a valid zero-call transcript.
+   */
+  toolCalls?: ToolCallSection;
 }
 
 export interface FormatOptions {
@@ -169,6 +176,13 @@ export const STRUCTURAL_HEADING_LINES = new Set([
 ]);
 
 /**
+ * Lines user content must not emit on their own. `## Tool calls` is not a
+ * 1.0.28 structural heading (old receipts must still link). It is still
+ * escaped so the writer emits that heading once.
+ */
+const USER_LINE_ESCAPE = new Set([...STRUCTURAL_HEADING_LINES, '## Tool calls']);
+
+/**
  * Branch and Workspace are single-backtick spans (`[^`]*`). A raw backtick
  * ends the span and the receipt is treated as pre-1.0.28. Percent-encode
  * `%` and `` ` `` so the span matches and the value round-trips.
@@ -189,7 +203,7 @@ export function decodeBacktickField(value: string): string {
  */
 function pushUserLines(lines: string[], text: string): void {
   for (const line of String(text).split('\n')) {
-    lines.push(STRUCTURAL_HEADING_LINES.has(line) ? ` ${line}` : line);
+    lines.push(USER_LINE_ESCAPE.has(line) ? ` ${line}` : line);
   }
 }
 
@@ -390,6 +404,14 @@ export function formatMarkdown(
     lines.push('');
   }
 
+  if (data.toolCalls) {
+    const section = formatToolCallSection(data.toolCalls).replace(/\n$/, '');
+    const [heading, ...rest] = section.split('\n');
+    lines.push(heading);
+    pushUserLines(lines, rest.join('\n'));
+    lines.push('');
+  }
+
   lines.push(`## Diff summaries${full ? ' (full)' : ''}`);
   lines.push('');
   const paths = Object.keys(data.diffs);
@@ -449,6 +471,17 @@ export function formatJson(
     commits: data.commits,
     files: data.files,
     risks: data.risks,
+    ...(data.toolCalls
+      ? {
+          toolCalls: {
+            adapter: data.toolCalls.adapter,
+            count: data.toolCalls.events.length,
+            truncated: data.toolCalls.truncated,
+            sha256: data.toolCalls.sha256,
+            events: data.toolCalls.events,
+          },
+        }
+      : {}),
     integrity: {
       algorithm: 'sha256',
       sha256: sha256Hex(body),

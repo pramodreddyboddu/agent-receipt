@@ -35,7 +35,7 @@
     "renderVersion": {
       "type": "integer",
       "minimum": 1,
-      "description": "HTML renderer id. 1 is the v1.0.30 page. report verify selects the renderer by this integer and exits 2 for an unknown version. A later template adds a renderer and keeps this one."
+      "description": "HTML renderer id. 2 is the v1.0.31 page and includes the tool-call section when the receipt has one. 1 is the v1.0.30 page and stays. report verify selects the renderer by this integer and exits 2 for an unknown version."
     },
     "cliVersion": {
       "type": "string",
@@ -266,7 +266,11 @@
           },
           "review": { "type": "string", "description": "What to review, as shown." },
           "commits": { "type": "string", "description": "Commits section, as shown." },
-          "diffs": { "type": "string", "description": "Capped diff excerpt, as shown." }
+          "diffs": { "type": "string", "description": "Capped diff excerpt, as shown." },
+          "toolCalls": {
+            "type": "string",
+            "description": "Optional ## Tool calls body shown on renderVersion 2, or an empty string when the receipt has no tool-call section. Omitted on a version 1 payload. Not required."
+          }
         }
       }
     }

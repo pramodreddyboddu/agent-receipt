@@ -1,9 +1,17 @@
 # Claude Code integration
 
-One-liner to run after a Claude Code session (from the repo root):
+Install the project hook once (merges into `.claude/settings.json`; uninstall restores the previous bytes):
 
 ```bash
-agent-receipt capture --agent claude-code --message "session wrap-up"
+agent-receipt init --claude
+# or: agent-receipt adapters install claude-code
+# preview: agent-receipt adapters install claude-code --dry-run
+```
+
+One-liner to run after a Claude Code session (from the repo root). `--transcript` records tool calls, including MCP, and redacts secrets in the arguments:
+
+```bash
+agent-receipt capture --agent claude-code --transcript session.jsonl --message "session wrap-up"
 ```
 
 Or via GitHub until npm publish:

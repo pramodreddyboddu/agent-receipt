@@ -15,9 +15,11 @@ npm i -g github:pramodreddyboddu/agent-receipt
 
 cd your-git-repo
 agent-receipt init --grok
+# same files: agent-receipt adapters install grok
+# preview:    agent-receipt adapters install grok --dry-run
 ```
 
-`init --grok` writes:
+`init --grok` and `adapters install grok` write:
 
 | Path | Role |
 |------|------|

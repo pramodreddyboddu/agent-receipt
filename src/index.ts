@@ -98,6 +98,7 @@ export {
   reportPayloadHash,
   decideVerdict,
 } from './lib/report-html.js';
+export { getAdapter, listAdapterStatus, adapterForAgent } from './lib/adapters/index.js';
 export { CURSOR_RULE_MDC, CURSOR_RULE_REL } from './lib/cursor-rule.js';
 export {
   GROK_RULE_MD,

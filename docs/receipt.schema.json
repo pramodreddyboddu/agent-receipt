@@ -184,6 +184,19 @@
         "additionalProperties": false
       }
     },
+    "toolCalls": {
+      "type": "object",
+      "description": "Present when capture or wrap was given --transcript and the file parsed. Arguments are already redacted. Omitted when there is no tool-call section. Not required.",
+      "required": ["adapter", "count", "truncated", "sha256", "events"],
+      "properties": {
+        "adapter": { "type": "string" },
+        "count": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "events": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
     "integrity": {
       "type": "object",
       "required": ["algorithm", "sha256"],

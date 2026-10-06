@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.31] — 2026-10-06
+
+### Added
+
+- `agent-receipt adapters` lists Claude Code, Cursor, Grok CLI, and Codex. `adapters status`, `adapters install [name]`, and `adapters uninstall [name]` are idempotent. Omit the name to install or remove every adapter. `--dry-run` writes nothing, including no backup. `--json` prints one object (`adapters` for list/status, `results` with `files` and `changed` for install/uninstall). `--no-stop` skips the extra Stop hook on Claude Code and Cursor. SessionEnd stays. Codex has no SessionEnd in its documented hook list, so Stop stays. Grok uses SessionEnd only.
+- Install merges into the project config and does not drop existing keys or other hooks. The first install snapshots the previous bytes under the git dir (`git rev-parse --git-path`, `.git/agent-receipt-adapter-backups/<adapter>/`), so the copy is not an untracked work-tree file. A repo without git uses `.agent-receipt/adapter-backups/`. A later install does not replace that snapshot. Uninstall writes those bytes back, or deletes a file that did not exist, then removes the snapshot. Invalid JSON is refused and is not rewritten. A symlink is refused. `init --claude`, `init --codex`, `init --cursor`, and `init --grok` use the same installers. Fresh Grok and Cursor rule bytes stay the checked-in constants.
+- `capture` and `wrap` accept `--transcript <file>` and `--adapter <name>` (`claude-code`, `cursor`, `grok`, `codex`). Tool calls, including MCP (`mcp__server__tool`, CallMcpTool, Codex `mcp_tool_call`, JSON-RPC `tools/call`), become a `## Tool calls` section inside the hashed body, labeled `mcp:<server>/<tool>`. Arguments are redacted with the existing secret patterns even when `--redact` is off. A shell command is not scanned for paths. A missing or unparseable transcript warns on stderr, omits the section, and still exits 0. An unknown adapter exits 1 and writes no receipt. The companion JSON adds `toolCalls` (`adapter`, `count`, `truncated`, `sha256`, `events`). Low-severity risks `tool-call-unmentioned-diff` and `tool-call-write-not-in-diff` name a diff path no call mentions, and a write tool whose path is absent from the diff.
+- Report `renderVersion` 2 includes that section when the receipt has one. The version 1 renderer stays. `toolCalls` on the report payload is an optional string, so a version 1 payload still validates. `doctor` adds an `adapters` row that is always INFO and does not fail `doctor` or `doctor --strict`.
+
+### Changed
+
+- Package version bumped to `1.0.31`.
+- [`README.md`](README.md), CLI help, [`docs/agents.md`](docs/agents.md), [`docs/grok-cli.md`](docs/grok-cli.md), [`docs/business.md`](docs/business.md), and [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md) document native adapters and MCP tool-call capture. Pin comments that track the current cut are `v1.0.31`.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) keeps the 1.0.30 report smoke and adds a 1.0.31 `adapters install claude-code --dry-run` smoke that must not create `.claude`. Live [`.github/workflows/*`](.github/workflows) was not edited.
+- [`docs/receipt.schema.json`](docs/receipt.schema.json) documents optional `toolCalls`. [`docs/report-payload.schema.json`](docs/report-payload.schema.json) documents optional `toolCalls` and renderVersion 2.
+
+### Notes
+
+- Live workflow files were not edited. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm. No new runtime dependencies.
+- Hook scripts exit 0. They wrap only when the working tree is dirty. This is not a certificate authority.
+- Still deferred: in-toto/SLSA export, Sigstore keyless signing, a published GitHub Action (the drop-in under `examples/github/` stays an example to copy), policy packs, a local web viewer, full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.30] — 2026-09-30
 
 ### Added

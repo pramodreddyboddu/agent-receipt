@@ -17,10 +17,10 @@ Team rollout, CI `--json` gates, and share-safety: [`business.md`](business.md).
 
 ## Cursor
 
-**Best path:** `agent-receipt init --cursor` drops
+**Best path:** `agent-receipt init --cursor` (or `agent-receipt adapters install cursor`) drops
 [`.cursor/rules/agent-receipt.mdc`](../examples/.cursor/rules/agent-receipt.mdc)
-with `alwaysApply: true`. The rule tells the agent to **run capture itself**
-when the session finishes — not merely remind you.
+with `alwaysApply: true`, plus a `sessionEnd` hook. The rule tells the agent to **run capture itself**
+when the session finishes — not merely remind you. `--dry-run` writes nothing. Uninstall restores the previous bytes.
 
 After a Cursor agent / Composer session that touched the working tree:
 
@@ -61,7 +61,7 @@ Suggested flags: `--agent cursor`, `--session <chat-title>`, `--json`.
 
 ## Grok Build CLI
 
-**Best path:** `agent-receipt init --grok` drops
+**Best path:** `agent-receipt init --grok` (or `agent-receipt adapters install grok`) drops
 [`.grok/rules/agent-receipt.md`](../examples/.grok/rules/agent-receipt.md)
 plus a SessionEnd hook that wraps **uncommitted** work with `--redact`.
 Trust project hooks once (`grok --trust` or `/hooks-trust`).
@@ -84,9 +84,12 @@ Details: [`grok-cli.md`](grok-cli.md).
 
 ## Claude Code
 
+**Best path:** `agent-receipt init --claude` (or `agent-receipt adapters install claude-code`) merges a SessionEnd hook and a Stop hook into `.claude/settings.json` and writes a project rule. Existing keys stay. `--no-stop` keeps SessionEnd only.
+
 ```bash
 agent-receipt capture \
   --agent claude-code \
+  --transcript session.jsonl \
   --message "session: fix flaky tests" \
   --commits 3 \
   --json
@@ -104,7 +107,17 @@ agent-receipt watch --once --agent claude-code --message "session wrap-up"
 For frequent commits, prefer `agent-receipt install-hooks` (set
 `AGENT_RECEIPT_AGENT=claude-code`).
 
-Suggested flags: `--agent claude-code`, `--session <id>`, `--since HEAD@{upstream}`.
+Suggested flags: `--agent claude-code`, `--transcript <file>`, `--session <id>`, `--since HEAD@{upstream}`.
+
+Tool calls in the transcript, including MCP (`mcp__server__tool`, CallMcpTool, JSON-RPC `tools/call`), are stored in `## Tool calls` and redacted even when `--redact` is off.
+
+## Codex
+
+**Best path:** `agent-receipt init --codex` (or `agent-receipt adapters install codex`) writes `.codex/hooks.json` (Stop) and a marked block in `AGENTS.md`. Codex has no SessionEnd in its documented hook list, so Stop stays when you pass `--no-stop`.
+
+```bash
+agent-receipt wrap --agent codex --redact --transcript session.jsonl --message "codex: wrap-up"
+```
 
 ## Aider
 

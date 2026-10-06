@@ -52,6 +52,10 @@ export interface WrapOptions {
    * skips prune (`pruneReason: failed-run`). Off by default.
    */
   autoPrune?: boolean;
+  /** Agent transcript. Passed through to capture. */
+  transcript?: string;
+  /** Adapter name. Passed through to capture. */
+  adapter?: string;
 }
 
 export interface WrapResult {
@@ -121,6 +125,8 @@ export function cmdWrap(cwd: string, opts: WrapOptions = {}): WrapResult {
     emitGate: false,
     audit: false,
     sign: opts.sign,
+    transcript: opts.transcript,
+    adapter: opts.adapter,
   });
 
   let tldr = capture.tldr;

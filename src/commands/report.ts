@@ -381,6 +381,7 @@ function buildOne(
     review: show(section(shown, '## What to review')),
     commits: show(section(shown, '## Commits')),
     diffs: show(section(shown, '## Diff summaries').split('\n').slice(0, 40).join('\n')),
+    toolCalls: section(shown, '## Tool calls') ? show(section(shown, '## Tool calls')) : '',
   };
   return {
     payload,
@@ -1210,6 +1211,9 @@ function verdictLabel(
   exitCode: 0 | 1 | 2,
 ): string {
   if (exitCode !== 0 && verdict === 'UNSIGNED') return 'FAILED (unsigned)';
+  if (verdict === 'UNSIGNED' && exitCode === 0 && notChecked > 0) {
+    return `UNSIGNED (${notChecked} receipts not checked)`;
+  }
   if (verdict === 'VERIFIED_PAYLOAD_ONLY') {
     return `VERIFIED (payload only; ${notChecked} receipts not checked)`;
   }

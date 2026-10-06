@@ -26,7 +26,7 @@ export const OFFLINE_HTML_CSP =
 const BIDI_RE = /[\u202A-\u202E\u2066-\u2069\u200E\u200F]/g;
 
 export function neutralizeBidi(value: string): string {
-  return value.replace(BIDI_RE, (ch) => {
+  return value.replace(/\r/g, '\\u000D').replace(BIDI_RE, (ch) => {
     const hex = ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0');
     return `\\u${hex}`;
   });

@@ -317,7 +317,7 @@ const PAGE_FOOTER =
   'The hash and the audit link are tamper-evident, not a cryptographic signature. The signature line reports a local Ed25519 sidecar when one is present. This is not a certificate authority and not access control. This one-pager is not itself signed.';
 
 /** Plain-English one page. Not a dump of the receipt body, and not signed. */
-function renderProvePage(report: ProveReport): string {
+function renderProvePage(report: ProveReport, toolCalls?: string): string {
   const verdict = report.exitCode === 0 ? 'PROVED' : 'FAILED';
   const line = (label: string, value: string) => `- **${label}:** ${value}`;
   const lines = [
@@ -345,6 +345,12 @@ function renderProvePage(report: ProveReport): string {
     lines.push(line('parent', oneLine(report.parent ?? '(none)')));
     lines.push(line('parent verify', parentVerifyLabel(report)));
   }
+  if (toolCalls) {
+    lines.push('', '## Tool calls', '');
+    for (const toolLine of toolCalls.split('\n')) {
+      lines.push(/^#{1,6}\s/.test(toolLine) ? ` ${toolLine}` : toolLine);
+    }
+  }
   lines.push('', '---', '', PAGE_FOOTER, '');
   return lines.join('\n');
 }
@@ -360,7 +366,8 @@ function writeProvePage(cwd: string, report: ProveReport, out?: string): string 
     );
   }
   mkdirSync(dirname(dest), { recursive: true });
-  writeFileSync(dest, renderProvePage(report), 'utf8');
+  const toolCalls = parseReceiptGlance(report.path).toolCalls;
+  writeFileSync(dest, renderProvePage(report, toolCalls), 'utf8');
   return dest;
 }
 
@@ -379,6 +386,7 @@ function htmlSummary(cwd: string, receiptPath: string): ProveHtmlSummary {
     deletions: glance.deletions,
     files: glance.files,
     risks: glance.risks,
+    ...(glance.toolCalls ? { toolCalls: glance.toolCalls } : {}),
   };
 }
 
