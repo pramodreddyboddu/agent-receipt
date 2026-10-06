@@ -67,7 +67,7 @@
 # Gate JSON schema: docs/gate.schema.json (next to docs/receipt.schema.json)
 # Signature sidecar: docs/signature.schema.json
 # Drop-in CI: examples/github/action.yml and examples/github/pr-gate.yml
-#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.34
+#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.35
 #   local allowlist (since v1.0.20): agent-receipt keygen && agent-receipt trust add --self
 #   status (v1.0.23, read-only): agent-receipt trust show
 #   handoff (v1.0.24): agent-receipt share --package   # HTML + Markdown; HTML unsigned
@@ -86,6 +86,18 @@ redact: true
 # capture / wrap / watch / share exit 2 when max severity is at least high.
 # Plain `verify` stays integrity-only unless you pass --fail-on explicitly.
 failOn: high
+
+# Policy packs (v1.0.35). Refs are builtin:<name> or a file path.
+# Deny hits fail the gate (exit 2). Warn hits are reported only.
+# A missing or invalid pack fails closed. Docs: docs/policy-packs.md
+# policyPacks:
+#   - builtin:baseline
+#   - builtin:supply-chain
+# policyExceptions:
+#   - rule: secrets-files
+#     path: "**/.env.example"
+#     reason: templates are not secrets
+#     expires: 2099-01-01
 
 # sign: true  # after keygen; CLI --no-sign overrides
 

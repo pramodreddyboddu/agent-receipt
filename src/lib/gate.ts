@@ -2,6 +2,7 @@ import { VERSION } from './version.js';
 import type { RiskSummary } from './risk.js';
 import type { ManifestSigReport } from './share-package.js';
 import type { SignatureStatus } from './sign.js';
+import type { PolicyPackHit } from './policy.js';
 
 /**
  * One-line stdout object for CI. Human progress stays on stderr when --json
@@ -117,6 +118,14 @@ export interface GateReport {
    * `chain-broken`, or `error`. Omitted when auto-prune was off.
    */
   pruneReason?: string | null;
+  /**
+   * Pack names evaluated for this command. Omitted when no pack was configured.
+   */
+  policyPacks?: string[];
+  /** Redacted hits. Omitted when no pack was configured. Empty when none matched. */
+  policyPackHits?: PolicyPackHit[];
+  /** True when a deny hit or an expired exception failed the gate. */
+  policyDenied?: boolean;
 }
 
 export type GateFields = Omit<GateReport, 'ok' | 'version' | 'exitCode' | 'trailingIgnored'> & {
@@ -177,6 +186,9 @@ export function finalizeGate(fields: GateFields): GateReport {
     ...(fields.autoPrune !== undefined ? { autoPrune: fields.autoPrune } : {}),
     ...(fields.pruned !== undefined ? { pruned: fields.pruned } : {}),
     ...(fields.pruneReason !== undefined ? { pruneReason: fields.pruneReason } : {}),
+    ...(fields.policyPacks !== undefined ? { policyPacks: fields.policyPacks } : {}),
+    ...(fields.policyPackHits !== undefined ? { policyPackHits: fields.policyPackHits } : {}),
+    ...(fields.policyDenied !== undefined ? { policyDenied: fields.policyDenied } : {}),
   };
 }
 

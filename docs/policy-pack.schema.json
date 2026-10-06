@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/policy-pack.schema.json",
+  "title": "PolicyPack",
+  "description": "Declarative policy pack evaluated against agent-receipt Markdown. YAML and JSON use the same fields. apiVersion is exactly agent-receipt/policy/v1. The matcher is deterministic: AND across match keys, OR within a list. There is no Rego engine and no eval. Unknown keys, duplicate rule ids, and bad globs fail lint. A missing, unreadable, or invalid pack fails closed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "name", "description"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "agent-receipt/policy/v1"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Pack name recorded on each hit."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "extends": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Packs composed depth-first before this pack's own rules. builtin:<name> or a path relative to this file. The same rule id later in the chain overrides the earlier one. A cycle fails closed. Depth limit is 8.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "rules": {
+      "type": "array",
+      "description": "Own rules. A pack needs rules, extends, or both.",
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "severity", "action", "match"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "description": "Unique in this file. The same id via extends is an override, not a duplicate."
+        },
+        "description": { "type": "string", "minLength": 1 },
+        "severity": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "critical"]
+        },
+        "action": {
+          "type": "string",
+          "enum": ["deny", "warn"],
+          "description": "deny fails the gate (exit 2). warn is reported and does not change the exit code."
+        },
+        "match": { "$ref": "#/$defs/match" }
+      }
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Every present key must match (AND). A list matches when any entry matches (OR). An empty match is a lint error.",
+      "properties": {
+        "command": { "$ref": "#/$defs/patternList" },
+        "commands": { "$ref": "#/$defs/patternList" },
+        "files": { "$ref": "#/$defs/globList" },
+        "file": { "$ref": "#/$defs/globList" },
+        "tool": { "$ref": "#/$defs/globList" },
+        "tools": { "$ref": "#/$defs/globList" },
+        "adapter": { "$ref": "#/$defs/globList" },
+        "agent": { "$ref": "#/$defs/globList" },
+        "network": { "type": "boolean", "const": true, "description": "A command that starts a network client (curl, wget, ssh, and the same set)." },
+        "packageInstall": { "type": "boolean", "const": true },
+        "publish": { "type": "boolean", "const": true },
+        "unsigned": { "type": "boolean", "const": true, "description": "Receipt has no valid signature sidecar." },
+        "redactionDisabled": { "type": "boolean", "const": true, "description": "The receipt body does not contain the redaction marker." },
+        "exitCode": { "$ref": "#/$defs/exitCode" },
+        "exitCodes": { "$ref": "#/$defs/exitCode" },
+        "risk": {
+          "type": "string",
+          "enum": ["low", "medium", "high"],
+          "description": "Receipt risk at or above this level. critical is not a receipt risk and is a lint error."
+        },
+        "maxFiles": { "type": "integer", "minimum": 0 },
+        "maxBytes": { "type": "integer", "minimum": 0, "description": "Matches when the receipt body is strictly larger." },
+        "maxCommands": { "type": "integer", "minimum": 0 },
+        "maxToolCalls": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "patternList": {
+      "description": "Command text. A glob by default. Prefix regex: or use /pattern/flags (flags i, m, s only, source at most 200 characters).",
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      ]
+    },
+    "globList": {
+      "description": "Path or name globs. ** must be its own path segment. An unclosed [ is a lint error.",
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      ]
+    },
+    "exitCode": {
+      "description": "An integer, nonzero, non-zero, any, or a list of those.",
+      "oneOf": [
+        { "type": "integer" },
+        { "type": "string", "enum": ["nonzero", "non-zero", "any"] },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              { "type": "integer" },
+              { "type": "string" }
+            ]
+          }
+        }
+      ]
+    },
+    "exception": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Lives in .agent-receipt.yml under policyExceptions, not inside the pack file. path is a glob. expires is YYYY-MM-DD (UTC). The exception applies on that date and is expired when the date is before today. An expired exception does not suppress a hit.",
+      "required": ["rule", "path", "reason"],
+      "properties": {
+        "rule": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "expires": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+      }
+    }
+  }
+}

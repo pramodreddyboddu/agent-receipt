@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.35] — 2026-10-06
+
+### Added
+
+- Declarative policy packs. A pack is YAML or JSON with `apiVersion: agent-receipt/policy/v1`, `name`, `description`, and `rules`. Each rule has `id`, `description`, `severity` (`low`, `medium`, `high`, `critical`), `action` (`deny` or `warn`), and `match`. Match covers commands (glob or `regex:`), file globs, tool and adapter names, network and package-install commands, publish commands, exit codes, risk, agent, an unsigned receipt, redaction disabled, and size or count limits. The matcher is deterministic. There is no Rego engine and no eval.
+- Built-in packs ship in `policies/`: `baseline` (secret files, workflow edits, history rewrite, curl piped to a shell), `supply-chain` (lockfiles, dependency manifests, package installs, publish), `ci-protect` (CI config and credential paths), and `strict` (those three, plus a required signature). Reference them as `builtin:<name>` or by file path. `extends` composes packs. The same rule id later in the chain overrides the earlier one.
+- `.agent-receipt.yml` accepts `policyPacks` and `policyExceptions` (`rule`, `path`, `reason`, optional `expires`). An exception whose date is before today (UTC) does not suppress the hit and fails a gate that is using packs. A missing, unreadable, or invalid pack fails closed (exit 1).
+- `agent-receipt policy list`, `policy show <pack>`, `policy lint <file>`, and `policy test <pack> [receipts...]`. Lint exits 1 on schema errors (unknown keys, duplicate ids, bad globs). Test exits 2 on a deny hit or an expired exception. `--json` prints one object for each.
+- `--policy-pack <name|file>` (repeatable) on capture, wrap, share, verify, watch, and pr-comment. Deny hits fail the gate (exit 2). Warn hits are reported and do not change the exit code. With no pack configured, those commands omit the new keys and behave as before.
+- Hits (`rule`, `pack`, `severity`, `action`, `evidence`, `receipt`) are redacted and included in the gate JSON (`policyPacks`, `policyPackHits`, `policyDenied`), a `## Policy packs` section on the receipt when packs ran, and the pr-comment summary (`### Policy packs`).
+- `action.yml` input `policy-pack` (comma-separated) is passed through to the gate as repeated `--policy-pack`.
+- `doctor` adds a `packs` row. It stays INFO when no pack is configured. `--strict` fails an invalid pack or an expired exception.
+- [`docs/policy-packs.md`](docs/policy-packs.md) and [`docs/policy-pack.schema.json`](docs/policy-pack.schema.json).
+
+### Changed
+
+- Package version bumped to `1.0.35`. The action default pin is `1.0.35`.
+- [`README.md`](README.md) and CLI help document policy packs. Pin comments that track the current cut are `v1.0.35`.
+
+### Notes
+
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. Packs use the existing zero-dependency YAML reader. This is not a certificate authority.
+- Still deferred: a local web viewer, full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
+
 ## [1.0.34] — 2026-10-06
 
 ### Added

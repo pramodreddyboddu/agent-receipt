@@ -28,6 +28,12 @@ import {
   signShareManifest,
   writeShareManifest,
 } from '../lib/share-package.js';
+import {
+  evaluateActivePolicy,
+  policyGateFields,
+  receiptDisplayPath,
+  type PolicyGateResult,
+} from '../lib/policy.js';
 
 export interface ShareOptions {
   /** HTML output path. Default: sibling `.html` next to the receipt. */
@@ -56,6 +62,8 @@ export interface ShareOptions {
    * Implies Markdown. Alias: `--pack`.
    */
   package?: boolean;
+  /** Repeatable `--policy-pack`. Union with config `policyPacks`. */
+  policyPacks?: string[];
 }
 
 export interface ShareResult {
@@ -124,7 +132,15 @@ export function cmdShare(
   const say = (line: string) => emitLine(quiet, line);
   const redact = opts.redact !== false;
   const risk = parseRiskSummaryMarkdown(original);
-  const failedOn = Boolean(opts.failOn && meetsFailOn(risk.maxSeverity, opts.failOn));
+  const policy: PolicyGateResult | null = evaluateActivePolicy(cwd, opts.policyPacks, [
+    {
+      receipt: receiptDisplayPath(cwd, source),
+      markdown: original,
+      absolutePath: source,
+    },
+  ]);
+  const riskFailed = Boolean(opts.failOn && meetsFailOn(risk.maxSeverity, opts.failOn));
+  const failedOn = riskFailed || Boolean(policy?.policyDenied);
   const tldr = extractTldr(original) ?? '';
   const sourceCheck = verifyMarkdown(original);
 
@@ -159,16 +175,22 @@ export function cmdShare(
           risk: riskToGate(risk),
           ignored: null,
           trailingIgnored: partial.trailingIgnored,
-          reason: partial.reason,
+          reason:
+            partial.reason && policy?.reason && !partial.reason.includes(policy.reason)
+              ? `${partial.reason}; ${policy.reason}`
+              : partial.reason || policy?.reason || null,
           sigPath: partial.sigPath,
+          ...policyGateFields(policy),
           ...(partial.packagePath ? { packagePath: partial.packagePath } : {}),
         }),
       );
-    } else if (failedOn && opts.failOn && partial.verified) {
+    } else if (partial.verified && riskFailed && opts.failOn) {
       console.error(
         color.red('✗') +
           ` ${failOnReason(opts.failOn, risk.maxSeverity)} — exiting 2`,
       );
+    } else if (partial.verified && policy?.policyDenied && policy.reason) {
+      console.error(color.red('✗') + ` ${policy.reason} — exiting 2`);
     }
     recordAuditEvent(cwd, {
       event: 'share',
@@ -319,7 +341,12 @@ export function cmdShare(
   }
 
   if (verified && failedOn) {
-    reason = failOnReason(opts.failOn, risk.maxSeverity);
+    const parts: string[] = [];
+    if (riskFailed && opts.failOn) parts.push(failOnReason(opts.failOn, risk.maxSeverity));
+    if (policy?.reason) parts.push(policy.reason);
+    if (parts.length) reason = parts.join('; ');
+  } else if (policy?.reason) {
+    reason = reason ? `${reason}; ${policy.reason}` : policy.reason;
   }
 
   return finish({

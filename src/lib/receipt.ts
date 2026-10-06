@@ -436,6 +436,7 @@ export function formatJson(
   data: ReceiptData,
   markdown: string,
   failedOn = false,
+  policy?: { hits: unknown[]; denied: boolean } | null,
 ): object {
   const body = canonicalBody(markdown);
   const totalIns = data.files.reduce((a, f) => a + f.insertions, 0);
@@ -457,6 +458,9 @@ export function formatJson(
     message: data.message ?? null,
     uncommitted: Boolean(data.uncommitted),
     failedOn: Boolean(failedOn),
+    ...(policy
+      ? { policyPackHits: policy.hits, policyDenied: policy.denied }
+      : {}),
     workspace: data.cwd,
     summary: {
       files: data.files.length,

@@ -24,6 +24,8 @@
 # the public Fulcio or Rekor services.
 # v1.0.34 left that live file unchanged for the same reason.
 # The published action is docs/github-action.md (a snippet, not this file).
+# v1.0.35 left that live file unchanged for the same reason.
+# The smoke below lists and lints built-in policy packs. No network.
 name: CI
 
 on:
@@ -59,6 +61,7 @@ jobs:
           node bin/agent-receipt.js help audit
           node bin/agent-receipt.js help prune
           node bin/agent-receipt.js help doctor
+          node bin/agent-receipt.js help policy
           node bin/agent-receipt.js help prove
           node bin/agent-receipt.js help keygen
           node bin/agent-receipt.js help sign
@@ -312,3 +315,10 @@ jobs:
           att=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).path)' "$tmp/attest.json")
           node bin/agent-receipt.js attest --verify "$att" --json --cwd "$tmp" > "$tmp/attest-verify.json"
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="attest-verify"||g.exitCode!==0||g.signed!==true||g.subjectsOk!==true||g.hashChainOk!==true){console.error(g); process.exit(1)}' "$tmp/attest-verify.json"
+          # v1.0.35: built-in policy packs parse and lint. No network.
+          node bin/agent-receipt.js policy list --json > "$tmp/policy-list.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const names=(g.packs||[]).map(function(p){return p.name}); if(g.ok!==true||g.command!=="policy"||g.action!=="list"||g.exitCode!==0||names.indexOf("baseline")===-1||names.indexOf("supply-chain")===-1||names.indexOf("ci-protect")===-1||names.indexOf("strict")===-1){console.error(g); process.exit(1)}' "$tmp/policy-list.json"
+          node bin/agent-receipt.js policy lint builtin:baseline
+          node bin/agent-receipt.js policy lint builtin:supply-chain
+          node bin/agent-receipt.js policy lint builtin:ci-protect
+          node bin/agent-receipt.js policy lint builtin:strict

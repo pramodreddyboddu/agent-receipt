@@ -1,7 +1,7 @@
 # Business / production rollout
 
-`agent-receipt` 1.0.34 for teams: install once, capture every session, fail CI
-on high-severity findings, share a redacted HTML + Markdown package (or HTML
+`agent-receipt` 1.0.35 for teams: install once, capture every session, fail CI
+on high-severity findings and on policy-pack deny hits, share a redacted HTML + Markdown package (or HTML
 alone), verify that package with `verify --package`, hand a reviewer a signed
 one-page HTML report (`report` / `report verify`), and keep a local
 audit log of capture, watch, wrap, share, export, and prune deletes. When
@@ -136,7 +136,7 @@ is the artifact, not the gate. The gate object itself is
 {
   "ok": true,
   "command": "wrap",
-  "version": "1.0.34",
+  "version": "1.0.35",
   "exitCode": 0,
   "verified": true,
   "failedOn": false,
@@ -270,7 +270,7 @@ Copy one of:
 |---------|--------------------|
 | [`examples/github/pr-gate.yml`](../examples/github/pr-gate.yml) | Copy to `.github/workflows/agent-receipt-gate.yml`. `pull_request` runs `wrap --fail-on --json` (or `share`). Also callable as a reusable workflow. After a green gate it runs `prove --json` (`prove` defaults to true) and uploads `receipt-gate.json` plus the receipt Markdown (`actions/upload-artifact@v4`, name `agent-receipt-gate`). |
 | [`action.yml`](../action.yml) | Published composite action. `uses: pramodreddyboddu/agent-receipt@v1`. See [`docs/github-action.md`](github-action.md). |
-| [`examples/github/action.yml`](../examples/github/action.yml) | Older copy-in composite. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.34`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
+| [`examples/github/action.yml`](../examples/github/action.yml) | Older copy-in composite. Copy the directory to `.github/actions/agent-receipt/`. Optional `install` (`npm install -g`, pin `github:pramodreddyboddu/agent-receipt#v1.0.35`), `prove`, `sign` (default false; fails closed without keys and names `keygen`), `require-sig` (default false), and `trusted-keys` (file path or comma-separated fingerprints, installed before wrap). Outputs `ok`, `exit-code`, `sha256`, `path`, `gate-json`. |
 
 ### Drop-in
 
@@ -289,7 +289,7 @@ true, `verified` is true, and `exitCode` is 0. The step prints that prove JSON.
 - uses: ./.github/actions/agent-receipt
   with:
     install: true
-    from: github:pramodreddyboddu/agent-receipt#v1.0.34
+    from: github:pramodreddyboddu/agent-receipt#v1.0.35
     prove: true
     fail-on: high
     base: origin/main
@@ -731,7 +731,7 @@ refuses the delete, including dry-run, unless `prune --force`). Fail-closed
 org policy landed in 1.0.14 (`doctor --strict` always fails unset `redact` +
 `failOn`, including a small `outDir`; `init --org` / `init --policy` sets
 those keys). Prove-this-run UX landed in 1.0.13 (`prove`, audit link,
-`last --json`, `trailingIgnored` on the gate). Also deferred: SSO / IdP,
+`last --json`, `trailingIgnored` on the gate). Policy packs landed in 1.0.35 (`policy list|show|lint|test`, `--policy-pack`, built-in packs under `policies/`, and the `policy-pack` action input). Deny hits fail the gate. Warn hits are reported only. A missing or invalid pack fails closed. Also deferred: SSO / IdP,
 Cloud Agents, a long-running prune daemon or cron (auto-prune after capture
 is the landed first cut; it is not a background job), live GitHub
 Actions workflow sync (the checkout token has no `workflow` scope), and npm
@@ -746,7 +746,7 @@ are checklist and listing tools; they do not sign the audit log.
 
 Pushing `.github/workflows/*` needs the GitHub OAuth **`workflow`** scope
 in addition to `repo`. Confirm with `gh auth status` (look for `workflow`
-under Token scopes). The token used for the 1.0.6 through 1.0.34 cuts had
+under Token scopes). The token used for the 1.0.6 through 1.0.35 cuts had
 `gist`, `read:org`, and `repo` only — no `workflow` — so the live workflow
 file was left unchanged and
 [`docs/github-actions-ci.yml`](github-actions-ci.yml) is the copy to install:

@@ -199,6 +199,32 @@
     "pruneReason": {
       "type": ["string", "null"],
       "description": "Optional. null when trusted prune ran (including zero deletes). Short skip or error code otherwise: failed-run (fail-on or verify failure; nothing deleted), retention-off, chain-broken, or error. Omitted when auto-prune was off. A chain-broken skip does not change exitCode."
+    },
+    "policyPacks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional. Pack names evaluated for this command. Omitted when no policy pack was configured. Present (possibly with an empty policyPackHits list) when packs ran."
+    },
+    "policyPackHits": {
+      "type": "array",
+      "description": "Optional. Redacted policy-pack hits (rule, pack, severity, action, evidence, receipt). Omitted when no pack was configured. Deny hits set failedOn. Warn hits do not.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule", "pack", "severity", "action", "evidence", "receipt"],
+        "properties": {
+          "rule": { "type": "string" },
+          "pack": { "type": "string" },
+          "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+          "action": { "type": "string", "enum": ["deny", "warn"] },
+          "evidence": { "type": "string" },
+          "receipt": { "type": "string" }
+        }
+      }
+    },
+    "policyDenied": {
+      "type": "boolean",
+      "description": "Optional. True when a deny hit or an expired policy exception failed the gate. Omitted when no pack was configured. Warn-only hits leave this false."
     }
   }
 }

@@ -152,6 +152,10 @@ Options:
   --no-prune             Force auto-prune off (overrides config and --prune)
   --transcript <file>    Record tool calls from this transcript (JSONL or JSON)
   --adapter <name>       Parser: claude-code, cursor, grok, or codex
+  --policy-pack <name>   Evaluate a policy pack (repeatable). builtin:baseline
+                         or a file. Union with config policyPacks. Deny hits
+                         exit 2. Warn hits are reported. A missing or invalid
+                         pack exits 1. See \`help policy\`.
   --cwd <path>           Run as if started in this directory
 
 \`--transcript\` adds a \`## Tool calls\` section inside the hashed body.
@@ -1667,6 +1671,10 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
   git-clean     working tree clean? Dirty is a warning, not a failure
   cursor        init --cursor rule present?
   grok          init --grok rule + SessionEnd hook present?
+  packs         Policy packs from .agent-receipt.yml. INFO when none are
+                set, and INFO when a pack is invalid or an exception is
+                expired. --strict fails those two cases. Unset packs stay
+                INFO under --strict.
   adapters      Native capture adapters (claude-code, codex, grok, cursor).
                 Always INFO, including under --strict. Does not fail doctor.
 
@@ -1808,6 +1816,9 @@ Options:
   --receipts <path>      File, directory, or glob. Default: the receipt store
   --fail-on <level>      high, medium, or low. gate defaults to high
   --policy <file>        YAML with failOn and requireSignature. Flag wins
+  --policy-pack <name>   Policy pack (repeatable). builtin:<name> or a file.
+                         Deny hits fail the gate. Warn hits are reported.
+                         Not used by --command attest-verify.
   --require-signature    Require a valid sidecar (alias: --require-sig)
   --certificate-identity <id>          Keyless SAN for attest-verify
   --certificate-identity-regexp <re>   Keyless SAN pattern. Not with --certificate-identity
@@ -1829,6 +1840,52 @@ Examples:
   agent-receipt pr-comment --fail-on high --policy org.yml --json
   agent-receipt pr-comment --command attest-verify --certificate-identity https://github.com/org/repo --certificate-oidc-issuer https://token.actions.githubusercontent.com
   agent-receipt pr-comment --comment on-failure --comment-mode update
+`,
+
+  policy: `agent-receipt policy — declarative policy packs
+
+Usage:
+  agent-receipt policy list [--json]
+  agent-receipt policy show <pack> [--json]
+  agent-receipt policy lint <file> [--json]
+  agent-receipt policy test <pack> [receipts...] [--json]
+
+Packs are YAML or JSON (\`apiVersion: agent-receipt/policy/v1\`). A rule has
+\`id\`, \`description\`, \`severity\` (low, medium, high, critical), \`action\`
+(deny or warn), and \`match\`. Match keys cover commands, files, tools,
+adapters, network and package-install commands, exit codes, risk, agent,
+unsigned receipts, redaction disabled, and size or count limits. There is
+no Rego engine and no eval.
+
+Built-in packs: \`builtin:baseline\`, \`builtin:supply-chain\`,
+\`builtin:ci-protect\`, and \`builtin:strict\` (the other three, plus a
+signature requirement). \`extends\` composes packs. The same rule id later
+in the chain overrides the earlier one.
+
+\`.agent-receipt.yml\` may set \`policyPacks\` and \`policyExceptions\`
+(\`rule\`, \`path\`, \`reason\`, optional \`expires\`). An exception whose
+date is before today (UTC) does not suppress a hit and fails a gate that
+is using packs. \`doctor --strict\` fails on an invalid pack or an expired
+exception. Default doctor keeps that row at INFO.
+
+\`policy lint\` exits 1 on a schema error (unknown keys, duplicate ids, bad
+globs). \`policy test\` exits 2 when a deny hit or an expired exception
+matches, and 0 when there are only warnings or no hits. A missing pack
+exits 1. It never passes silently.
+
+\`--policy-pack\` on capture, wrap, share, verify, watch, and pr-comment
+repeats. Deny hits exit 2. Warn hits are reported. With no pack configured,
+those commands omit the policy keys and behave as before.
+
+\`--json\` prints one object (\`ok\`, \`command\`, \`action\`, \`version\`,
+\`exitCode\`).
+
+Examples:
+  agent-receipt policy list
+  agent-receipt policy show builtin:strict --json
+  agent-receipt policy lint policies/baseline.yml
+  agent-receipt policy test builtin:baseline
+  agent-receipt wrap --policy-pack builtin:baseline --json
 `,
 
   help: `agent-receipt help — show usage
@@ -1886,7 +1943,8 @@ Commands:
   log                    Alias for audit
   prune                  Delete old receipts under outDir (opt-in; trusted prune; --dry-run, --force). autoPrune runs this after capture/wrap/watch
   retain                 Alias for prune
-  doctor                 Health check (--json; --strict fails unset policy, unset retention, a broken audit chain, and an invalid trust store)
+  doctor                 Health check (--json; --strict fails unset policy, unset retention, a broken audit chain, an invalid trust store, an invalid policy pack, and an expired policy exception)
+  policy                 List, show, lint, and test policy packs (builtin:<name> or a file)
   compare [a] [b]        Diff two receipts (default: last vs previous)
   diff [a] [b]           Alias for compare
   install-hooks          Install opt-in post-commit capture hook

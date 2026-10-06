@@ -42,7 +42,7 @@ npm install -D @pramodreddyboddu/agent-receipt
 ## GitHub Action
 
 Gate a pull request with one `uses:` line. The action runs a pinned
-`agent-receipt` (`1.0.34` by default, never `latest`) and posts a sticky
+`agent-receipt` (`1.0.35` by default, never `latest`) and posts a sticky
 summary comment.
 
 ```yaml
@@ -61,6 +61,30 @@ steps:
 Policy, signed verify, and keyless `attest-verify` (`id-token: write` plus
 `pull-requests: write`) are in [`docs/github-action.md`](docs/github-action.md).
 Print the same summary locally with `agent-receipt pr-comment --dry-run`.
+Pass `policy-pack: builtin:baseline` (comma-separated) to evaluate packs in
+that same job.
+
+## Policy packs
+
+Declarative rules for the controls orgs already ask for: secret files,
+workflow edits, lockfiles, package installs, and a required signature.
+Packs are YAML or JSON (`apiVersion: agent-receipt/policy/v1`). Built-ins
+are `builtin:baseline`, `builtin:supply-chain`, `builtin:ci-protect`, and
+`builtin:strict`. `extends` composes them. Deny hits fail the gate (exit 2).
+Warn hits are reported only. A missing or invalid pack fails closed.
+
+```bash
+agent-receipt policy list
+agent-receipt policy show builtin:strict
+agent-receipt policy lint policies/baseline.yml
+agent-receipt wrap --policy-pack builtin:baseline --json
+```
+
+Per-repo defaults live in `.agent-receipt.yml` (`policyPacks`,
+`policyExceptions` with `rule`, `path`, `reason`, and an optional `expires`
+date). An expired exception does not suppress the hit. Full format:
+[`docs/policy-packs.md`](docs/policy-packs.md). Schema:
+[`docs/policy-pack.schema.json`](docs/policy-pack.schema.json).
 
 ## Hero path: `wrap` at session end
 
@@ -158,13 +182,14 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `attest [path\|last]` | in-toto Statement v1 inside a DSSE envelope (`.intoto.jsonl`). Subjects are the receipt and changed files. `--slsa` writes SLSA Provenance v1. `--verify` checks the signature, subject digests, and the hash-chain head. `export --format intoto` is the same writer |
 | `trust` | Known-keys allowlist: `list`, `show`, `add <fp>`, `add --self`, `rm <fp>` on `.agent-receipt/trusted-keys.txt`. `trust show` is read-only and reports whether the local key is listed. Not a CA |
 | `verify [path]` | Hash-check tamper-evident integrity. Default stays hash-only (unsigned receipts still pass). `--package` checks a `share --package` directory (manifest, file hashes, receipt, optional signatures). `--require-sig` requires a valid `*.sig.json` and, when a trust store is configured, a known fingerprint. `--json` includes `trailingIgnored` (boolean) |
-| `pr-comment` | Run `gate`, `verify`, or `attest-verify`, then print or post a redacted Markdown summary. `--dry-run` does not call GitHub. `--comment-mode update` keeps one sticky pull request comment |
+| `pr-comment` | Run `gate`, `verify`, or `attest-verify`, then print or post a redacted Markdown summary. `--dry-run` does not call GitHub. `--comment-mode update` keeps one sticky pull request comment. `--policy-pack` adds a Policy packs section |
+| `policy [list\|show\|lint\|test]` | Declarative policy packs. `builtin:<name>` or a file. Lint exits 1 on a schema error. Test exits 2 on a deny hit. `--json` for each |
 | `import <dir>` | Verify a share package, then copy `receipt.md` (and `receipt.sig.json` when present) into the local receipt store. `--dry-run` writes nothing. Not a local capture |
 | `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, an audit-log link, and signature status when a sidecar is present. `--json` adds `signature` (`trusted` is null when the allowlist is inactive). `--page` writes `foo.prove.md` (plain English; not itself signed). Config `failOn` is not applied |
 | `report [path\|last]` | Signed one-page HTML report. `report --session <id>` or `report <path/to/*.session>` covers a tree. `report verify <file.html> [more.html ...]` re-renders the page from the signed payload and requires the same bytes. The worst exit code wins |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
 | `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default). Trusted prune refuses the delete when the audit chain is broken (`--force` is break-glass). `autoPrune: true` or `--prune` runs that same path after capture, wrap, and watch (no `--force`; a broken chain warns and does not fail the capture) |
-| `doctor` | Health check plus a prod checklist (policy, audit, keys, trust, retention, autoPrune, hooks, redact, git clean, Cursor/Grok, adapters). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`), unset retention (`maxCount` / `maxAgeDays`), a broken audit chain, and an invalid trust store. A missing trust store stays INFO. The `adapters` row stays INFO and does not fail `--strict`. Unset `autoPrune` stays INFO and does not fail `--strict`. Default doctor still pressure-gates unset retention. Missing signing keys stay INFO |
+| `doctor` | Health check plus a prod checklist (policy, packs, audit, keys, trust, retention, autoPrune, hooks, redact, git clean, Cursor/Grok, adapters). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`), unset retention (`maxCount` / `maxAgeDays`), a broken audit chain, an invalid trust store, an invalid policy pack, and an expired policy exception. A missing trust store stays INFO. Unset packs stay INFO under `--strict`. The `adapters` row stays INFO and does not fail `--strict`. Unset `autoPrune` stays INFO and does not fail `--strict`. Default doctor still pressure-gates unset retention. Missing signing keys stay INFO |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
 | `diff [a] [b]` | Alias for `compare` |
 | `install-hooks` | Opt-in post-commit auto-capture (`--pre-push` optional) |
@@ -443,7 +468,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.34`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.35`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
