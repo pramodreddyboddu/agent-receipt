@@ -22,6 +22,8 @@
 # v1.0.33 left that live file unchanged for the same reason.
 # Keyless signing is docs/keyless.md only. This mirror does not call
 # the public Fulcio or Rekor services.
+# v1.0.34 left that live file unchanged for the same reason.
+# The published action is docs/github-action.md (a snippet, not this file).
 name: CI
 
 on:

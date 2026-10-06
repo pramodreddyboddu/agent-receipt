@@ -39,6 +39,29 @@ npm install -D @pramodreddyboddu/agent-receipt
 # or: npm install -D github:pramodreddyboddu/agent-receipt
 ```
 
+## GitHub Action
+
+Gate a pull request with one `uses:` line. The action runs a pinned
+`agent-receipt` (`1.0.34` by default, never `latest`) and posts a sticky
+summary comment.
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+
+steps:
+  - uses: actions/checkout@v4
+  - uses: pramodreddyboddu/agent-receipt@v1
+    with:
+      fail-on: high
+      comment: on
+```
+
+Policy, signed verify, and keyless `attest-verify` (`id-token: write` plus
+`pull-requests: write`) are in [`docs/github-action.md`](docs/github-action.md).
+Print the same summary locally with `agent-receipt pr-comment --dry-run`.
+
 ## Hero path: `wrap` at session end
 
 ```bash
@@ -135,6 +158,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `attest [path\|last]` | in-toto Statement v1 inside a DSSE envelope (`.intoto.jsonl`). Subjects are the receipt and changed files. `--slsa` writes SLSA Provenance v1. `--verify` checks the signature, subject digests, and the hash-chain head. `export --format intoto` is the same writer |
 | `trust` | Known-keys allowlist: `list`, `show`, `add <fp>`, `add --self`, `rm <fp>` on `.agent-receipt/trusted-keys.txt`. `trust show` is read-only and reports whether the local key is listed. Not a CA |
 | `verify [path]` | Hash-check tamper-evident integrity. Default stays hash-only (unsigned receipts still pass). `--package` checks a `share --package` directory (manifest, file hashes, receipt, optional signatures). `--require-sig` requires a valid `*.sig.json` and, when a trust store is configured, a known fingerprint. `--json` includes `trailingIgnored` (boolean) |
+| `pr-comment` | Run `gate`, `verify`, or `attest-verify`, then print or post a redacted Markdown summary. `--dry-run` does not call GitHub. `--comment-mode update` keeps one sticky pull request comment |
 | `import <dir>` | Verify a share package, then copy `receipt.md` (and `receipt.sig.json` when present) into the local receipt store. `--dry-run` writes nothing. Not a local capture |
 | `prove [path]` | Prove-this-run: same hash as `verify`, plus trailing content, risk, an audit-log link, and signature status when a sidecar is present. `--json` adds `signature` (`trusted` is null when the allowlist is inactive). `--page` writes `foo.prove.md` (plain English; not itself signed). Config `failOn` is not applied |
 | `report [path\|last]` | Signed one-page HTML report. `report --session <id>` or `report <path/to/*.session>` covers a tree. `report verify <file.html> [more.html ...]` re-renders the page from the signed payload and requires the same bytes. The worst exit code wins |
@@ -419,7 +443,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.33`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.34`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`

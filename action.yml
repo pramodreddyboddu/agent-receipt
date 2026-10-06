@@ -1,0 +1,221 @@
+# Marketplace composite action. One `uses:` line gates a pull request on
+# agent receipts and posts a sticky summary comment.
+#
+# This file is the published action. It is not a workflow. The copy-in
+# drop-in under examples/github/ is a different, older recipe.
+# Install is `npx --yes @pramodreddyboddu/agent-receipt@<exact version>`.
+# The default pin is 1.0.34. `latest` is rejected. The token is passed
+# only as GITHUB_TOKEN and is never printed.
+name: Agent Receipt
+description: >-
+  Gate a pull request on agent receipts and post a sticky summary comment.
+  Runs an exact pinned agent-receipt version, never latest.
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  version:
+    description: Exact agent-receipt version to run via npx (x.y.z). Never latest.
+    required: false
+    default: "1.0.34"
+  command:
+    description: gate (default), verify, or attest-verify.
+    required: false
+    default: gate
+  fail-on:
+    description: Risk threshold high, medium, or low. Empty lets gate default to high, or the policy file.
+    required: false
+    default: ""
+  policy:
+    description: Policy YAML (failOn, requireSignature). Empty skips --policy.
+    required: false
+    default: ""
+  receipts:
+    description: Receipt or attestation path, directory, or glob. Empty uses the receipt store.
+    required: false
+    default: ""
+  require-signature:
+    description: When true, pass --require-signature. true or false.
+    required: false
+    default: "false"
+  certificate-identity:
+    description: Keyless SAN passed to attest --verify --certificate-identity.
+    required: false
+    default: ""
+  certificate-identity-regexp:
+    description: Keyless SAN regexp passed to attest --verify. Do not set with certificate-identity.
+    required: false
+    default: ""
+  certificate-oidc-issuer:
+    description: Keyless OIDC issuer passed to attest --verify --certificate-oidc-issuer.
+    required: false
+    default: ""
+  comment:
+    description: on (default), off, or on-failure.
+    required: false
+    default: on
+  comment-mode:
+    description: update (sticky comment, default) or create (always a new comment).
+    required: false
+    default: update
+  github-token:
+    description: Token for the pull request comment. Never printed.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  verdict:
+    description: pass or fail. Empty only when the CLI result could not be read.
+    value: ${{ steps.gate.outputs.verdict }}
+  risk:
+    description: Max risk severity (high, medium, low) or none.
+    value: ${{ steps.gate.outputs.risk }}
+  receipts-count:
+    description: How many receipts or attestation files were checked.
+    value: ${{ steps.gate.outputs.receipts-count }}
+  summary-path:
+    description: Path of the Markdown summary file written by pr-comment.
+    value: ${{ steps.gate.outputs.summary-path }}
+  comment-url:
+    description: Pull request comment URL. Empty when no comment was posted.
+    value: ${{ steps.gate.outputs.comment-url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Gate agent receipts
+      id: gate
+      shell: bash
+      env:
+        AR_VERSION: ${{ inputs.version }}
+        AR_COMMAND: ${{ inputs.command }}
+        AR_FAIL_ON: ${{ inputs.fail-on }}
+        AR_POLICY: ${{ inputs.policy }}
+        AR_RECEIPTS: ${{ inputs.receipts }}
+        AR_REQUIRE_SIG: ${{ inputs.require-signature }}
+        AR_CERT_ID: ${{ inputs.certificate-identity }}
+        AR_CERT_RE: ${{ inputs.certificate-identity-regexp }}
+        AR_ISSUER: ${{ inputs.certificate-oidc-issuer }}
+        AR_COMMENT: ${{ inputs.comment }}
+        AR_COMMENT_MODE: ${{ inputs.comment-mode }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -eu
+        # Exact pin only. npx @pramodreddyboddu/agent-receipt@<x.y.z>. Never latest.
+        case "${AR_VERSION:-}" in
+          ''|latest|*latest*)
+            echo "agent-receipt version must be an exact x.y.z pin. Never latest." >&2
+            exit 1
+            ;;
+        esac
+        if ! printf '%s\n' "$AR_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          echo "agent-receipt version must be an exact x.y.z pin. Never latest." >&2
+          exit 1
+        fi
+        case "${AR_COMMAND:-}" in
+          gate|verify|attest-verify) ;;
+          *)
+            echo "command must be gate, verify, or attest-verify" >&2
+            exit 1
+            ;;
+        esac
+        case "${AR_FAIL_ON:-}" in
+          ''|high|medium|low) ;;
+          *)
+            echo "fail-on must be high, medium, or low" >&2
+            exit 1
+            ;;
+        esac
+        case "${AR_COMMENT:-}" in
+          on|off|on-failure) ;;
+          *)
+            echo "comment must be on, off, or on-failure" >&2
+            exit 1
+            ;;
+        esac
+        case "${AR_COMMENT_MODE:-}" in
+          update|create) ;;
+          *)
+            echo "comment-mode must be update or create" >&2
+            exit 1
+            ;;
+        esac
+        case "${AR_REQUIRE_SIG:-}" in
+          true|false) ;;
+          *)
+            echo "require-signature must be true or false" >&2
+            exit 1
+            ;;
+        esac
+        if [ -n "${AR_CERT_ID:-}" ] && [ -n "${AR_CERT_RE:-}" ]; then
+          echo "set only one of certificate-identity and certificate-identity-regexp" >&2
+          exit 1
+        fi
+        if [ -n "${GITHUB_WORKSPACE:-}" ]; then
+          cd "$GITHUB_WORKSPACE"
+        fi
+        work="${RUNNER_TEMP:-/tmp}"
+        json="$work/agent-receipt-pr-comment.json"
+        summary="$work/agent-receipt-summary.md"
+        args=(pr-comment --command "$AR_COMMAND" --comment "$AR_COMMENT" --comment-mode "$AR_COMMENT_MODE" --out "$summary" --json)
+        if [ -n "${AR_FAIL_ON:-}" ]; then
+          args+=(--fail-on "$AR_FAIL_ON")
+        fi
+        if [ -n "${AR_POLICY:-}" ]; then
+          args+=(--policy "$AR_POLICY")
+        fi
+        if [ -n "${AR_RECEIPTS:-}" ]; then
+          args+=(--receipts "$AR_RECEIPTS")
+        fi
+        if [ "$AR_REQUIRE_SIG" = "true" ]; then
+          args+=(--require-signature)
+        fi
+        if [ -n "${AR_CERT_ID:-}" ]; then
+          args+=(--certificate-identity "$AR_CERT_ID")
+        fi
+        if [ -n "${AR_CERT_RE:-}" ]; then
+          args+=(--certificate-identity-regexp "$AR_CERT_RE")
+        fi
+        if [ -n "${AR_ISSUER:-}" ]; then
+          args+=(--certificate-oidc-issuer "$AR_ISSUER")
+        fi
+        set +e
+        npx --yes "@pramodreddyboddu/agent-receipt@${AR_VERSION}" "${args[@]}" > "$json"
+        code=$?
+        set -e
+        set +e
+        node - "$json" <<'NODE'
+        const fs = require('fs');
+        function emit(key, value) {
+          const gh = process.env.GITHUB_OUTPUT;
+          if (!gh) return;
+          const val = value == null ? '' : String(value).replace(/[\r\n]/g, '');
+          fs.appendFileSync(gh, key + '=' + val + '\n');
+        }
+        let parsed = null;
+        try {
+          const text = fs.readFileSync(process.argv[2], 'utf8');
+          const lines = text.split(/\n/).map((line) => line.trim()).filter((line) => line.startsWith('{') && line.endsWith('}'));
+          if (!lines.length) throw new Error('no json');
+          parsed = JSON.parse(lines[lines.length - 1]);
+        } catch (err) {
+          emit('verdict', 'fail');
+          emit('risk', '');
+          emit('receipts-count', '');
+          emit('summary-path', '');
+          emit('comment-url', '');
+          process.exit(0);
+        }
+        const risk = parsed.risk && parsed.risk.maxSeverity ? parsed.risk.maxSeverity : 'none';
+        const verdict = parsed.verdict === 'pass' || parsed.verdict === 'fail' ? parsed.verdict : 'fail';
+        emit('verdict', verdict);
+        emit('risk', risk);
+        emit('receipts-count', parsed.receiptsCount == null ? '' : String(parsed.receiptsCount));
+        emit('summary-path', parsed.summaryPath || '');
+        emit('comment-url', parsed.commentUrl || '');
+        process.exit(0);
+        NODE
+        set -e
+        exit "$code"

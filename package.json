@@ -1,6 +1,6 @@
 {
   "name": "@pramodreddyboddu/agent-receipt",
-  "version": "1.0.33",
+  "version": "1.0.34",
   "description": "One-shot, tamper-evident git receipts for AI coding agent sessions — wrap, verify, share",
   "type": "module",
   "bin": {
