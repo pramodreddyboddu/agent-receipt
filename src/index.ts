@@ -28,6 +28,7 @@ export { cmdImport } from './commands/import.js';
 export { cmdProve } from './commands/prove.js';
 export { cmdReport, cmdReportVerify } from './commands/report.js';
 export { cmdAttest, cmdAttestVerify, printAttestError } from './commands/attest.js';
+export { cmdPrComment, printPrCommentError } from './commands/pr-comment.js';
 export {
   DSSE_PAYLOAD_TYPE,
   dssePae,

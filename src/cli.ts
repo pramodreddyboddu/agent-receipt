@@ -35,6 +35,8 @@ import { cmdTrust } from './commands/trust.js';
 import { cmdReport, cmdReportVerify } from './commands/report.js';
 import { cmdAdapters } from './commands/adapters.js';
 import { cmdAttest, cmdAttestVerify, printAttestError } from './commands/attest.js';
+import { cmdPrComment, printPrCommentError } from './commands/pr-comment.js';
+import { parseCommentMode, parseCommentWhen, parseMode } from './lib/pr-summary.js';
 
 const JSON_GATE_COMMANDS = new Set(['capture', 'wrap', 'share', 'verify', 'import']);
 
@@ -993,6 +995,80 @@ export async function run(argv: string[] = process.argv): Promise<number> {
       case 'compare':
       case 'diff':
         return cmdCompare(cwd, positional[0], positional[1]);
+      case 'pr-comment': {
+        const known = new Set([
+          'cwd',
+          'json',
+          'dry-run',
+          'out',
+          'o',
+          'command',
+          'mode',
+          'fail-on',
+          'policy',
+          'receipts',
+          'require-sig',
+          'require-signature',
+          'certificate-identity',
+          'certificate-identity-regexp',
+          'certificate-oidc-issuer',
+          'trusted-root',
+          'comment',
+          'comment-mode',
+          'repo',
+          'pr',
+          'api-url',
+          'event',
+          'event-path',
+        ]);
+        for (const key of Object.keys(flags)) {
+          if (!known.has(key)) {
+            throw new Error(
+              `Unknown flag: --${key}. pr-comment accepts --command, --receipts, --fail-on, --policy, --require-signature, --comment, --comment-mode, --dry-run, --out, --json, --repo, --pr, --api-url, and --event-path.`,
+            );
+          }
+        }
+        if (positional.length) {
+          throw new Error('pr-comment does not take a positional path. Use --receipts <path-or-glob>.');
+        }
+        const modeFlag = flags.command !== undefined ? flags.command : flags.mode;
+        if (modeFlag === true) throw new Error('--command must be gate, verify, or attest-verify');
+        const commandMode = parseMode(typeof modeFlag === 'string' ? modeFlag : undefined);
+        const commentFlag = flags.comment;
+        if (commentFlag === true) throw new Error('--comment must be on, off, or on-failure');
+        const comment = parseCommentWhen(commentFlag === undefined ? undefined : commentFlag);
+        const commentMode = parseCommentMode(flags['comment-mode']);
+        const prRaw = flags.pr;
+        let pr: number | undefined;
+        if (prRaw !== undefined) {
+          if (typeof prRaw !== 'string' || !/^[1-9][0-9]*$/.test(prRaw)) {
+            throw new Error('--pr must be an integer >= 1');
+          }
+          pr = parseInt(prRaw, 10);
+        }
+        const explicitFail = flags['fail-on'] !== undefined;
+        const failOn = explicitFail ? parseFailOn(flags['fail-on']) : undefined;
+        return await cmdPrComment(cwd, {
+          command: commandMode,
+          receipts: flagOptionalString(flags, 'receipts'),
+          failOn,
+          policy: flagOptionalString(flags, 'policy'),
+          requireSignature: flagBool(flags, 'require-sig', 'require-signature'),
+          certificateIdentity: flagOptionalString(flags, 'certificate-identity'),
+          certificateIdentityRegexp: flagOptionalString(flags, 'certificate-identity-regexp'),
+          certificateOidcIssuer: flagOptionalString(flags, 'certificate-oidc-issuer'),
+          trustedRoot: flagOptionalString(flags, 'trusted-root'),
+          comment,
+          commentMode,
+          dryRun: flagBool(flags, 'dry-run'),
+          out: flagProveOut(flags),
+          json: flagBool(flags, 'json'),
+          repo: flagOptionalString(flags, 'repo'),
+          pr,
+          apiUrl: flagOptionalString(flags, 'api-url'),
+          eventPath: flagOptionalString(flags, 'event-path') || flagOptionalString(flags, 'event'),
+        });
+      }
       case 'install-hooks':
         if (flagBool(flags, 'uninstall')) {
           cmdUninstallHooks(cwd, { prePush: flagBool(flags, 'pre-push') });
@@ -1032,6 +1108,8 @@ export async function run(argv: string[] = process.argv): Promise<number> {
       printKeygenError(msg);
     } else if (command === 'sign' && flagBool(flags, 'json')) {
       printSignError(msg);
+    } else if (command === 'pr-comment' && flagBool(flags, 'json')) {
+      printPrCommentError(msg);
     } else if (command && JSON_GATE_COMMANDS.has(command) && flagBool(flags, 'json')) {
       printGate(errorGate(command, msg));
     } else {

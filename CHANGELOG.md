@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.34] — 2026-10-06
+
+### Added
+
+- Root [`action.yml`](action.yml) is a composite GitHub Action (`runs.using: composite`) with branding. One `uses:` line gates a pull request on agent receipts. Inputs include `version` (default `1.0.34`, installed with `npx` of that exact version, never `latest`), `command` (`gate`, `verify`, or `attest-verify`), `fail-on`, `policy`, `receipts`, `require-signature`, keyless `certificate-identity` / `certificate-identity-regexp` / `certificate-oidc-issuer` (passed through to `attest --verify`), `comment` (`on`, `off`, or `on-failure`), `comment-mode` (`update` or `create`), and `github-token`. Outputs are `verdict`, `risk`, `receipts-count`, `summary-path`, and `comment-url`. The step exits non-zero when the gate fails. Invalid inputs exit 1 before `npx`.
+- `agent-receipt pr-comment` renders a short Markdown summary (verdict, risk, receipts checked, policy hits, signature or keyless status, hash-chain head, share packages). `--dry-run` prints it. `--out` writes it. `--json` prints one object. The same Markdown is appended to `GITHUB_STEP_SUMMARY` when that variable is set. Text is redacted with the existing secret masks before it is printed, written, or posted.
+- Posting uses the GitHub REST API and global `fetch`. `<!-- agent-receipt:summary -->` marks the sticky comment. `--comment-mode update` patches that comment. `create` posts a new one. Repository, pull request number, and API URL come from `GITHUB_REPOSITORY`, `GITHUB_EVENT_PATH`, and `GITHUB_API_URL`, with `--repo`, `--pr`, `--api-url`, and `--event-path` overrides. The token is `GITHUB_TOKEN` and is never printed. HTTP 403 and 404 (a fork pull request with a read-only token) warn and fall back to the step summary without changing the gate exit code. Network errors do the same. A missing pull request context fails clearly unless `--dry-run` or `--comment off` is set.
+- [`docs/github-action.md`](docs/github-action.md) has usage snippets (basic gate, policy and fail-on, signed and keyless verify) and a Marketplace checklist (release tag, major tag `v1`, listing). Those snippets are not installed as workflows.
+
+### Changed
+
+- Package version bumped to `1.0.34`.
+- [`README.md`](README.md) and CLI help document the action and `pr-comment`. Pin comments that track the current cut are `v1.0.34`.
+
+### Notes
+
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. `pr-comment` uses `node:fs` and global `fetch` only. This is not a certificate authority.
+- Still deferred: policy packs, a local web viewer, full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
+
 ## [1.0.33] — 2026-10-06
 
 ### Added

@@ -1765,6 +1765,72 @@ Examples:
   agent-receipt uninstall-hooks --pre-push
 `,
 
+  'pr-comment': `agent-receipt pr-comment — pull request summary of a receipt gate
+
+Usage:
+  agent-receipt pr-comment [--command gate|verify|attest-verify] [--receipts <path-or-glob>] [--fail-on high|medium|low] [--policy <file>] [--require-signature] [--comment on|off|on-failure] [--comment-mode update|create] [--dry-run] [--out <file>] [--json]
+
+Runs the check, then renders one Markdown summary (verdict, risk, receipts
+checked, policy hits, signature or keyless status, hash-chain head, share
+packages). Every line is passed through the same secret redaction as share.
+The summary is appended to GITHUB_STEP_SUMMARY when that variable is set.
+
+\`--dry-run\` prints the summary and does not call GitHub. \`--out\` writes
+the same Markdown. \`--json\` prints one object on stdout (the summary is
+a field). Exit 0 is pass, 2 is a failed gate, 1 is a usage error.
+
+\`--command gate\` (default) verifies every receipt and fails on high risk
+unless \`--fail-on\` or the policy file sets another threshold. \`verify\`
+is integrity-first and applies \`--fail-on\` only when you pass it or the
+policy sets \`failOn\`. \`attest-verify\` runs \`attest --verify\` on each
+attestation. \`--certificate-identity\` (or \`--certificate-identity-regexp\`)
+and \`--certificate-oidc-issuer\` are passed through for a Sigstore bundle.
+Missing identity or issuer exits 1.
+
+\`--comment\` defaults to \`on\`. \`on-failure\` posts only when the verdict
+is fail. \`off\` does not post. \`--comment-mode update\` (default) finds
+the comment whose body contains \`<!-- agent-receipt:summary -->\` and
+patches it. \`create\` always posts a new comment. Repo, pull request
+number, and API URL come from GITHUB_REPOSITORY, GITHUB_EVENT_PATH, and
+GITHUB_API_URL. \`--repo\`, \`--pr\`, \`--api-url\`, and \`--event-path\`
+override those. The token is GITHUB_TOKEN and is never printed.
+
+A missing pull request context fails with a clear error unless \`--dry-run\`
+(or \`--comment off\`) is set. HTTP 403 and 404, and network errors, write
+the summary to the step summary and do not change the gate exit code.
+Fork pull requests often have a read-only token; that is the 403 case.
+
+No receipts matched fails the gate (exit 2). A missing \`--policy\` file
+or an invalid \`--command\` exits 1. An empty match is not a pass.
+
+Options:
+  --command <mode>       gate (default), verify, or attest-verify. Alias: --mode
+  --receipts <path>      File, directory, or glob. Default: the receipt store
+  --fail-on <level>      high, medium, or low. gate defaults to high
+  --policy <file>        YAML with failOn and requireSignature. Flag wins
+  --require-signature    Require a valid sidecar (alias: --require-sig)
+  --certificate-identity <id>          Keyless SAN for attest-verify
+  --certificate-identity-regexp <re>   Keyless SAN pattern. Not with --certificate-identity
+  --certificate-oidc-issuer <url>      Keyless issuer for attest-verify
+  --trusted-root <file>  Sigstore trusted_root.json for attest-verify
+  --comment <when>       on (default), off, or on-failure
+  --comment-mode <how>   update (sticky, default) or create
+  --dry-run              Print the summary. Do not call GitHub
+  --out <file>           Write the summary Markdown
+  --repo <owner/name>    Override GITHUB_REPOSITORY
+  --pr <number>          Override the pull request number
+  --api-url <url>        Override GITHUB_API_URL
+  --event-path <file>    Override GITHUB_EVENT_PATH
+  --json                 One JSON object on stdout
+  --cwd <path>           Run as if started in this directory
+
+Examples:
+  agent-receipt pr-comment --dry-run
+  agent-receipt pr-comment --fail-on high --policy org.yml --json
+  agent-receipt pr-comment --command attest-verify --certificate-identity https://github.com/org/repo --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  agent-receipt pr-comment --comment on-failure --comment-mode update
+`,
+
   help: `agent-receipt help — show usage
 
 Usage:
@@ -1812,6 +1878,7 @@ Commands:
   attest [path|last]     in-toto Statement v1 in a DSSE envelope (.intoto.jsonl). --keyless writes a Sigstore bundle. attest --verify checks either
   trust                  Known-keys allowlist: list, show, add <fp>, add --self, rm <fp>
   verify [path]          Hash-check integrity (hash-only; --package checks a share dir; --require-sig opts in)
+  pr-comment             Gate summary as a sticky pull request comment (--dry-run, --json)
   import <dir>           Verify a share package, then copy receipt.md into outDir
   report [path|last]     Signed one-page HTML report (or report verify <file.html>)
   prove [path]           Prove-this-run: verify + audit link + signature status (--page writes foo.prove.md, --html writes foo.prove.html)
@@ -1882,6 +1949,8 @@ Examples:
   agent-receipt verify --package foo.share
   agent-receipt import foo.share
   agent-receipt verify --require-sig
+  agent-receipt pr-comment --dry-run
+  agent-receipt pr-comment --fail-on high --comment on
   agent-receipt trust list
   agent-receipt trust show
   agent-receipt prove
