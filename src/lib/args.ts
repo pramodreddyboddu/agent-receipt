@@ -33,13 +33,18 @@ export function parseArgs(argv: string[]): ParsedArgs {
     'no-sign',
     'slsa',
     'keyless',
+    'open',
+    'allow-remote',
   ]);
-  // Repeatable flags are joined with commas (`--trusted-key a --trusted-key b`).
+  // `--trusted-key` repeats join with commas. `--policy-pack` repeats join
+  // with a unit separator so a comma in one value stays visible and is rejected.
   const repeatable = new Set(['trusted-key', 'policy-pack']);
+  const POLICY_PACK_SEP = '\u001f';
 
   const assignFlag = (key: string, value: string | boolean): void => {
     if (typeof value === 'string' && repeatable.has(key) && typeof flags[key] === 'string') {
-      flags[key] = `${flags[key]},${value}`;
+      const sep = key === 'policy-pack' ? POLICY_PACK_SEP : ',';
+      flags[key] = `${flags[key]}${sep}${value}`;
       return;
     }
     flags[key] = value;

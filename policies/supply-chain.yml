@@ -1,6 +1,6 @@
 apiVersion: agent-receipt/policy/v1
 name: supply-chain
-description: Lockfiles, dependency manifests, package installs, and publish commands.
+description: Lockfiles, dependency manifests, package installs, publish commands, and PowerShell download pipes.
 rules:
   - id: lockfiles
     description: Deny lockfile changes.
@@ -43,3 +43,10 @@ rules:
     action: deny
     match:
       publish: true
+  - id: powershell-download-pipe
+    description: Deny PowerShell download commands piped to Invoke-Expression.
+    severity: critical
+    action: deny
+    match:
+      command:
+        - '/(?:^|&&|\|\||;|\|)\s*(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^|\n]*\|\s*(?:iex|Invoke-Expression)\b/i'

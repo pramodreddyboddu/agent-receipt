@@ -117,7 +117,7 @@ function receiptFiles(dir) {
   }
 }
 
-describe('v1.0.35 policy packs', { concurrency: 1 }, () => {
+describe('v1.0.36 policy packs', { concurrency: 1 }, () => {
   after(() => {
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
   });
@@ -131,7 +131,7 @@ describe('v1.0.35 policy packs', { concurrency: 1 }, () => {
     assert.equal(body.command, 'policy');
     assert.equal(body.action, 'list');
     assert.equal(body.exitCode, 0);
-    assert.equal(body.version, '1.0.35');
+    assert.equal(body.version, '1.0.36');
     const names = body.packs.map((pack) => pack.name);
     assert.deepEqual(names, ['baseline', 'supply-chain', 'ci-protect', 'strict']);
     for (const pack of body.packs) {
@@ -171,7 +171,7 @@ describe('v1.0.35 policy packs', { concurrency: 1 }, () => {
     assert.equal(strict.action, 'show');
     assert.equal(strict.name, 'strict');
     assert.deepEqual(strict.extends, ['builtin:baseline', 'builtin:supply-chain', 'builtin:ci-protect']);
-    assert.equal(strict.rules.length, 11);
+    assert.equal(strict.rules.length, 12);
     const ids = strict.rules.map((rule) => rule.id);
     assert.equal(new Set(ids).size, ids.length);
     const byId = Object.fromEntries(strict.rules.map((rule) => [rule.id, rule]));
@@ -707,7 +707,7 @@ rules:
 
   it('documents the action input, schema, and package pins', () => {
     const action = readFileSync(join(root, 'action.yml'), 'utf8');
-    assert.match(action, /default: "1\.0\.35"/);
+    assert.match(action, /default: "1\.0\.36"/);
     assert.match(action, /^ {2}policy-pack:/m);
     assert.match(action, /AR_POLICY_PACK/);
     assert.match(action, /--policy-pack/);
@@ -734,7 +734,7 @@ rules:
       env: {
         ...process.env,
         PATH: `${binDir}:${process.env.PATH}`,
-        AR_VERSION: '1.0.35',
+        AR_VERSION: '1.0.36',
         AR_COMMAND: 'gate',
         AR_FAIL_ON: '',
         AR_POLICY: '',
@@ -766,11 +766,11 @@ rules:
     assert.match(docs, /policyExceptions/);
     assert.match(docs, /fails closed/i);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.35');
+    assert.equal(pkg.version, '1.0.36');
     assert.equal(pkg.dependencies, undefined);
     assert.ok(pkg.files.includes('policies'));
-    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.35/);
-    assert.match(readFileSync(join(root, 'CHANGELOG.md'), 'utf8'), /## \[1\.0\.35\]/);
+    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.36/);
+    assert.match(readFileSync(join(root, 'CHANGELOG.md'), 'utf8'), /## \[1\.0\.36\]/);
     assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /Policy packs/);
     const help = cli(root, ['help', 'policy']);
     assert.equal(help.code, 0, help.err);

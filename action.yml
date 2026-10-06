@@ -4,7 +4,7 @@
 # This file is the published action. It is not a workflow. The copy-in
 # drop-in under examples/github/ is a different, older recipe.
 # Install is `npx --yes @pramodreddyboddu/agent-receipt@<exact version>`.
-# The default pin is 1.0.35. `latest` is rejected. The token is passed
+# The default pin is 1.0.36. `latest` is rejected. The token is passed
 # only as GITHUB_TOKEN and is never printed.
 name: Agent Receipt
 description: >-
@@ -19,7 +19,7 @@ inputs:
   version:
     description: Exact agent-receipt version to run via npx (x.y.z). Never latest.
     required: false
-    default: "1.0.35"
+    default: "1.0.36"
   command:
     description: gate (default), verify, or attest-verify.
     required: false
@@ -117,7 +117,7 @@ runs:
             exit 1
             ;;
         esac
-        if ! printf '%s\n' "$AR_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+        if ! printf '%s\n' "$AR_VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
           echo "agent-receipt version must be an exact x.y.z pin. Never latest." >&2
           exit 1
         fi
