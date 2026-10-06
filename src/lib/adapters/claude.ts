@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { applyProjectFile, assertSafeProjectPath, restoreAdapter } from './backup.js';
+import { applyProjectFile, applyUninstallPlan, assertSafeProjectPath, planAdapterUninstall, projectRoot, strippedResult } from './backup.js';
 import { wrapHookScript } from './hook-script.js';
-import { isOurCommand, jsonText, projectPath, readJsonObject } from './json-config.js';
+import { hookCommand, isOurCommand, jsonText, projectPath, readJsonObject, requireEventArray, requireHookObject } from './json-config.js';
 import {
   eventsFromCalls,
   exitStatuses,
@@ -17,7 +17,7 @@ import type { AgentAdapter, InstallOptions, InstallResult, ParseResult, Uninstal
 export const CLAUDE_SETTINGS_REL = '.claude/settings.json';
 export const CLAUDE_RULE_REL = '.claude/rules/agent-receipt.md';
 export const CLAUDE_SCRIPT_REL = '.claude/hooks/agent-receipt-wrap.sh';
-export const CLAUDE_COMMAND = `sh ${CLAUDE_SCRIPT_REL}`;
+export const CLAUDE_COMMAND = hookCommand(CLAUDE_SCRIPT_REL);
 const RULE_MARKER = '<!-- agent-receipt:claude-rule -->';
 
 export const CLAUDE_RULE_MD = `${RULE_MARKER}
@@ -48,8 +48,8 @@ function groupHasOurs(group: unknown): boolean {
   return Array.isArray(doc) && doc.some((hook) => isOurCommand((hook as { command?: unknown })?.command));
 }
 
-function mergeEvent(existing: unknown, command: string): unknown[] {
-  const groups = hookGroups(existing);
+function mergeEvent(existing: unknown, command: string, rel: string, event: string): unknown[] {
+  const groups = requireEventArray(existing, rel, event);
   if (groups.some((group) => groupHasOurs(group))) return groups;
   groups.push({ hooks: [{ type: 'command', command, timeout: 120 }] });
   return groups;
@@ -88,15 +88,12 @@ function settingsText(cwd: string, opts?: InstallOptions): string {
   const parsed = readJsonObject(filePath, CLAUDE_SETTINGS_REL);
   if (!parsed.ok) throw new Error(parsed.reason);
   const root = parsed.value;
-  const hooks =
-    root.hooks && typeof root.hooks === 'object' && !Array.isArray(root.hooks)
-      ? { ...(root.hooks as Record<string, unknown>) }
-      : {};
+  const hooks = requireHookObject(root.hooks, CLAUDE_SETTINGS_REL);
   for (const event of eventsToInstall(opts)) {
-    hooks[event] = mergeEvent(hooks[event], CLAUDE_COMMAND);
+    hooks[event] = mergeEvent(hooks[event], CLAUDE_COMMAND, CLAUDE_SETTINGS_REL, event);
   }
   root.hooks = hooks;
-  return jsonText(root);
+  return jsonText(root, parsed.indent);
 }
 
 function chmodScript(path: string, dryRun: boolean): void {
@@ -113,6 +110,81 @@ function fromApplies(applies: Array<{ path: string; changed: boolean }>): Instal
     files: applies.map((item) => item.path),
     changed: applies.filter((item) => item.changed).map((item) => item.path),
   };
+}
+
+function matchesRel(stored: string, rel: string): boolean {
+  return stored === rel || stored.endsWith(`/${rel}`);
+}
+
+function stripSettings(cwd: string, rel: string, dryRun: boolean): { path: string; changed: boolean } | null {
+  const filePath = projectPath(projectRoot(cwd), rel);
+  assertSafeProjectPath(projectRoot(cwd), filePath);
+  if (!existsSync(filePath)) return { path: filePath, changed: false };
+  const parsed = readJsonObject(filePath, rel);
+  if (!parsed.ok) throw new Error(parsed.reason);
+  const root = parsed.value;
+  const hooks =
+    root.hooks && typeof root.hooks === 'object' && !Array.isArray(root.hooks)
+      ? { ...(root.hooks as Record<string, unknown>) }
+      : null;
+  if (!hooks) return { path: filePath, changed: false };
+  let touched = false;
+  for (const event of ['SessionEnd', 'Stop']) {
+    if (!hookGroups(hooks[event]).some((group) => groupHasOurs(group))) continue;
+    const next = stripEvent(hooks[event]);
+    touched = true;
+    if (next.length === 0) delete hooks[event];
+    else hooks[event] = next;
+  }
+  if (!touched) return { path: filePath, changed: false };
+  if (Object.keys(hooks).length === 0) delete root.hooks;
+  else root.hooks = hooks;
+  const next = Object.keys(root).length === 0 ? null : jsonText(root, parsed.indent);
+  return applyProjectFile(cwd, 'claude-code', rel, next, { dryRun, backup: false, stored: true });
+}
+
+function stripOwned(cwd: string, rel: string): { path: string; changed: boolean } {
+  return { path: projectPath(projectRoot(cwd), rel), changed: false };
+}
+
+function stripInstalled(cwd: string, dryRun: boolean): InstallResult {
+  const applies = [];
+  const filePath = projectPath(cwd, CLAUDE_SETTINGS_REL);
+  assertSafeProjectPath(cwd, filePath);
+  if (existsSync(filePath)) {
+    const parsed = readJsonObject(filePath, CLAUDE_SETTINGS_REL);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    const root = parsed.value;
+    const hooks =
+      root.hooks && typeof root.hooks === 'object' && !Array.isArray(root.hooks)
+        ? { ...(root.hooks as Record<string, unknown>) }
+        : null;
+    if (hooks) {
+      let touched = false;
+      for (const event of ['SessionEnd', 'Stop']) {
+        if (!hookGroups(hooks[event]).some((group) => groupHasOurs(group))) continue;
+        const next = stripEvent(hooks[event]);
+        touched = true;
+        if (next.length === 0) delete hooks[event];
+        else hooks[event] = next;
+      }
+      if (touched) {
+        if (Object.keys(hooks).length === 0) delete root.hooks;
+        else root.hooks = hooks;
+        const next = Object.keys(root).length === 0 ? null : jsonText(root, parsed.indent);
+        applies.push(applyProjectFile(cwd, 'claude-code', CLAUDE_SETTINGS_REL, next, { dryRun, backup: false }));
+      }
+    }
+  }
+  for (const rel of [CLAUDE_RULE_REL, CLAUDE_SCRIPT_REL]) {
+    const path = projectPath(cwd, rel);
+    assertSafeProjectPath(cwd, path);
+    if (!existsSync(path)) continue;
+    const text = readFileSync(path, 'utf8');
+    if (!text.includes('agent-receipt')) continue;
+    applies.push(applyProjectFile(cwd, 'claude-code', rel, null, { dryRun, backup: false }));
+  }
+  return strippedResult(applies);
 }
 
 export const claudeAdapter: AgentAdapter = {
@@ -160,45 +232,15 @@ export const claudeAdapter: AgentAdapter = {
   },
   uninstall(cwd: string, opts?: UninstallOptions): InstallResult {
     const dryRun = Boolean(opts?.dryRun);
-    const restored = restoreAdapter(cwd, 'claude-code', dryRun);
-    if (restored.hadBackup) return { files: restored.files, changed: restored.changed };
-    const applies = [];
-    const filePath = projectPath(cwd, CLAUDE_SETTINGS_REL);
-    assertSafeProjectPath(cwd, filePath);
-    if (existsSync(filePath)) {
-      const parsed = readJsonObject(filePath, CLAUDE_SETTINGS_REL);
-      if (!parsed.ok) throw new Error(parsed.reason);
-      const root = parsed.value;
-      const hooks =
-        root.hooks && typeof root.hooks === 'object' && !Array.isArray(root.hooks)
-          ? { ...(root.hooks as Record<string, unknown>) }
-          : null;
-      if (hooks) {
-        let touched = false;
-        for (const event of ['SessionEnd', 'Stop']) {
-          if (!hookGroups(hooks[event]).some((group) => groupHasOurs(group))) continue;
-          const next = stripEvent(hooks[event]);
-          touched = true;
-          if (next.length === 0) delete hooks[event];
-          else hooks[event] = next;
-        }
-        if (touched) {
-          if (Object.keys(hooks).length === 0) delete root.hooks;
-          else root.hooks = hooks;
-          const next = Object.keys(root).length === 0 ? null : jsonText(root);
-          applies.push(applyProjectFile(cwd, 'claude-code', CLAUDE_SETTINGS_REL, next, { dryRun, backup: false }));
-        }
-      }
+    const plan = planAdapterUninstall(cwd, 'claude-code', Boolean(opts?.force));
+    if (plan.hadBackup) {
+      return applyUninstallPlan(cwd, 'claude-code', plan, dryRun, (entry) => {
+        if (matchesRel(entry.rel, CLAUDE_SETTINGS_REL)) return stripSettings(cwd, entry.rel, dryRun);
+        if (matchesRel(entry.rel, CLAUDE_RULE_REL) || matchesRel(entry.rel, CLAUDE_SCRIPT_REL)) return stripOwned(cwd, entry.rel);
+        return null;
+      });
     }
-    for (const rel of [CLAUDE_RULE_REL, CLAUDE_SCRIPT_REL]) {
-      const path = projectPath(cwd, rel);
-      assertSafeProjectPath(cwd, path);
-      if (!existsSync(path)) continue;
-      const text = readFileSync(path, 'utf8');
-      if (!text.includes('agent-receipt')) continue;
-      applies.push(applyProjectFile(cwd, 'claude-code', rel, null, { dryRun, backup: false }));
-    }
-    return fromApplies(applies);
+    return stripInstalled(cwd, dryRun);
   },
   parseTranscript(filePath: string, cwd?: string): ParseResult {
     const loaded = readTranscriptText(filePath);

@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { applyProjectFile, assertSafeProjectPath, restoreAdapter } from './backup.js';
+import { applyProjectFile, applyUninstallPlan, assertSafeProjectPath, planAdapterUninstall, projectRoot, strippedResult } from './backup.js';
 import { wrapHookScript } from './hook-script.js';
-import { isOurCommand, jsonText, projectPath, readJsonObject } from './json-config.js';
+import { hookCommand, isOurCommand, jsonText, projectPath, readJsonObject, requireEventArray, requireHookObject } from './json-config.js';
 import {
   eventsFromCalls,
   exitStatuses,
@@ -17,7 +17,7 @@ import type { AgentAdapter, InstallOptions, InstallResult, ParseResult, Uninstal
 export const CODEX_HOOKS_REL = '.codex/hooks.json';
 export const CODEX_SCRIPT_REL = '.codex/hooks/agent-receipt-wrap.sh';
 export const CODEX_AGENTS_REL = 'AGENTS.md';
-export const CODEX_COMMAND = `sh ${CODEX_SCRIPT_REL}`;
+export const CODEX_COMMAND = hookCommand(CODEX_SCRIPT_REL);
 const START = '<!-- agent-receipt:codex:start -->';
 const END = '<!-- agent-receipt:codex:end -->';
 
@@ -30,7 +30,7 @@ This repo uses **agent-receipt**. When a session changes files, run wrap yoursel
 agent-receipt wrap --agent codex --redact --message "<one-line summary>"
 \`\`\`
 
-\`agent-receipt init --codex\` installs a project Stop hook (\`.codex/hooks.json\`) that runs that wrap only when the tree is dirty and passes \`--transcript\` when Codex sends \`transcript_path\`. Codex has no SessionEnd event in the documented hook list, so Stop is the end-of-turn hook. Enable \`features.hooks\` in Codex config, and trust the project hooks. The hook exits 0. This block is the project instruction; it does not replace AGENTS.md content outside these markers.
+\`agent-receipt init --codex\` installs project SessionEnd and Stop hooks (\`.codex/hooks.json\`) that run that wrap only when the tree is dirty and pass \`--transcript\` when Codex sends \`transcript_path\`. SessionEnd runs when the main thread ends. \`--no-stop\` keeps SessionEnd only. Enable \`features.hooks\` in Codex config, and trust the project hooks. The hook exits 0. This block is the project instruction; it does not replace AGENTS.md content outside these markers.
 
 Do not commit \`.env\`, private keys, or tokens.
 ${END}
@@ -50,8 +50,13 @@ function groupHasOurs(group: unknown): boolean {
   return Array.isArray(doc) && doc.some((hook) => isOurCommand((hook as { command?: unknown })?.command));
 }
 
-function mergeStop(existing: unknown): unknown[] {
-  const groups = hookGroups(existing);
+function eventsToInstall(opts?: InstallOptions): string[] {
+  if (opts?.stop === false) return ['SessionEnd'];
+  return ['SessionEnd', 'Stop'];
+}
+
+function mergeEvent(existing: unknown, rel: string, event: string): unknown[] {
+  const groups = requireEventArray(existing, rel, event);
   if (groups.some((group) => groupHasOurs(group))) return groups;
   groups.push({ hooks: [{ type: 'command', command: CODEX_COMMAND, timeout: 120 }] });
   return groups;
@@ -90,14 +95,57 @@ function stripAgents(text: string): string {
   return text.replace(re, '\n').replace(/\n{3,}/g, '\n\n');
 }
 
-function hasStop(cwd: string): boolean {
+function hasOurEvent(cwd: string, event: string): boolean {
   const filePath = projectPath(cwd, CODEX_HOOKS_REL);
   if (!existsSync(filePath)) return false;
   const parsed = readJsonObject(filePath, CODEX_HOOKS_REL);
   if (!parsed.ok) return false;
   const hooks = parsed.value.hooks;
   const doc = hooks && typeof hooks === 'object' ? (hooks as Record<string, unknown>) : {};
-  return hookGroups(doc.Stop).some((group) => groupHasOurs(group));
+  return hookGroups(doc[event]).some((group) => groupHasOurs(group));
+}
+
+function matchesRel(stored: string, rel: string): boolean {
+  return stored === rel || stored.endsWith(`/${rel}`);
+}
+
+function stripHooksFile(cwd: string, rel: string, dryRun: boolean, stored: boolean): { path: string; changed: boolean } | null {
+  const root = stored ? projectRoot(cwd) : cwd;
+  const filePath = projectPath(root, rel);
+  assertSafeProjectPath(projectRoot(cwd), filePath);
+  if (!existsSync(filePath)) return { path: filePath, changed: false };
+  const parsed = readJsonObject(filePath, rel);
+  if (!parsed.ok) throw new Error(parsed.reason);
+  const doc = parsed.value;
+  const hooks =
+    doc.hooks && typeof doc.hooks === 'object' && !Array.isArray(doc.hooks)
+      ? { ...(doc.hooks as Record<string, unknown>) }
+      : null;
+  if (!hooks) return { path: filePath, changed: false };
+  let touched = false;
+  for (const event of ['SessionEnd', 'Stop']) {
+    if (!hookGroups(hooks[event]).some((group) => groupHasOurs(group))) continue;
+    const next = stripStop(hooks[event]);
+    touched = true;
+    if (next.length === 0) delete hooks[event];
+    else hooks[event] = next;
+  }
+  if (!touched) return { path: filePath, changed: false };
+  if (Object.keys(hooks).length === 0) delete doc.hooks;
+  else doc.hooks = hooks;
+  const text = Object.keys(doc).length === 0 ? null : jsonText(doc, parsed.indent);
+  return applyProjectFile(cwd, 'codex', rel, text, { dryRun, backup: false, stored });
+}
+
+function stripAgentsFile(cwd: string, rel: string, dryRun: boolean, stored: boolean): { path: string; changed: boolean } | null {
+  const root = stored ? projectRoot(cwd) : cwd;
+  const filePath = projectPath(root, rel);
+  assertSafeProjectPath(projectRoot(cwd), filePath);
+  if (!existsSync(filePath)) return { path: filePath, changed: false };
+  const text = readFileSync(filePath, 'utf8');
+  if (!text.includes(START)) return { path: filePath, changed: false };
+  const next = stripAgents(text).trim();
+  return applyProjectFile(cwd, 'codex', rel, next ? `${next}\n` : null, { dryRun, backup: false, stored });
 }
 
 function hasRule(cwd: string): boolean {
@@ -112,16 +160,19 @@ export const codexAdapter: AgentAdapter = {
     return existsSync(projectPath(cwd, '.codex')) || existsSync(projectPath(cwd, 'AGENTS.md')) || commandOnPath('codex');
   },
   status(cwd: string) {
-    const hook = hasStop(cwd);
+    const sessionEnd = hasOurEvent(cwd, 'SessionEnd');
+    const stop = hasOurEvent(cwd, 'Stop');
+    const hook = sessionEnd || stop;
     const rule = hasRule(cwd);
     const installed = hook || rule;
     const status = hook && rule ? 'full' : installed ? 'partial' : 'absent';
+    const hookDetail = sessionEnd && stop ? 'SessionEnd + Stop hooks' : sessionEnd ? 'SessionEnd hook' : 'Stop hook';
     const detail = !installed
       ? 'not installed (agent-receipt init --codex)'
       : hook && rule
-        ? 'Stop hook + AGENTS.md block'
+        ? `${hookDetail} + AGENTS.md block`
         : hook
-          ? 'Stop hook only'
+          ? `${hookDetail} only`
           : 'AGENTS.md block only';
     return { name: 'codex', detected: this.detect(cwd), installed, status, detail };
   },
@@ -132,11 +183,10 @@ export const codexAdapter: AgentAdapter = {
     const parsed = readJsonObject(hooksPath, CODEX_HOOKS_REL);
     if (!parsed.ok) throw new Error(parsed.reason);
     const root = parsed.value;
-    const hooks =
-      root.hooks && typeof root.hooks === 'object' && !Array.isArray(root.hooks)
-        ? { ...(root.hooks as Record<string, unknown>) }
-        : {};
-    hooks.Stop = mergeStop(hooks.Stop);
+    const hooks = requireHookObject(root.hooks, CODEX_HOOKS_REL);
+    for (const event of eventsToInstall(opts)) {
+      hooks[event] = mergeEvent(hooks[event], CODEX_HOOKS_REL, event);
+    }
     root.hooks = hooks;
     const agentsPath = projectPath(cwd, CODEX_AGENTS_REL);
     assertSafeProjectPath(cwd, agentsPath);
@@ -144,7 +194,7 @@ export const codexAdapter: AgentAdapter = {
     const agentsNext = upsertAgents(previous);
     const agentsText = agentsNext.endsWith('\n') ? agentsNext : `${agentsNext}\n`;
     const applies = [
-      applyProjectFile(cwd, 'codex', CODEX_HOOKS_REL, jsonText(root), { dryRun }),
+      applyProjectFile(cwd, 'codex', CODEX_HOOKS_REL, jsonText(root, parsed.indent), { dryRun }),
       applyProjectFile(cwd, 'codex', CODEX_SCRIPT_REL, wrapHookScript('codex'), { dryRun }),
       applyProjectFile(cwd, 'codex', CODEX_AGENTS_REL, agentsText, { dryRun }),
     ];
@@ -162,49 +212,26 @@ export const codexAdapter: AgentAdapter = {
   },
   uninstall(cwd: string, opts?: UninstallOptions): InstallResult {
     const dryRun = Boolean(opts?.dryRun);
-    const restored = restoreAdapter(cwd, 'codex', dryRun);
-    if (restored.hadBackup) return { files: restored.files, changed: restored.changed };
-    const applies = [];
-    const filePath = projectPath(cwd, CODEX_HOOKS_REL);
-    assertSafeProjectPath(cwd, filePath);
-    if (existsSync(filePath)) {
-      const parsed = readJsonObject(filePath, CODEX_HOOKS_REL);
-      if (!parsed.ok) throw new Error(parsed.reason);
-      const root = parsed.value;
-      const hooks =
-        root.hooks && typeof root.hooks === 'object' && !Array.isArray(root.hooks)
-          ? { ...(root.hooks as Record<string, unknown>) }
-          : null;
-      if (hooks && hookGroups(hooks.Stop).some((group) => groupHasOurs(group))) {
-        const next = stripStop(hooks.Stop);
-        if (next.length === 0) delete hooks.Stop;
-        else hooks.Stop = next;
-        if (Object.keys(hooks).length === 0) delete root.hooks;
-        else root.hooks = hooks;
-        const text = Object.keys(root).length === 0 ? null : jsonText(root);
-        applies.push(applyProjectFile(cwd, 'codex', CODEX_HOOKS_REL, text, { dryRun, backup: false }));
-      }
+    const plan = planAdapterUninstall(cwd, 'codex', Boolean(opts?.force));
+    if (plan.hadBackup) {
+      return applyUninstallPlan(cwd, 'codex', plan, dryRun, (entry) => {
+        if (matchesRel(entry.rel, CODEX_HOOKS_REL)) return stripHooksFile(cwd, entry.rel, dryRun, true);
+        if (matchesRel(entry.rel, CODEX_AGENTS_REL)) return stripAgentsFile(cwd, entry.rel, dryRun, true);
+        if (matchesRel(entry.rel, CODEX_SCRIPT_REL)) return { path: projectPath(projectRoot(cwd), entry.rel), changed: false };
+        return null;
+      });
     }
+    const applies = [];
+    const hooks = stripHooksFile(cwd, CODEX_HOOKS_REL, dryRun, false);
+    if (hooks?.changed) applies.push(hooks);
     const script = projectPath(cwd, CODEX_SCRIPT_REL);
     assertSafeProjectPath(cwd, script);
     if (existsSync(script) && readFileSync(script, 'utf8').includes('agent-receipt')) {
       applies.push(applyProjectFile(cwd, 'codex', CODEX_SCRIPT_REL, null, { dryRun, backup: false }));
     }
-    const agents = projectPath(cwd, CODEX_AGENTS_REL);
-    assertSafeProjectPath(cwd, agents);
-    if (existsSync(agents)) {
-      const text = readFileSync(agents, 'utf8');
-      if (text.includes(START)) {
-        const next = stripAgents(text).trim();
-        applies.push(
-          applyProjectFile(cwd, 'codex', CODEX_AGENTS_REL, next ? `${next}\n` : null, { dryRun, backup: false }),
-        );
-      }
-    }
-    return {
-      files: applies.map((item) => item.path),
-      changed: applies.filter((item) => item.changed).map((item) => item.path),
-    };
+    const agents = stripAgentsFile(cwd, CODEX_AGENTS_REL, dryRun, false);
+    if (agents?.changed) applies.push(agents);
+    return strippedResult(applies);
   },
   parseTranscript(filePath: string, cwd?: string): ParseResult {
     const loaded = readTranscriptText(filePath);

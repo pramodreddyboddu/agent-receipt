@@ -109,11 +109,11 @@ For frequent commits, prefer `agent-receipt install-hooks` (set
 
 Suggested flags: `--agent claude-code`, `--transcript <file>`, `--session <id>`, `--since HEAD@{upstream}`.
 
-Tool calls in the transcript, including MCP (`mcp__server__tool`, CallMcpTool, JSON-RPC `tools/call`), are stored in `## Tool calls` and redacted even when `--redact` is off.
+Tool calls in the transcript, including MCP (`mcp__server__tool`, CallMcpTool, JSON-RPC `tools/call`), are stored in `## Tool calls` and redacted even when `--redact` is off. Arguments are redacted key by key, then with the secret patterns, a high-entropy pass, and internal hosts. The companion JSON `toolCalls` object is not covered by the receipt hash or the Ed25519 sidecar. Trust the hashed section. Omit `--adapter` and the transcript is sniffed.
 
 ## Codex
 
-**Best path:** `agent-receipt init --codex` (or `agent-receipt adapters install codex`) writes `.codex/hooks.json` (Stop) and a marked block in `AGENTS.md`. Codex has no SessionEnd in its documented hook list, so Stop stays when you pass `--no-stop`.
+**Best path:** `agent-receipt init --codex` (or `agent-receipt adapters install codex`) writes `.codex/hooks.json` (SessionEnd and Stop) and a marked block in `AGENTS.md`. SessionEnd runs when the main thread ends. `--no-stop` keeps SessionEnd only.
 
 ```bash
 agent-receipt wrap --agent codex --redact --transcript session.jsonl --message "codex: wrap-up"

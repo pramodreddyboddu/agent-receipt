@@ -8,8 +8,8 @@ import {
   GROK_WRAP_SCRIPT,
   GROK_WRAP_SCRIPT_REL,
 } from '../grok-rule.js';
-import { applyProjectFile, assertSafeProjectPath, restoreAdapter } from './backup.js';
-import { isOurCommand, jsonText, projectPath, readJsonObject } from './json-config.js';
+import { applyProjectFile, applyUninstallPlan, assertSafeProjectPath, planAdapterUninstall, projectRoot, strippedResult } from './backup.js';
+import { hookCommand, isOurCommand, jsonText, projectPath, readJsonObject, requireEventArray, requireHookObject } from './json-config.js';
 import {
   eventsFromCalls,
   eventsFromGrokMarkdown,
@@ -21,7 +21,7 @@ import {
 } from './parse-common.js';
 import type { AgentAdapter, InstallOptions, InstallResult, ParseResult, UninstallOptions } from './types.js';
 
-const GROK_COMMAND = 'sh .grok/hooks/agent-receipt-wrap.sh';
+const GROK_COMMAND = hookCommand(GROK_WRAP_SCRIPT_REL);
 
 function commandOnPath(name: string): boolean {
   const result = spawnSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' });
@@ -43,7 +43,7 @@ function groupHasOurs(group: unknown): boolean {
 }
 
 function mergeSessionEnd(existing: unknown): unknown[] {
-  const groups = hookGroups(existing);
+  const groups = requireEventArray(existing, GROK_HOOK_REL, 'SessionEnd');
   if (groups.some((group) => groupHasOurs(group))) return groups;
   groups.push({ hooks: [{ type: 'command', command: GROK_COMMAND, timeout: 120 }] });
   return groups;
@@ -62,13 +62,42 @@ function hookText(cwd: string): string {
   const parsed = readJsonObject(filePath, GROK_HOOK_REL);
   if (!parsed.ok) throw new Error(parsed.reason);
   const root = parsed.value;
+  const hooks = requireHookObject(root.hooks, GROK_HOOK_REL);
+  hooks.SessionEnd = mergeSessionEnd(hooks.SessionEnd);
+  root.hooks = hooks;
+  return jsonText(root, parsed.indent);
+}
+
+function stripGrokHook(cwd: string, rel: string, dryRun: boolean): { path: string; changed: boolean } | null {
+  const filePath = projectPath(projectRoot(cwd), rel);
+  assertSafeProjectPath(projectRoot(cwd), filePath);
+  if (!existsSync(filePath)) return { path: filePath, changed: false };
+  const parsed = readJsonObject(filePath, rel);
+  if (!parsed.ok) throw new Error(parsed.reason);
+  const root = parsed.value;
   const hooks =
     root.hooks && typeof root.hooks === 'object' && !Array.isArray(root.hooks)
       ? { ...(root.hooks as Record<string, unknown>) }
-      : {};
-  hooks.SessionEnd = mergeSessionEnd(hooks.SessionEnd);
-  root.hooks = hooks;
-  return jsonText(root);
+      : null;
+  if (!hooks || !hookGroups(hooks.SessionEnd).some((group) => groupHasOurs(group))) {
+    return { path: filePath, changed: false };
+  }
+  const next = hookGroups(hooks.SessionEnd)
+    .map((group) => {
+      if (!group || typeof group !== 'object') return group;
+      const raw = (group as { hooks?: unknown }).hooks;
+      if (!Array.isArray(raw)) return group;
+      const kept = raw.filter((hook) => !isOurCommand((hook as { command?: unknown })?.command));
+      if (kept.length === 0) return null;
+      return { ...(group as Record<string, unknown>), hooks: kept };
+    })
+    .filter((group) => group !== null);
+  if (next.length === 0) delete hooks.SessionEnd;
+  else hooks.SessionEnd = next;
+  if (Object.keys(hooks).length === 0) delete root.hooks;
+  else root.hooks = hooks;
+  const text = Object.keys(root).length === 0 ? null : jsonText(root, parsed.indent);
+  return applyProjectFile(cwd, 'grok', rel, text, { dryRun, backup: false, stored: true });
 }
 
 export const grokAdapter: AgentAdapter = {
@@ -112,8 +141,15 @@ export const grokAdapter: AgentAdapter = {
   },
   uninstall(cwd: string, opts?: UninstallOptions): InstallResult {
     const dryRun = Boolean(opts?.dryRun);
-    const restored = restoreAdapter(cwd, 'grok', dryRun);
-    if (restored.hadBackup) return { files: restored.files, changed: restored.changed };
+    const plan = planAdapterUninstall(cwd, 'grok', Boolean(opts?.force));
+    if (plan.hadBackup) {
+      return applyUninstallPlan(cwd, 'grok', plan, dryRun, (entry) => {
+        if (entry.rel === GROK_HOOK_REL || entry.rel.endsWith(`/${GROK_HOOK_REL}`)) {
+          return stripGrokHook(cwd, entry.rel, dryRun);
+        }
+        return { path: projectPath(projectRoot(cwd), entry.rel), changed: false };
+      });
+    }
     const applies = [];
     const files: Array<[string, string]> = [
       [GROK_RULE_REL, GROK_RULE_MD],
@@ -124,10 +160,7 @@ export const grokAdapter: AgentAdapter = {
       if (!owned(rel, expected, cwd)) continue;
       applies.push(applyProjectFile(cwd, 'grok', rel, null, { dryRun, backup: false }));
     }
-    return {
-      files: applies.map((item) => item.path),
-      changed: applies.filter((item) => item.changed).map((item) => item.path),
-    };
+    return strippedResult(applies);
   },
   parseTranscript(filePath: string, cwd?: string): ParseResult {
     const loaded = readTranscriptText(filePath);

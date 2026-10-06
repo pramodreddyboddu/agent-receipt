@@ -1581,7 +1581,7 @@ describe('v1.0.30 signed one-page report', () => {
     copyFileSync(made.sigPath, `${html}.sig.json`);
     const text = cliResult(other, ['report', 'verify', html]);
     assert.equal(text.code, 0, text.out + text.err);
-    assert.match(text.out, /^VERIFIED \(payload only; 1 receipts not checked\)  report verify/m);
+    assert.match(text.out, /^VERIFIED \(payload only; 1 receipt not checked\)  report verify/m);
     assert.doesNotMatch(text.out, /^VERIFIED  report verify/m);
     const json = cliResult(other, ['report', 'verify', html, '--json']);
     assert.equal(json.code, 0, json.out + json.err);
@@ -1683,7 +1683,7 @@ describe('v1.0.30 signed one-page report', () => {
     assert.equal(body.verdict, 'VERIFIED_PAYLOAD_ONLY');
     assert.equal(body.notChecked, 1);
     const text = cliResult(away, ['report', 'verify', html]);
-    assert.match(text.out, /^VERIFIED \(payload only; 1 receipts not checked\)  report verify/m);
+    assert.match(text.out, /^VERIFIED \(payload only; 1 receipt not checked\)  report verify/m);
     assert.doesNotMatch(text.out, /^VERIFIED  report verify/m);
   });
 

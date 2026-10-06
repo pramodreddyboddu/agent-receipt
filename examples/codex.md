@@ -1,6 +1,6 @@
 # Codex integration
 
-Install the project Stop hook once. Codex has no SessionEnd in its documented hook list. The `AGENTS.md` block is marked and does not replace text outside those markers. Uninstall restores the previous bytes.
+Install the project SessionEnd and Stop hooks once. SessionEnd runs when the main thread ends. `--no-stop` keeps SessionEnd only. The `AGENTS.md` block is marked and does not replace text outside those markers. Uninstall restores the previous bytes when the file is unchanged, and strips only the agent-receipt block when it is not.
 
 ```bash
 agent-receipt init --codex

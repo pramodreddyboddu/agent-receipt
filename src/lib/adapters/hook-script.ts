@@ -26,16 +26,55 @@ fi
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$root" || exit 0
 
-if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
+# Ignore the receipt out dir and the store files wrap itself writes.
+# --untracked-files=all lists files inside an untracked directory instead of
+# one collapsed "?? .agent-receipt/" line, which would keep every Stop dirty.
+outdirs=".agent-receipt/receipts"
+if [ -f .agent-receipt.yml ]; then
+  cfg=$(sed -n 's/^outDir:[[:space:]]*//p' .agent-receipt.yml | head -n 1)
+  cfg=$(printf '%s' "$cfg" | tr -d '"' | tr -d "'" | sed 's:/*$::')
+  if [ -n "$cfg" ]; then
+    outdirs="$cfg"
+  fi
+fi
+dirty=$(git status --porcelain=v1 --untracked-files=all 2>/dev/null | while IFS= read -r line; do
+  path=\${line#???}
+  case "\$path" in
+    *" -> "*) path=\${path##* -> } ;;
+  esac
+  case "\$path" in
+    "\$outdirs"|"\$outdirs"/*|.agent-receipt/index.json|.agent-receipt/audit.jsonl|.agent-receipt/resign-provenance.json)
+      ;;
+    *)
+      printf '%s\\n' "\$line"
+      ;;
+  esac
+done)
+if [ -z "$dirty" ]; then
   exit 0
 fi
 
 run_wrap() {
-  if [ -n "$transcript" ] && [ -f "$transcript" ]; then
-    "$@" wrap --agent ${agent} --redact --transcript "$transcript" || exit 0
-  else
-    "$@" wrap --agent ${agent} --redact || exit 0
+  if command -v timeout >/dev/null 2>&1 && timeout 1 true >/dev/null 2>&1; then
+    if [ -n "$transcript" ] && [ -f "$transcript" ]; then
+      timeout 120 "$@" wrap --agent ${agent} --redact --transcript "$transcript" >/dev/null 2>&1 || true
+    else
+      timeout 120 "$@" wrap --agent ${agent} --redact >/dev/null 2>&1 || true
+    fi
+    return 0
   fi
+  if [ -n "$transcript" ] && [ -f "$transcript" ]; then
+    "$@" wrap --agent ${agent} --redact --transcript "$transcript" >/dev/null 2>&1 &
+  else
+    "$@" wrap --agent ${agent} --redact >/dev/null 2>&1 &
+  fi
+  pid=$!
+  # \`sleep && kill\`: a missing sleep must not fall through and kill wrap.
+  ( sleep 120 && kill "$pid" 2>/dev/null ) &
+  killer=$!
+  wait "$pid" 2>/dev/null || true
+  kill "$killer" 2>/dev/null || true
+  wait "$killer" 2>/dev/null || true
 }
 
 if command -v agent-receipt >/dev/null 2>&1; then

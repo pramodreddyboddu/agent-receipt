@@ -68,7 +68,7 @@ describe('init --grok', { concurrency: false }, () => {
     const hookJson = JSON.parse(readFileSync(hook, 'utf8'));
     const cmd = hookJson.hooks.SessionEnd[0].hooks[0];
     assert.equal(cmd.type, 'command');
-    assert.equal(cmd.command, 'sh .grok/hooks/agent-receipt-wrap.sh');
+    assert.equal(cmd.command, 'sh "$(git rev-parse --show-toplevel)/.grok/hooks/agent-receipt-wrap.sh"');
     assert.equal(cmd.timeout, 120);
     assert.match(GROK_RULE_MD, /wrap --agent grok --redact/);
     assert.match(GROK_RULE_MD, /--uncommitted/);

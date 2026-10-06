@@ -359,11 +359,11 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         });
         return 0;
       case 'adapters': {
-        const adapterFlags = new Set(['cwd', 'json', 'dry-run', 'stop', 'no-stop']);
+        const adapterFlags = new Set(['cwd', 'json', 'dry-run', 'stop', 'no-stop', 'force']);
         for (const key of Object.keys(flags)) {
           if (!adapterFlags.has(key)) {
             throw new Error(
-              `Unknown flag: --${key}. adapters accepts --json, --dry-run, --stop, --no-stop, and --cwd.`,
+              `Unknown flag: --${key}. adapters accepts --json, --dry-run, --stop, --no-stop, --force, and --cwd.`,
             );
           }
         }
@@ -386,6 +386,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           json: flagBool(flags, 'json'),
           dryRun: flagBool(flags, 'dry-run'),
           stop,
+          force: flagBool(flags, 'force'),
         });
       }
       case 'capture': {

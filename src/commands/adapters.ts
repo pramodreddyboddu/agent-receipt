@@ -15,6 +15,8 @@ export interface AdaptersOptions {
    * Omit to keep the adapter default (SessionEnd and Stop).
    */
   stop?: boolean;
+  /** Uninstall writes the snapshot back even when the user edited the file. */
+  force?: boolean;
 }
 
 function showPath(cwd: string, filePath: string): string {
@@ -61,13 +63,14 @@ function runOne(cwd: string, adapter: AgentAdapter, opts: AdaptersOptions, actio
   if (action === 'install') {
     return adapter.install(cwd, { dryRun: opts.dryRun, stop: opts.stop });
   }
-  return adapter.uninstall(cwd, { dryRun: opts.dryRun });
+  return adapter.uninstall(cwd, { dryRun: opts.dryRun, force: opts.force });
 }
 
 /**
  * `list` and `status` print detection. `install` merges each agent's project
- * hook and keeps a pre-install backup. `uninstall` restores that backup.
- * `--dry-run` writes nothing.
+ * hook and keeps a pre-install backup. `uninstall` restores that backup when
+ * the file still matches the post-install hash, and otherwise strips only
+ * our hooks unless `--force` is set. `--dry-run` writes nothing.
  */
 export function cmdAdapters(cwd: string, opts: AdaptersOptions = {}): number {
   const action = opts.action ?? 'list';
@@ -79,6 +82,8 @@ export function cmdAdapters(cwd: string, opts: AdaptersOptions = {}): number {
       name: adapter.name,
       files: result.files.map((file) => showPath(cwd, file)),
       changed: (result.changed ?? []).map((file) => showPath(cwd, file)),
+      verbs: (result.verbs ?? []).map((item) => ({ path: showPath(cwd, item.path), verb: item.verb })),
+      userChanged: (result.userChanged ?? []).map((file) => showPath(cwd, file)),
     };
   });
   if (opts.json) {
@@ -96,24 +101,22 @@ export function cmdAdapters(cwd: string, opts: AdaptersOptions = {}): number {
   for (const result of results) {
     console.log(`${verb} ${result.name}`);
     const changed = new Set(result.changed);
+    const verbs = new Map(result.verbs.map((item) => [item.path, item.verb]));
     const rows = result.files.length ? result.files : result.changed;
+    if (opts.dryRun && result.userChanged.length) console.log('  would discard user changes');
     if (!rows.length) {
       console.log('  unchanged');
       continue;
     }
     for (const file of rows) {
+      const verb = verbs.get(file);
       const mark = changed.has(file);
-      const label = opts.dryRun
-        ? mark
-          ? action === 'uninstall'
-            ? 'would restore'
-            : 'would write'
-          : 'unchanged'
-        : mark
-          ? action === 'uninstall'
-            ? 'restored'
-            : 'wrote'
-          : 'unchanged';
+      let label: string;
+      if (verb === 'unchanged' || (!verb && !mark)) label = 'unchanged';
+      else if (verb === 'stripped') label = opts.dryRun ? 'would strip' : 'stripped';
+      else if (verb === 'restored') label = opts.dryRun ? 'would restore' : 'restored';
+      else if (opts.dryRun) label = action === 'uninstall' ? 'would restore' : 'would write';
+      else label = action === 'uninstall' ? 'restored' : 'wrote';
       console.log(`  ${label} ${file}`);
     }
   }

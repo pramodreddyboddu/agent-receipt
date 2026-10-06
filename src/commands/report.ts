@@ -381,8 +381,10 @@ function buildOne(
     review: show(section(shown, '## What to review')),
     commits: show(section(shown, '## Commits')),
     diffs: show(section(shown, '## Diff summaries').split('\n').slice(0, 40).join('\n')),
-    toolCalls: section(shown, '## Tool calls') ? show(section(shown, '## Tool calls')) : '',
   };
+  const toolBody = section(shown, '## Tool calls');
+  const toolCalls = toolBody ? show(toolBody) : '';
+  if (toolCalls) payload.toolCalls = toolCalls;
   return {
     payload,
     node: {
@@ -1053,11 +1055,16 @@ function storeCatalog(cwd: string, receipt: ReportReceiptPayload): StoreCatalog 
     if (newestCapture) {
       const pruneTs = eventTime(newestPrune?.ts);
       const captureTs = eventTime(newestCapture.ts);
-      if (
-        !Number.isFinite(pruneTs) ||
-        !Number.isFinite(captureTs) ||
-        captureTs - pruneTs > PRUNE_BEFORE_CAPTURE_SKEW_MS
-      ) {
+      if (!Number.isFinite(pruneTs) || !Number.isFinite(captureTs)) {
+        return {
+          listed: false,
+          pruned: false,
+          unreadable,
+          pruneInvalid: `receipt ${receipt.id} prune timestamp is not a date`,
+          pruneWarn: null,
+        };
+      }
+      if (captureTs - pruneTs > PRUNE_BEFORE_CAPTURE_SKEW_MS) {
         return {
           listed: false,
           pruned: false,
@@ -1205,6 +1212,10 @@ function shownVerdict(result: ReportVerifyResult): ReportVerifyVerdict | null {
   return result.verdict;
 }
 
+function receiptCountLabel(count: number): string {
+  return `${count} ${count === 1 ? 'receipt' : 'receipts'} not checked`;
+}
+
 function verdictLabel(
   verdict: ReportVerifyVerdict | null,
   notChecked: number,
@@ -1212,10 +1223,10 @@ function verdictLabel(
 ): string {
   if (exitCode !== 0 && verdict === 'UNSIGNED') return 'FAILED (unsigned)';
   if (verdict === 'UNSIGNED' && exitCode === 0 && notChecked > 0) {
-    return `UNSIGNED (${notChecked} receipts not checked)`;
+    return `UNSIGNED (${receiptCountLabel(notChecked)})`;
   }
   if (verdict === 'VERIFIED_PAYLOAD_ONLY') {
-    return `VERIFIED (payload only; ${notChecked} receipts not checked)`;
+    return `VERIFIED (payload only; ${receiptCountLabel(notChecked)})`;
   }
   return verdict ?? 'FAILED';
 }

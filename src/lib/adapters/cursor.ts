@@ -1,9 +1,9 @@
 import { chmodSync, existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { CURSOR_RULE_MDC, CURSOR_RULE_REL } from '../cursor-rule.js';
-import { applyProjectFile, assertSafeProjectPath, restoreAdapter } from './backup.js';
+import { applyProjectFile, applyUninstallPlan, assertSafeProjectPath, planAdapterUninstall, projectRoot, strippedResult } from './backup.js';
 import { wrapHookScript } from './hook-script.js';
-import { isOurCommand, jsonText, projectPath, readJsonObject } from './json-config.js';
+import { hookCommand, isOurCommand, jsonText, projectPath, readJsonObject, requireEventArray, requireHookObject } from './json-config.js';
 import {
   eventsFromCalls,
   exitStatuses,
@@ -17,7 +17,7 @@ import type { AgentAdapter, InstallOptions, InstallResult, ParseResult, Uninstal
 
 export const CURSOR_HOOKS_REL = '.cursor/hooks.json';
 export const CURSOR_SCRIPT_REL = '.cursor/hooks/agent-receipt-wrap.sh';
-export const CURSOR_COMMAND = `sh ${CURSOR_SCRIPT_REL}`;
+export const CURSOR_COMMAND = hookCommand(CURSOR_SCRIPT_REL);
 
 function commandOnPath(name: string): boolean {
   const result = spawnSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' });
@@ -32,10 +32,10 @@ function hasOurs(list: unknown): boolean {
   return entries(list).some((entry) => isOurCommand((entry as { command?: unknown })?.command));
 }
 
-function mergeEntries(existing: unknown, command: string): unknown[] {
-  const list = entries(existing);
+function mergeEntries(existing: unknown, command: string, rel: string, event: string): unknown[] {
+  const list = requireEventArray(existing, rel, event);
   if (list.some((entry) => isOurCommand((entry as { command?: unknown })?.command))) return list;
-  list.push({ command });
+  list.push({ command, timeout: 120 });
   return list;
 }
 
@@ -53,6 +53,40 @@ function hookMap(cwd: string): Record<string, unknown> | null {
   return hooks as Record<string, unknown>;
 }
 
+function stripCursorHooks(
+  cwd: string,
+  rel: string,
+  dryRun: boolean,
+  stored: boolean,
+): { path: string; changed: boolean } | null {
+  const root = stored ? projectRoot(cwd) : cwd;
+  const filePath = projectPath(root, rel);
+  assertSafeProjectPath(projectRoot(cwd), filePath);
+  if (!existsSync(filePath)) return { path: filePath, changed: false };
+  const parsed = readJsonObject(filePath, rel);
+  if (!parsed.ok) throw new Error(parsed.reason);
+  const doc = parsed.value;
+  const hooks =
+    doc.hooks && typeof doc.hooks === 'object' && !Array.isArray(doc.hooks)
+      ? { ...(doc.hooks as Record<string, unknown>) }
+      : null;
+  if (!hooks) return { path: filePath, changed: false };
+  let touched = false;
+  for (const event of ['sessionEnd', 'stop']) {
+    if (!hasOurs(hooks[event])) continue;
+    const next = stripEntries(hooks[event]);
+    touched = true;
+    if (next.length === 0) delete hooks[event];
+    else hooks[event] = next;
+  }
+  if (!touched) return { path: filePath, changed: false };
+  if (Object.keys(hooks).length === 0) delete doc.hooks;
+  else doc.hooks = hooks;
+  const versionOnly = Object.keys(doc).length === 1 && doc.version !== undefined && !doc.hooks;
+  const text = Object.keys(doc).length === 0 || versionOnly ? null : jsonText(doc, parsed.indent);
+  return applyProjectFile(cwd, 'cursor', rel, text, { dryRun, backup: false, stored });
+}
+
 export const cursorAdapter: AgentAdapter = {
   name: 'cursor',
   detect(cwd: string): boolean {
@@ -67,7 +101,7 @@ export const cursorAdapter: AgentAdapter = {
     const detail = !installed
       ? 'not installed (agent-receipt init --cursor)'
       : rule && hook
-        ? 'rule + sessionEnd hook'
+        ? 'rule + sessionEnd and stop hooks'
         : rule
           ? 'rule only'
           : 'sessionEnd hook only';
@@ -81,16 +115,13 @@ export const cursorAdapter: AgentAdapter = {
     if (!parsed.ok) throw new Error(parsed.reason);
     const root = parsed.value;
     if (root.version === undefined) root.version = 1;
-    const hooks =
-      root.hooks && typeof root.hooks === 'object' && !Array.isArray(root.hooks)
-        ? { ...(root.hooks as Record<string, unknown>) }
-        : {};
-    hooks.sessionEnd = mergeEntries(hooks.sessionEnd, CURSOR_COMMAND);
-    if (opts?.stop !== false) hooks.stop = mergeEntries(hooks.stop, CURSOR_COMMAND);
+    const hooks = requireHookObject(root.hooks, CURSOR_HOOKS_REL);
+    hooks.sessionEnd = mergeEntries(hooks.sessionEnd, CURSOR_COMMAND, CURSOR_HOOKS_REL, 'sessionEnd');
+    if (opts?.stop !== false) hooks.stop = mergeEntries(hooks.stop, CURSOR_COMMAND, CURSOR_HOOKS_REL, 'stop');
     root.hooks = hooks;
     const applies = [
       applyProjectFile(cwd, 'cursor', CURSOR_RULE_REL, CURSOR_RULE_MDC, { dryRun }),
-      applyProjectFile(cwd, 'cursor', CURSOR_HOOKS_REL, jsonText(root), { dryRun }),
+      applyProjectFile(cwd, 'cursor', CURSOR_HOOKS_REL, jsonText(root, parsed.indent), { dryRun }),
       applyProjectFile(cwd, 'cursor', CURSOR_SCRIPT_REL, wrapHookScript('cursor'), { dryRun }),
     ];
     if (!dryRun && existsSync(applies[2].path)) {
@@ -107,8 +138,18 @@ export const cursorAdapter: AgentAdapter = {
   },
   uninstall(cwd: string, opts?: UninstallOptions): InstallResult {
     const dryRun = Boolean(opts?.dryRun);
-    const restored = restoreAdapter(cwd, 'cursor', dryRun);
-    if (restored.hadBackup) return { files: restored.files, changed: restored.changed };
+    const plan = planAdapterUninstall(cwd, 'cursor', Boolean(opts?.force));
+    if (plan.hadBackup) {
+      return applyUninstallPlan(cwd, 'cursor', plan, dryRun, (entry) => {
+        if (entry.rel === CURSOR_HOOKS_REL || entry.rel.endsWith(`/${CURSOR_HOOKS_REL}`)) {
+          return stripCursorHooks(cwd, entry.rel, dryRun, true);
+        }
+        if (entry.rel.endsWith(CURSOR_RULE_REL) || entry.rel.endsWith(CURSOR_SCRIPT_REL)) {
+          return { path: projectPath(projectRoot(cwd), entry.rel), changed: false };
+        }
+        return null;
+      });
+    }
     const applies = [];
     const rule = projectPath(cwd, CURSOR_RULE_REL);
     assertSafeProjectPath(cwd, rule);
@@ -138,7 +179,7 @@ export const cursorAdapter: AgentAdapter = {
           if (Object.keys(hooks).length === 0) delete root.hooks;
           else root.hooks = hooks;
           const versionOnly = Object.keys(root).length === 1 && root.version !== undefined && !root.hooks;
-          const text = Object.keys(root).length === 0 || versionOnly ? null : jsonText(root);
+          const text = Object.keys(root).length === 0 || versionOnly ? null : jsonText(root, parsed.indent);
           applies.push(applyProjectFile(cwd, 'cursor', CURSOR_HOOKS_REL, text, { dryRun, backup: false }));
         }
       }
@@ -148,10 +189,7 @@ export const cursorAdapter: AgentAdapter = {
     if (existsSync(script) && readFileSync(script, 'utf8').includes('agent-receipt')) {
       applies.push(applyProjectFile(cwd, 'cursor', CURSOR_SCRIPT_REL, null, { dryRun, backup: false }));
     }
-    return {
-      files: applies.map((item) => item.path),
-      changed: applies.filter((item) => item.changed).map((item) => item.path),
-    };
+    return strippedResult(applies);
   },
   parseTranscript(filePath: string, cwd?: string): ParseResult {
     const loaded = readTranscriptText(filePath);

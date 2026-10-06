@@ -2,7 +2,7 @@ import { sha256Hex } from '../hash.js';
 import { DEFAULT_MAX_TOOL_EVENTS, DEFAULT_MAX_TOOL_SECTION_BYTES } from '../byte-limit.js';
 import type { RiskHint } from '../risk.js';
 import { adapterForAgent, ADAPTERS, getAdapter } from './index.js';
-import { capEvents, normalizeTouch } from './parse-common.js';
+import { asObject, capEvents, normalizeTouch, parseJsonRecords, readTranscriptText } from './parse-common.js';
 import { redactTranscriptText } from './redact-transcript.js';
 import type { ToolCallEvent } from './types.js';
 
@@ -101,6 +101,47 @@ function fitSection(section: ToolCallSection): ToolCallSection {
   return current;
 }
 
+const CODEX_TYPES = new Set(['function_call', 'mcp_tool_call', 'mcp_call', 'response.function_call']);
+
+function scoreRecord(value: unknown, depth: number, score: { claude: number; codex: number; cursor: number; jsonrpc: number }): void {
+  if (depth > 6) return;
+  if (Array.isArray(value)) {
+    for (const item of value) scoreRecord(item, depth + 1, score);
+    return;
+  }
+  const doc = asObject(value);
+  if (!doc) return;
+  const type = typeof doc.type === 'string' ? doc.type : '';
+  const payload = asObject(doc.payload);
+  const payloadType = payload && typeof payload.type === 'string' ? payload.type : '';
+  if (CODEX_TYPES.has(type) || CODEX_TYPES.has(payloadType)) score.codex += 1;
+  if (typeof doc.jsonrpc === 'string' || doc.method === 'tools/call') score.jsonrpc += 1;
+  if (typeof doc.composerId === 'string' || typeof doc.bubbleId === 'string' || type === 'tool_call') score.cursor += 1;
+  if ((doc.role === 'assistant' || doc.role === 'user') && type !== 'assistant' && type !== 'user') score.cursor += 1;
+  if (type === 'assistant' || type === 'user' || type === 'tool_use') score.claude += 1;
+  const message = asObject(doc.message);
+  const content = message?.content ?? doc.content;
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      const item = asObject(block);
+      if (item?.type === 'tool_use') score.claude += 1;
+    }
+  }
+}
+
+/** Sniff the transcript. Explicit `--adapter` wins before this runs. Ambiguous files return null. */
+export function sniffTranscriptAdapter(text: string): 'claude-code' | 'codex' | 'cursor' | 'json-rpc' | null {
+  const records = parseJsonRecords(text);
+  if (records.parsed === 0) return null;
+  const score = { claude: 0, codex: 0, cursor: 0, jsonrpc: 0 };
+  for (const record of records.records) scoreRecord(record, 0, score);
+  if (score.codex > 0 && score.claude === 0 && score.cursor === 0) return 'codex';
+  if (score.cursor > 0 && score.claude === 0 && score.codex === 0) return 'cursor';
+  if (score.jsonrpc > 0 && score.claude === 0 && score.codex === 0 && score.cursor === 0) return 'json-rpc';
+  if (score.claude > 0 && score.codex === 0 && score.cursor === 0) return 'claude-code';
+  return null;
+}
+
 export interface LoadToolCallsOptions {
   cwd: string;
   transcript: string;
@@ -130,6 +171,25 @@ export function loadToolCallSection(
       ok: true,
       section: fitSection({
         adapter: named.name,
+        events: capped.events,
+        truncated: capped.truncated,
+        sha256: hashToolEvents(capped.events),
+      }),
+    };
+  }
+  const loaded = readTranscriptText(opts.transcript);
+  if (!loaded.ok) return { ok: false, reason: loaded.reason };
+  const sniffed = sniffTranscriptAdapter(loaded.text);
+  if (sniffed) {
+    const named = sniffed === 'json-rpc' ? getAdapter('claude-code') : getAdapter(sniffed);
+    if (!named) return { ok: false, reason: 'transcript did not match a known adapter format' };
+    const parsed = named.parseTranscript(opts.transcript, opts.cwd);
+    if (!parsed.ok) return { ok: false, reason: parsed.reason || 'transcript could not be parsed' };
+    const capped = capEvents(parsed.events);
+    return {
+      ok: true,
+      section: fitSection({
+        adapter: sniffed,
         events: capped.events,
         truncated: capped.truncated,
         sha256: hashToolEvents(capped.events),

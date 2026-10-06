@@ -22,7 +22,7 @@ export interface ParseResult {
 }
 
 export interface InstallOptions {
-  /** Also install the optional Stop hook. Claude and Cursor honor this. */
+  /** Also install the optional Stop hook. Claude, Codex, and Cursor honor this. */
   stop?: boolean;
   /** Report the paths and write nothing, including no backup. */
   dryRun?: boolean;
@@ -31,6 +31,16 @@ export interface InstallOptions {
 export interface UninstallOptions {
   /** Report the paths and write nothing. */
   dryRun?: boolean;
+  /**
+   * Write the snapshot bytes back even when the file changed after install.
+   * Without this flag a changed file is stripped instead of restored.
+   */
+  force?: boolean;
+}
+
+export interface FileVerb {
+  path: string;
+  verb: 'restored' | 'stripped' | 'wrote' | 'unchanged';
 }
 
 export interface InstallResult {
@@ -38,6 +48,10 @@ export interface InstallResult {
   files: string[];
   /** Subset whose bytes changed, or would change on a dry-run. */
   changed?: string[];
+  /** How uninstall described each path. Install leaves this unset. */
+  verbs?: FileVerb[];
+  /** Absolute paths whose bytes differ from the post-install snapshot. */
+  userChanged?: string[];
 }
 
 export type AdapterInstallStatus = 'full' | 'partial' | 'absent';

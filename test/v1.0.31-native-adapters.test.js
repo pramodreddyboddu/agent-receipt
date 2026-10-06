@@ -1,6 +1,8 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -29,6 +31,15 @@ const AKIA = 'AKIAIOSFODNN7EXAMPLE';
 const GH = `ghp_${'a'.repeat(36)}`;
 const SK = `sk-ant-${'b'.repeat(24)}`;
 const SECRET_URL = 'https://example.com/a';
+const PW = 'hunter2SuperSecretPw';
+const SQL = 'SqlPlantedSecret99';
+const API = 'AbCdEf0123456789GhIjKlMnOpQrStUv';
+const TOK = 'tok_LivePlantedSecretValue';
+const BLOB = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/';
+const XOX = `xoxb-${'1'.repeat(12)}`;
+const HOST1 = 'db01.corp';
+const HOST2 = 'prod-db.lan';
+const PLANTED = [PW, SQL, API, TOK, BLOB, AKIA, GH, XOX, HOST1, HOST2];
 
 function git(cwd, args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -71,6 +82,76 @@ function gitRepo() {
   git(dir, ['add', 'README.md']);
   git(dir, ['commit', '-m', 'initial']);
   return { dir, home };
+}
+
+function plainDir() {
+  const home = mkdtempSync(join(tmpdir(), 'ar1031-home-'));
+  const dir = mkdtempSync(join(tmpdir(), 'ar1031-plain-'));
+  homes.push(home);
+  dirs.push(dir);
+  mkdirSync(join(home, '.config'), { recursive: true });
+  return { dir, home };
+}
+
+function sha256Text(text) {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+function fallbackBackup(dir, name) {
+  return join(dir, '.agent-receipt', 'adapter-backups', name);
+}
+
+function receiptMdCount(dir) {
+  const out = join(dir, '.agent-receipt', 'receipts');
+  if (!existsSync(out)) return 0;
+  return readdirSync(out).filter((name) => name.endsWith('.md') && !name.endsWith('.prove.md')).length;
+}
+
+function walkFiles(dir) {
+  const out = [];
+  const walk = (current) => {
+    for (const name of readdirSync(current)) {
+      if (name === '.git') continue;
+      const filePath = join(current, name);
+      const st = lstatSync(filePath);
+      if (st.isSymbolicLink()) continue;
+      if (st.isDirectory()) walk(filePath);
+      else out.push(filePath);
+    }
+  };
+  if (existsSync(dir)) walk(dir);
+  return out;
+}
+
+function assertNoPlanted(dir) {
+  for (const file of walkFiles(dir)) {
+    const buf = readFileSync(file);
+    for (const secret of PLANTED) {
+      assert.equal(buf.includes(Buffer.from(secret)), false, `${file} leaked ${secret.slice(0, 16)}`);
+    }
+  }
+}
+
+function pathShim(home) {
+  const binDir = join(home, 'bin');
+  mkdirSync(binDir, { recursive: true });
+  const script = join(binDir, 'agent-receipt');
+  writeFileSync(script, `#!/bin/sh\nexec ${process.execPath} ${JSON.stringify(bin)} "$@"\n`);
+  chmodSync(script, 0o755);
+  return binDir;
+}
+
+function runHook(dir, home, rel, pathDir) {
+  return spawnSync('sh', [join(dir, rel)], {
+    cwd: dir,
+    encoding: 'utf8',
+    env: {
+      ...envFor(home),
+      PATH: `${pathDir}:${process.env.PATH}`,
+      HOOK_STDIN_WAIT_SEC: '0.05',
+    },
+    timeout: 20000,
+  });
 }
 
 function backupDir(dir, name) {
@@ -142,11 +223,20 @@ describe('v1.0.31 native adapters', () => {
     const init = cliResult(root, ['help', 'init'], home);
     assert.match(init.out, /--claude/);
     assert.match(init.out, /--codex/);
+    assert.match(init.out, /sessionEnd and stop hooks/);
+    assert.match(init.out, /Codex SessionEnd and Stop hooks/);
     assert.match(init.out, /--grok/);
     assert.match(init.out, /\.grok\/rules/);
+    assert.match(help.out, /--force/);
+    assert.match(help.out, /would discard user changes/);
+    assert.match(capture.out, /not covered by the receipt/);
     const report = cliResult(root, ['help', 'report'], home);
     assert.match(report.out, /Version 2 is this page/);
     assert.match(report.out, /Version 1 stays/);
+    assert.match(report.out, /1\.0\.30 rejects a payload that includes `toolCalls`/);
+    assert.match(report.out, /UNSIGNED \(1 receipt not checked\)/);
+    assert.match(report.out, /re-sign an altered narrative/);
+    assert.match(report.out, /prune timestamp is not a date/);
     const global = cliResult(root, ['help'], home);
     assert.match(global.out, /adapters\s+Native hooks/);
     const listed = cliResult(dir, ['adapters', '--json'], home);
@@ -332,7 +422,8 @@ describe('v1.0.31 native adapters', () => {
     assert.match(agents, /agent-receipt:codex:end/);
     const again = JSON.parse(cliResult(dir, ['adapters', 'install', 'codex', '--json'], home).out);
     assert.deepEqual(again.results[0].changed, []);
-    assert.equal(hookCount(readFileSync(join(dir, hooksRel), 'utf8')), 1);
+    assert.ok(doc.hooks.SessionEnd);
+    assert.equal(hookCount(readFileSync(join(dir, hooksRel), 'utf8')), 2);
     assert.equal(cliResult(dir, ['adapters', 'uninstall', 'codex'], home).code, 0);
     assert.equal(readFileSync(join(dir, hooksRel), 'utf8'), originalHooks);
     assert.equal(readFileSync(join(dir, 'AGENTS.md'), 'utf8'), originalAgents);
@@ -342,7 +433,8 @@ describe('v1.0.31 native adapters', () => {
 
     assert.equal(cliResult(dir, ['adapters', 'install', 'codex', '--no-stop'], home).code, 0);
     const kept = JSON.parse(readFileSync(join(dir, hooksRel), 'utf8'));
-    assert.ok(kept.hooks.Stop);
+    assert.ok(kept.hooks.SessionEnd);
+    assert.equal(kept.hooks.Stop, undefined);
     assert.equal(kept.features.hooks, true);
     assert.equal(cliResult(dir, ['adapters', 'uninstall', 'codex'], home).code, 0);
     assert.equal(readFileSync(join(dir, hooksRel), 'utf8'), originalHooks);
@@ -412,7 +504,7 @@ describe('v1.0.31 native adapters', () => {
             type: 'tool_use',
             id: 'tu1',
             name: 'mcp__github__create_issue',
-            input: { token: AKIA, gh: GH, sk: SK, url: SECRET_URL },
+            input: { note: AKIA, gh: GH, sk: SK, url: SECRET_URL },
           }],
         },
       },
@@ -456,7 +548,7 @@ describe('v1.0.31 native adapters', () => {
           type: 'tool_use',
           id: 'c1',
           name: 'CallMcpTool',
-          input: { server: 'github', toolName: 'create_issue', arguments: JSON.stringify({ token: AKIA, title: 'from-cursor' }) },
+          input: { server: 'github', toolName: 'create_issue', arguments: JSON.stringify({ note: AKIA, title: 'from-cursor' }) },
         }],
       },
     }]));
@@ -577,5 +669,414 @@ describe('v1.0.31 native adapters', () => {
     assert.match(wrapMd, /wrap-tools-marker/);
     assert.match(wrapMd, /\*\*Count\*\*: 0/);
     assert.equal(cliResult(dir, ['audit', '--verify'], home).code, 0);
+  });
+
+  it('redacts planted secrets in every artifact for all four transcript shapes', () => {
+    const { dir, home } = gitRepo();
+    writeFileSync(join(dir, 'README.md'), '# repo\n\nReviewed paragraph.\n');
+    git(dir, ['add', 'README.md']);
+    git(dir, ['commit', '-m', 'readme']);
+    assert.equal(cliResult(dir, ['init'], home).code, 0);
+    const input = {
+      password: PW,
+      api_key: API,
+      query: `select 1 where pw='${SQL}'`,
+      note: TOK,
+      blob: BLOB,
+      endpoint: `${HOST1} ${HOST2}`,
+    };
+    const names = [`mcp__srv_${AKIA}__q`, `mcp__${GH}__list`, `mcp__slack__${XOX}`];
+    const claudeRows = [{
+      type: 'assistant',
+      message: {
+        content: names.map((name, index) => ({ type: 'tool_use', id: `c${index}`, name, input })),
+      },
+    }];
+    const cursorRows = names.map((name, index) => ({
+      role: 'assistant',
+      composerId: 'comp-plant',
+      type: 'tool_call',
+      id: `k${index}`,
+      name,
+      input,
+    }));
+    const codexRows = names.map((name, index) => ({
+      type: 'function_call',
+      name,
+      call_id: `f${index}`,
+      arguments: JSON.stringify(input),
+    }));
+    const rpcRows = names.map((name, index) => ({
+      jsonrpc: '2.0',
+      id: index,
+      method: 'tools/call',
+      params: { name, arguments: input },
+    }));
+    const shapes = [
+      ['claude-code', claudeRows, 'claude-code'],
+      ['cursor', cursorRows, 'cursor'],
+      ['codex', codexRows, 'codex'],
+      ['json-rpc', rpcRows, null],
+    ];
+    const paths = [];
+    for (const [label, rows, adapter] of shapes) {
+      const transcript = join(home, `${label}.jsonl`);
+      writeFileSync(transcript, jsonl(rows));
+      const args = [
+        'capture', '--json', '--commits', '1', '--redact', '--session', 's-plant',
+        '--agent', 'claude-code', '--transcript', transcript, '--message', `planted ${label}`,
+      ];
+      if (adapter) args.push('--adapter', adapter);
+      const captured = cliResult(dir, args, home);
+      assert.equal(captured.code, 0, `${label}\n${captured.err}\n${captured.out}`);
+      const gate = JSON.parse(captured.out);
+      paths.push(gate.path);
+      const markdown = readFileSync(gate.path, 'utf8');
+      const companion = JSON.parse(readFileSync(gate.jsonPath, 'utf8'));
+      assert.match(markdown, /## Tool calls/, label);
+      assert.match(markdown, /AKIA\[REDACTED\]/, label);
+      assert.match(markdown, /ghp_\[REDACTED\]/, label);
+      assert.match(markdown, /tok_\[REDACTED\]/, label);
+      assert.match(markdown, /pw='\[REDACTED\]/, label);
+      assert.match(markdown, /\[host\]/, label);
+      assert.equal(companion.toolCalls.adapter, label, label);
+      const shared = cliResult(dir, ['share', gate.path, '--package', '--json'], home);
+      assert.equal(shared.code, 0, `${label} share\n${shared.err}\n${shared.out}`);
+    }
+    const reported = cliResult(dir, ['report', '--session', 's-plant', '--out', join(dir, 'plant.report.html'), '--json'], home);
+    assert.equal(reported.code, 0, reported.err + reported.out);
+    const exported = cliResult(dir, ['session', 'export', 's-plant', '--json'], home);
+    assert.equal(exported.code, 0, exported.err + exported.out);
+    assert.ok(paths.length === 4);
+    assertNoPlanted(dir);
+  });
+
+  it('sniffs the transcript before --agent and omits an empty toolCalls field', () => {
+    const { dir, home } = gitRepo();
+    writeFileSync(join(dir, 'README.md'), '# repo\n\nReviewed paragraph.\n');
+    git(dir, ['add', 'README.md']);
+    git(dir, ['commit', '-m', 'readme']);
+    assert.equal(cliResult(dir, ['init'], home).code, 0);
+    const cases = [
+      ['codex', jsonl([{ type: 'function_call', name: 'shell', call_id: 's', arguments: JSON.stringify({ command: 'true' }) }]), 'codex'],
+      ['cursor', jsonl([{ role: 'assistant', composerId: 'comp-1', type: 'tool_call', name: 'Read', input: { file_path: 'README.md' } }]), 'cursor'],
+      ['json-rpc', jsonl([{ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_issues', arguments: { q: 'open' } } }]), 'json-rpc'],
+      ['claude-code', jsonl([{ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu', name: 'Read', input: { file_path: 'README.md' } }] } }]), 'claude-code'],
+    ];
+    for (const [label, body, adapter] of cases) {
+      const transcript = join(home, `${label}-sniff.jsonl`);
+      writeFileSync(transcript, body);
+      const captured = cliResult(dir, [
+        'capture', '--json', '--commits', '1', '--agent', 'claude-code', '--transcript', transcript,
+        '--message', `sniff ${label}`,
+      ], home);
+      assert.equal(captured.code, 0, `${label}\n${captured.err}\n${captured.out}`);
+      const gate = JSON.parse(captured.out);
+      const companion = JSON.parse(readFileSync(gate.jsonPath, 'utf8'));
+      assert.equal(companion.toolCalls.adapter, adapter, label);
+    }
+    const bare = cliResult(dir, ['capture', '--json', '--commits', '1', '--agent', 'claude-code', '--message', 'no section'], home);
+    assert.equal(bare.code, 0, bare.err + bare.out);
+    const reported = cliResult(dir, ['report', JSON.parse(bare.out).path, '--out', join(dir, 'empty-tools.report.html'), '--json'], home);
+    assert.equal(reported.code, 0, reported.err + reported.out);
+    const html = readFileSync(JSON.parse(reported.out).htmlPath, 'utf8');
+    const payload = JSON.parse(html.match(/<script type="application\/json" id="agent-receipt-report">([\s\S]*?)<\/script>/)[1]);
+    assert.equal(Object.hasOwn(payload.receipts[0], 'toolCalls'), false);
+    assert.match(html, /No tool-call section/);
+  });
+
+  it('strips Claude and Codex edits instead of restoring a stale snapshot', () => {
+    const { dir, home } = gitRepo();
+    const rel = '.claude/settings.json';
+    const original = '{"permissions":{"allow":["Bash"]},"model":"x"}\n';
+    mkdirSync(join(dir, '.claude'), { recursive: true });
+    writeFileSync(join(dir, rel), original);
+    assert.equal(cliResult(dir, ['adapters', 'install', 'claude-code'], home).code, 0);
+    const settingsPath = join(dir, rel);
+    const doc = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    doc.model = 'opus';
+    doc.permissions.allow.push('Edit');
+    doc.hooks.PostToolUse = [{ hooks: [{ type: 'command', command: 'echo other-tool', timeout: 5 }] }];
+    writeFileSync(settingsPath, `${JSON.stringify(doc, null, 2)}\n`);
+    const edited = readFileSync(settingsPath, 'utf8');
+    const dry = cliResult(dir, ['adapters', 'uninstall', 'claude-code', '--dry-run'], home);
+    assert.equal(dry.code, 0, dry.err);
+    assert.match(dry.out, /would discard user changes/);
+    assert.match(dry.out, /would strip/);
+    assert.equal(readFileSync(settingsPath, 'utf8'), edited);
+    const forceDry = cliResult(dir, ['adapters', 'uninstall', 'claude-code', '--dry-run', '--force'], home);
+    assert.match(forceDry.out, /would discard user changes/);
+    assert.match(forceDry.out, /would restore/);
+    assert.equal(readFileSync(settingsPath, 'utf8'), edited);
+    const forced = cliResult(dir, ['adapters', 'uninstall', 'claude-code', '--force'], home);
+    assert.equal(forced.code, 0, forced.err + forced.out);
+    assert.match(forced.out, /restored/);
+    assert.equal(readFileSync(settingsPath, 'utf8'), original);
+
+    assert.equal(cliResult(dir, ['adapters', 'install', 'claude-code'], home).code, 0);
+    const again = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    again.model = 'opus';
+    again.hooks.PostToolUse = [{ hooks: [{ type: 'command', command: 'echo other-tool', timeout: 5 }] }];
+    writeFileSync(settingsPath, `${JSON.stringify(again, null, 2)}\n`);
+    const preReinstall = readFileSync(settingsPath);
+    assert.equal(cliResult(dir, ['adapters', 'install', 'claude-code'], home).code, 0);
+    const backup = backupDir(dir, 'claude-code');
+    const manifest = JSON.parse(readFileSync(join(backup, 'manifest.json'), 'utf8'));
+    const entry = manifest.entries.find((item) => item.rel === rel);
+    assert.equal(entry.userModified, true);
+    assert.equal(readFileSync(join(backup, 'files', entry.file)).equals(preReinstall), true);
+    const stripped = cliResult(dir, ['adapters', 'uninstall', 'claude-code'], home);
+    assert.equal(stripped.code, 0, stripped.err + stripped.out);
+    assert.match(stripped.out, /stripped/);
+    assert.doesNotMatch(stripped.out, /restored \.claude\/settings\.json/);
+    const kept = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    assert.equal(kept.model, 'opus');
+    assert.match(JSON.stringify(kept.hooks.PostToolUse), /echo other-tool/);
+    assert.equal(JSON.stringify(kept).includes('agent-receipt-wrap.sh'), false);
+
+    const hooksRel = '.codex/hooks.json';
+    const agentsRel = 'AGENTS.md';
+    mkdirSync(join(dir, '.codex'), { recursive: true });
+    writeFileSync(join(dir, hooksRel), '{"features":{"hooks":true},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo keep-codex"}]}]}}\n');
+    writeFileSync(join(dir, agentsRel), '# Notes\n\nKeep this paragraph.\n');
+    assert.equal(cliResult(dir, ['adapters', 'install', 'codex'], home).code, 0);
+    const hooksDoc = JSON.parse(readFileSync(join(dir, hooksRel), 'utf8'));
+    hooksDoc.hooks.PreToolUse = [{ hooks: [{ type: 'command', command: 'echo other-codex' }] }];
+    writeFileSync(join(dir, hooksRel), `${JSON.stringify(hooksDoc, null, 2)}\n`);
+    writeFileSync(join(dir, agentsRel), `${readFileSync(join(dir, agentsRel), 'utf8')}\n## Later\n\nAlso keep this.\n`);
+    const codexDry = cliResult(dir, ['adapters', 'uninstall', 'codex', '--dry-run'], home);
+    assert.match(codexDry.out, /would discard user changes/);
+    assert.match(codexDry.out, /would strip/);
+    const codexOff = cliResult(dir, ['adapters', 'uninstall', 'codex'], home);
+    assert.equal(codexOff.code, 0, codexOff.err + codexOff.out);
+    assert.match(codexOff.out, /stripped/);
+    const codexKept = JSON.parse(readFileSync(join(dir, hooksRel), 'utf8'));
+    assert.match(JSON.stringify(codexKept.hooks.PreToolUse), /echo other-codex/);
+    assert.match(JSON.stringify(codexKept.hooks.SessionStart), /echo keep-codex/);
+    assert.equal(JSON.stringify(codexKept).includes('agent-receipt-wrap.sh'), false);
+    const agents = readFileSync(join(dir, agentsRel), 'utf8');
+    assert.match(agents, /Keep this paragraph/);
+    assert.match(agents, /Also keep this/);
+    assert.equal(agents.includes('agent-receipt:codex:start'), false);
+  });
+
+  it('keys a subdirectory install to the project root and strips when the snapshot is gone', () => {
+    const { dir, home } = gitRepo();
+    const rootRel = '.claude/settings.json';
+    const rootOriginal = '{"permissions":{"allow":["Bash"]},"model":"root"}\n';
+    mkdirSync(join(dir, '.claude'), { recursive: true });
+    writeFileSync(join(dir, rootRel), rootOriginal);
+    git(dir, ['add', rootRel]);
+    git(dir, ['commit', '-m', 'root settings']);
+    const sub = join(dir, 'sub');
+    mkdirSync(sub, { recursive: true });
+    assert.equal(cliResult(sub, ['adapters', 'install', 'claude-code'], home).code, 0);
+    assert.equal(readFileSync(join(dir, rootRel), 'utf8'), rootOriginal);
+    const manifest = JSON.parse(readFileSync(join(backupDir(dir, 'claude-code'), 'manifest.json'), 'utf8'));
+    assert.ok(manifest.entries.some((entry) => entry.rel === 'sub/.claude/settings.json'));
+    assert.equal(manifest.entries.some((entry) => entry.rel === rootRel), false);
+    const removed = cliResult(dir, ['adapters', 'uninstall', 'claude-code'], home);
+    assert.equal(removed.code, 0, removed.err + removed.out);
+    assert.equal(readFileSync(join(dir, rootRel), 'utf8'), rootOriginal);
+    assert.equal(existsSync(join(sub, '.claude', 'settings.json')), false);
+
+    writeFileSync(join(dir, rootRel), '{"permissions":{"allow":["Bash"]},"model":"kept"}\n');
+    assert.equal(cliResult(dir, ['adapters', 'install', 'claude-code'], home).code, 0);
+    rmSync(backupDir(dir, 'claude-code'), { recursive: true, force: true });
+    const bare = cliResult(dir, ['adapters', 'uninstall', 'claude-code'], home);
+    assert.equal(bare.code, 0, bare.err + bare.out);
+    assert.match(bare.out, /stripped/);
+    assert.doesNotMatch(bare.out, /restored/);
+    const kept = JSON.parse(readFileSync(join(dir, rootRel), 'utf8'));
+    assert.equal(kept.model, 'kept');
+    assert.equal(JSON.stringify(kept).includes('agent-receipt-wrap.sh'), false);
+  });
+
+  it('rejects a corrupt backup, a traversal manifest, a symlinked backup dir, and an unignored fallback', () => {
+    const corrupt = plainDir();
+    assert.equal(cliResult(corrupt.dir, ['adapters', 'install', 'claude-code'], corrupt.home).code, 0);
+    const corruptBackup = fallbackBackup(corrupt.dir, 'claude-code');
+    const corruptManifest = join(corruptBackup, 'manifest.json');
+    const installedSettings = readFileSync(join(corrupt.dir, '.claude', 'settings.json'), 'utf8');
+    writeFileSync(corruptManifest, '{');
+    const bad = cliResult(corrupt.dir, ['adapters', 'uninstall', 'claude-code'], corrupt.home);
+    assert.equal(bad.code, 1);
+    assert.match(bad.err, /adapter backup manifest is corrupt/);
+    assert.equal(readFileSync(join(corrupt.dir, '.claude', 'settings.json'), 'utf8'), installedSettings);
+    assert.equal(existsSync(corruptManifest), true);
+
+    const missing = plainDir();
+    mkdirSync(join(missing.dir, '.claude'), { recursive: true });
+    writeFileSync(join(missing.dir, '.claude', 'settings.json'), '{"model":"keep"}\n');
+    assert.equal(cliResult(missing.dir, ['adapters', 'install', 'claude-code'], missing.home).code, 0);
+    const missingBackup = fallbackBackup(missing.dir, 'claude-code');
+    const missingDoc = JSON.parse(readFileSync(join(missingBackup, 'manifest.json'), 'utf8'));
+    const missingEntry = missingDoc.entries.find((entry) => entry.rel === '.claude/settings.json');
+    rmSync(join(missingBackup, 'files', missingEntry.file));
+    const gone = cliResult(missing.dir, ['adapters', 'uninstall', 'claude-code'], missing.home);
+    assert.equal(gone.code, 1);
+    assert.match(gone.err, /adapter backup blob is missing: \.claude\/settings\.json/);
+    assert.match(readFileSync(join(missing.dir, '.claude', 'settings.json'), 'utf8'), /agent-receipt-wrap\.sh/);
+    assert.equal(existsSync(join(missingBackup, 'manifest.json')), true);
+
+    const attack = plainDir();
+    assert.equal(cliResult(attack.dir, ['adapters', 'install', 'claude-code'], attack.home).code, 0);
+    const attackBackup = fallbackBackup(attack.dir, 'claude-code');
+    const notes = 'keep these notes\n';
+    writeFileSync(join(attack.dir, 'notes.txt'), notes);
+    writeFileSync(join(attack.dir, 'package.json'), '{"name":"keep"}\n');
+    const attackDoc = JSON.parse(readFileSync(join(attackBackup, 'manifest.json'), 'utf8'));
+    const settingsEntry = attackDoc.entries.find((entry) => entry.rel === '.claude/settings.json');
+    const beforeSettings = readFileSync(join(attack.dir, '.claude', 'settings.json'), 'utf8');
+    attackDoc.entries = [
+      { rel: 'notes.txt', existed: false, sha256: null, postSha256: sha256Text(notes) },
+      { rel: 'package.json', existed: true, file: '../../../etc/hostname', sha256: settingsEntry.sha256, postSha256: sha256Text('{"name":"keep"}\n') },
+      { ...settingsEntry, file: '../../../etc/hostname' },
+      { rel: '../outside.txt', existed: false, sha256: null },
+    ];
+    writeFileSync(join(attackBackup, 'manifest.json'), `${JSON.stringify(attackDoc, null, 2)}\n`);
+    const attacked = cliResult(attack.dir, ['adapters', 'uninstall', 'claude-code'], attack.home);
+    assert.equal(attacked.code, 1);
+    assert.match(attacked.err, /adapter backup manifest is corrupt/);
+    assert.equal(readFileSync(join(attack.dir, 'notes.txt'), 'utf8'), notes);
+    assert.equal(readFileSync(join(attack.dir, 'package.json'), 'utf8'), '{"name":"keep"}\n');
+    assert.equal(readFileSync(join(attack.dir, '.claude', 'settings.json'), 'utf8'), beforeSettings);
+    assert.equal(existsSync(join(attackBackup, 'manifest.json')), true);
+
+    const linked = plainDir();
+    const outside = join(linked.home, 'outside-backup');
+    mkdirSync(join(linked.dir, '.agent-receipt'), { recursive: true });
+    mkdirSync(outside);
+    symlinkSync(outside, join(linked.dir, '.agent-receipt', 'adapter-backups'));
+    const refused = cliResult(linked.dir, ['adapters', 'install', 'claude-code'], linked.home);
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /refusing to follow a symlink in the adapter backup path/);
+    assert.equal(existsSync(join(outside, 'claude-code', 'manifest.json')), false);
+    assert.equal(existsSync(join(linked.dir, '.claude', 'settings.json')), false);
+
+    const ignored = plainDir();
+    const preview = cliResult(ignored.dir, ['adapters', 'install', 'claude-code', '--dry-run'], ignored.home);
+    assert.equal(preview.code, 0, preview.err);
+    assert.equal(existsSync(join(ignored.dir, '.gitignore')), false);
+    assert.equal(existsSync(join(ignored.dir, '.claude')), false);
+    assert.equal(cliResult(ignored.dir, ['adapters', 'install', 'claude-code'], ignored.home).code, 0);
+    assert.equal(cliResult(ignored.dir, ['adapters', 'install', 'claude-code'], ignored.home).code, 0);
+    const ignoreText = readFileSync(join(ignored.dir, '.gitignore'), 'utf8');
+    assert.equal(ignoreText.split('.agent-receipt/adapter-backups/').length - 1, 1);
+    git(ignored.dir, ['init']);
+    git(ignored.dir, ['add', '-A']);
+    assert.doesNotMatch(git(ignored.dir, ['status', '--porcelain']), /adapter-backups/);
+
+    const linkIgnore = plainDir();
+    const outsideIgnore = join(linkIgnore.home, 'gitignore');
+    writeFileSync(outsideIgnore, 'keep\n');
+    symlinkSync(outsideIgnore, join(linkIgnore.dir, '.gitignore'));
+    const ignoreRefused = cliResult(linkIgnore.dir, ['adapters', 'install', 'claude-code'], linkIgnore.home);
+    assert.equal(ignoreRefused.code, 1);
+    assert.match(ignoreRefused.err, /refusing to follow a symlink: \.gitignore/);
+    assert.equal(readFileSync(outsideIgnore, 'utf8'), 'keep\n');
+  });
+
+  it('preserves JSON indent, refuses a bad hooks shape, and leaves no snapshot on EACCES', () => {
+    const { dir, home } = gitRepo();
+    const rel = '.claude/settings.json';
+    mkdirSync(join(dir, '.claude'), { recursive: true });
+    const spaced = '{\n    "model": "opus",\n    "permissions": {"allow": ["Bash"]}\n}\n';
+    writeFileSync(join(dir, rel), spaced);
+    assert.equal(cliResult(dir, ['adapters', 'install', 'claude-code'], home).code, 0);
+    const written = readFileSync(join(dir, rel), 'utf8');
+    assert.match(written, /^    "/m);
+    assert.equal(JSON.parse(written).model, 'opus');
+    assert.equal(cliResult(dir, ['adapters', 'uninstall', 'claude-code'], home).code, 0);
+
+    const tabbed = '{\n\t"model": "tabbed"\n}\n';
+    writeFileSync(join(dir, rel), tabbed);
+    assert.equal(cliResult(dir, ['adapters', 'install', 'claude-code'], home).code, 0);
+    assert.match(readFileSync(join(dir, rel), 'utf8'), /\n\t"/);
+    assert.equal(cliResult(dir, ['adapters', 'uninstall', 'claude-code'], home).code, 0);
+
+    const emptyHooks = '{"hooks":{"PreToolUse":[]}}\n';
+    writeFileSync(join(dir, rel), emptyHooks);
+    assert.equal(cliResult(dir, ['adapters', 'install', 'claude-code'], home).code, 0);
+    const emptyDoc = JSON.parse(readFileSync(join(dir, rel), 'utf8'));
+    assert.deepEqual(emptyDoc.hooks.PreToolUse, []);
+    assert.ok(emptyDoc.hooks.SessionEnd);
+    assert.equal(cliResult(dir, ['adapters', 'uninstall', 'claude-code'], home).code, 0);
+
+    const arrayHooks = '{"hooks":[]}\n';
+    writeFileSync(join(dir, rel), arrayHooks);
+    const arrayRefused = cliResult(dir, ['adapters', 'install', 'claude-code'], home);
+    assert.equal(arrayRefused.code, 1);
+    assert.match(arrayRefused.err, /hooks must be a JSON object/);
+    assert.equal(readFileSync(join(dir, rel), 'utf8'), arrayHooks);
+    assert.equal(existsSync(backupDir(dir, 'claude-code')), false);
+    assert.equal(existsSync(join(dir, '.claude', 'rules')), false);
+
+    const objectEvent = '{"hooks":{"SessionEnd":{"command":"echo"}}}\n';
+    writeFileSync(join(dir, rel), objectEvent);
+    const objectRefused = cliResult(dir, ['adapters', 'install', 'claude-code'], home);
+    assert.equal(objectRefused.code, 1);
+    assert.match(objectRefused.err, /hooks\.SessionEnd must be an array/);
+    assert.equal(readFileSync(join(dir, rel), 'utf8'), objectEvent);
+    assert.equal(existsSync(backupDir(dir, 'claude-code')), false);
+
+    const locked = '{"model":"locked"}\n';
+    writeFileSync(join(dir, rel), locked);
+    chmodSync(join(dir, rel), 0o444);
+    const denied = cliResult(dir, ['adapters', 'install', 'claude-code'], home);
+    assert.equal(denied.code, 1);
+    assert.match(denied.err, /permission denied/);
+    assert.equal(readFileSync(join(dir, rel), 'utf8'), locked);
+    assert.equal(existsSync(backupDir(dir, 'claude-code')), false);
+    assert.equal(existsSync(join(dir, '.claude', 'rules')), false);
+    chmodSync(join(dir, rel), 0o644);
+  });
+
+  it('ignores its own out dir, discards hook stdout, and times out Cursor hooks', () => {
+    const { dir, home } = gitRepo();
+    assert.equal(cliResult(dir, ['init'], home).code, 0);
+    assert.equal(cliResult(dir, ['adapters', 'install', 'claude-code'], home).code, 0);
+    assert.equal(cliResult(dir, ['adapters', 'install', 'codex'], home).code, 0);
+    assert.equal(cliResult(dir, ['adapters', 'install', 'cursor'], home).code, 0);
+    const scripts = [
+      '.claude/hooks/agent-receipt-wrap.sh',
+      '.codex/hooks/agent-receipt-wrap.sh',
+      '.cursor/hooks/agent-receipt-wrap.sh',
+    ];
+    for (const rel of scripts) {
+      const text = readFileSync(join(dir, rel), 'utf8');
+      assert.match(text, /git status --porcelain/);
+      assert.match(text, />\/dev\/null 2>&1/);
+      assert.match(text, /timeout 120/);
+      assert.match(text, /git rev-parse --show-toplevel/);
+    }
+    const cursorDoc = JSON.parse(readFileSync(join(dir, '.cursor', 'hooks.json'), 'utf8'));
+    assert.equal(cursorDoc.hooks.sessionEnd[0].timeout, 120);
+    assert.equal(cursorDoc.hooks.stop[0].timeout, 120);
+    assert.match(cursorDoc.hooks.sessionEnd[0].command, /git rev-parse --show-toplevel/);
+    git(dir, ['add', '-A']);
+    git(dir, ['commit', '-m', 'hooks']);
+    const pathDir = pathShim(home);
+    mkdirSync(join(dir, '.agent-receipt', 'receipts'), { recursive: true });
+    writeFileSync(join(dir, '.agent-receipt', 'receipts', 'plant.md'), 'untracked receipt\n');
+    writeFileSync(join(dir, '.agent-receipt', 'index.json'), '{}\n');
+    writeFileSync(join(dir, '.agent-receipt', 'audit.jsonl'), '');
+    const before = receiptMdCount(dir);
+    for (const rel of scripts) {
+      const ran = runHook(dir, home, rel, pathDir);
+      assert.equal(ran.status, 0, `${rel}\n${ran.stderr}`);
+    }
+    assert.equal(receiptMdCount(dir), before);
+    writeFileSync(join(dir, 'user-dirty.txt'), 'dirty\n');
+    const wrapped = runHook(dir, home, scripts[0], pathDir);
+    assert.equal(wrapped.status, 0, wrapped.stderr);
+    assert.equal(receiptMdCount(dir), before + 1);
+    git(dir, ['add', 'user-dirty.txt']);
+    git(dir, ['commit', '-m', 'user file']);
+    for (const rel of scripts) {
+      const ran = runHook(dir, home, rel, pathDir);
+      assert.equal(ran.status, 0, `${rel}\n${ran.stderr}`);
+    }
+    assert.equal(receiptMdCount(dir), before + 1);
   });
 });

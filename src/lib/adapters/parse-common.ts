@@ -183,6 +183,37 @@ function summarize(input: unknown): string {
   }
 }
 
+/** Keys whose values are secrets even when the value itself is low-entropy. */
+const SENSITIVE_ARG_KEY = /pass|pwd|secret|token|key|auth|cred|cookie|session/i;
+
+/**
+ * Walk tool arguments before they are stringified. A JSON `"password":"…"`
+ * value never matches `password=…` because the quote sits in front of `:`.
+ */
+export function redactArgsValue(value: unknown, depth = 0): unknown {
+  if (depth > 8) return '[REDACTED]';
+  if (Array.isArray(value)) return value.map((item) => redactArgsValue(item, depth + 1));
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = SENSITIVE_ARG_KEY.test(key) ? '[REDACTED]' : redactArgsValue(child, depth + 1);
+    }
+    return out;
+  }
+  if (typeof value === 'string') return redactTranscriptText(value);
+  return value;
+}
+
+function summarizeRedacted(input: unknown): string {
+  if (input == null) return '';
+  if (typeof input === 'string') return input;
+  try {
+    return JSON.stringify(redactArgsValue(input));
+  } catch {
+    return '';
+  }
+}
+
 export interface RawCall {
   id: string | null;
   tool: string;
@@ -199,8 +230,11 @@ export function eventFromCall(call: RawCall, cwd: string, exitStatus: number | n
     .map((p) => normalizeTouch(redactTranscriptText(p), cwd))
     .filter((p) => p.length > 0);
   const files = [...new Set(paths)].slice(0, 20);
-  const command = shell ? clipText(redactTranscriptText(commandOf(call.input) ?? summarize(call.input)), DEFAULT_MAX_TOOL_ARG_CHARS) : null;
-  const argsSummary = clipText(redactTranscriptText(shell ? (command ?? '') : summarize(call.input)), DEFAULT_MAX_TOOL_ARG_CHARS);
+  const command = shell ? clipText(redactTranscriptText(commandOf(call.input) ?? summarizeRedacted(call.input)), DEFAULT_MAX_TOOL_ARG_CHARS) : null;
+  const argsSummary = clipText(
+    redactTranscriptText(shell ? (command ?? '') : summarizeRedacted(call.input)),
+    DEFAULT_MAX_TOOL_ARG_CHARS,
+  );
   let timestamp: string | null = null;
   if (call.timestamp && !/[\r\n\u0000]/.test(call.timestamp)) {
     timestamp = clipText(redactTranscriptText(call.timestamp), 80);

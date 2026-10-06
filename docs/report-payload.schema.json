@@ -269,7 +269,7 @@
           "diffs": { "type": "string", "description": "Capped diff excerpt, as shown." },
           "toolCalls": {
             "type": "string",
-            "description": "Optional ## Tool calls body shown on renderVersion 2, or an empty string when the receipt has no tool-call section. Omitted on a version 1 payload. Not required."
+            "description": "Optional ## Tool calls body shown on renderVersion 2. Omitted when the receipt has no tool-call section, including on a version 2 payload. 1.0.30 rejects a payload that includes toolCalls and rejects renderVersion 2, so a 1.0.31 page is a forward-compat break for 1.0.30. Not required."
           }
         }
       }
