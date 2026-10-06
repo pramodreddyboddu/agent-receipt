@@ -23,6 +23,7 @@ export { cmdLast } from './commands/last.js';
 export { cmdHistory } from './commands/history.js';
 export { cmdWatch, clampInterval } from './commands/watch.js';
 export { cmdVerify } from './commands/verify.js';
+export { cmdView } from './commands/view.js';
 export { cmdVerifyPackage } from './commands/verify-package.js';
 export { cmdImport } from './commands/import.js';
 export { cmdProve } from './commands/prove.js';

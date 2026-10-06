@@ -565,6 +565,7 @@ export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCh
   checks.push(retentionCheck(cwd, cfgNow));
   checks.push(autoPruneCheck(cfgNow));
   checks.push(linkCheck());
+  checks.push(viewerCheck());
 
   if (!inRepo) {
     checks.push({
@@ -656,6 +657,16 @@ function linkCheck(): DoctorCheck {
   };
 }
 
+/** The local viewer is optional. INFO on default doctor and under `--strict`. */
+function viewerCheck(): DoctorCheck {
+  return {
+    name: 'viewer',
+    status: 'info',
+    detail:
+      'local viewer is available (agent-receipt view). Read-only, redacted, loopback by default. agent-receipt view --static <dir> writes an offline bundle. Not a failure.',
+  };
+}
+
 function icon(status: CheckStatus): string {
   switch (status) {
     case 'pass':
@@ -683,6 +694,7 @@ const PROD_CHECKS = [
   'retention',
   'autoPrune',
   'link',
+  'viewer',
   'git-clean',
   'cursor',
   'grok',

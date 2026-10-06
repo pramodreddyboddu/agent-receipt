@@ -19,6 +19,7 @@ import { cmdSign, printSignError } from './commands/sign.js';
 import { cmdLast } from './commands/last.js';
 import { cmdInstallHooks, cmdUninstallHooks } from './commands/hooks.js';
 import { cmdDoctor } from './commands/doctor.js';
+import { cmdView } from './commands/view.js';
 import { cmdCompare } from './commands/compare.js';
 import { cmdHistory } from './commands/history.js';
 import { cmdWatch } from './commands/watch.js';
@@ -257,15 +258,20 @@ function flagTrustedKeys(flags: Record<string, string | boolean>): string[] | un
   return parts;
 }
 
-/** A present flag must be a non-empty string. Absent stays undefined. */
-/** Repeatable `--policy-pack`. Absent when the flag was not passed. */
+/** Repeatable `--policy-pack`. A comma-separated list is a usage error. */
 function policyPackFlags(flags: Record<string, string | boolean>): string[] | undefined {
   if (flags['policy-pack'] === undefined) return undefined;
   if (flags['policy-pack'] === true) {
     throw new Error('--policy-pack requires a pack name or file');
   }
-  const parts = String(flags['policy-pack'])
-    .split(',')
+  const raw = String(flags['policy-pack']);
+  if (raw.includes(',')) {
+    throw new Error(
+      '--policy-pack does not accept a comma-separated list. Repeat the flag: --policy-pack <name> --policy-pack <name>',
+    );
+  }
+  const parts = raw
+    .split('\u001f')
     .map((part) => part.trim())
     .filter(Boolean);
   if (!parts.length) throw new Error('--policy-pack requires a pack name or file');
@@ -989,6 +995,55 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         }
         return cmdSession(cwd, positional[0], { json: flagBool(flags, 'json') });
       }
+      case 'view': {
+        const viewFlags = new Set([
+          'cwd',
+          'json',
+          'port',
+          'host',
+          'open',
+          'receipts',
+          'static',
+          'allow-remote',
+          'trusted-key',
+          'require-sig',
+          'require-signature',
+          'no-redact',
+        ]);
+        for (const key of Object.keys(flags)) {
+          if (!viewFlags.has(key)) {
+            throw new Error(
+              `Unknown flag: --${key}. view accepts --port, --host, --open, --allow-remote, --receipts, --static, --json, --trusted-key, --require-sig, and --cwd.`,
+            );
+          }
+        }
+        if (positional.length) {
+          throw new Error('view does not take a receipt path. Use --receipts <dir>.');
+        }
+        let port: number | undefined;
+        if (flags.port !== undefined) {
+          port = flagNumber(flags, 'port');
+          if (port === undefined || port < 0 || port > 65535) {
+            throw new Error('--port must be an integer from 0 to 65535');
+          }
+        }
+        if (flags.host === true) throw new Error('--host requires a hostname');
+        if (flags.receipts === true) throw new Error('--receipts requires a directory');
+        const staticFlag = flags.static;
+        if (staticFlag === true) throw new Error('view --static requires an output directory');
+        return await cmdView(cwd, {
+          port,
+          host: flagString(flags, 'host'),
+          openBrowser: flagBool(flags, 'open'),
+          receiptsDir: flagString(flags, 'receipts'),
+          json: flagBool(flags, 'json'),
+          staticDir: typeof staticFlag === 'string' ? staticFlag : undefined,
+          allowRemote: flagBool(flags, 'allow-remote'),
+          trustedKeys: flagTrustedKeys(flags),
+          requireSig: flagBool(flags, 'require-sig', 'require-signature'),
+          noRedact: flagBool(flags, 'no-redact'),
+        });
+      }
       case 'doctor':
         return cmdDoctor(cwd, {
           strict: flagBool(flags, 'strict'),
@@ -1164,6 +1219,8 @@ export async function run(argv: string[] = process.argv): Promise<number> {
       printPrCommentError(msg);
     } else if (command === 'policy' && flagBool(flags, 'json')) {
       printPolicyError(msg);
+    } else if (command === 'view' && flagBool(flags, 'json')) {
+      console.log(JSON.stringify({ ok: false, command: 'view', error: msg }));
     } else if (command && JSON_GATE_COMMANDS.has(command) && flagBool(flags, 'json')) {
       printGate(errorGate(command, msg));
     } else {

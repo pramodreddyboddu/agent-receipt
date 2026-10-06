@@ -2,7 +2,7 @@
 
 `action.yml` at the repository root is a composite action. One `uses:` line
 checks agent receipts on a pull request and posts a summary comment. It
-installs an exact version with `npx` (`@pramodreddyboddu/agent-receipt@1.0.35`
+installs an exact version with `npx` (`@pramodreddyboddu/agent-receipt@1.0.36`
 by default). `latest` is rejected. The token is passed only as `GITHUB_TOKEN`
 and is never printed.
 
@@ -154,10 +154,10 @@ Do this when cutting a release. This repository does not create the tag or
 the Marketplace listing from CI.
 
 1. Land the change on `main`. The root `action.yml` must be on that commit.
-2. Tag the release `v1.0.35` (the same version as `package.json`). Push the tag. Do not force-push.
+2. Tag the release `v1.0.36` (the same version as `package.json`). Push the tag. Do not force-push.
 3. Move the major tag `v1` to that commit so `uses: pramodreddyboddu/agent-receipt@v1` stays current. Push `v1`.
-4. Open the GitHub release for `v1.0.35`. Marketplace reads `action.yml` from the tag (`name`, `description`, `branding.icon`, `branding.color`).
+4. Open the GitHub release for `v1.0.36`. Marketplace reads `action.yml` from the tag (`name`, `description`, `branding.icon`, `branding.color`).
 5. Publish the listing from the release page. The icon is `shield` and the color is `blue`.
 6. Confirm a pull request in a throwaway repo with `permissions: pull-requests: write` posts one comment, and a second run updates that comment instead of adding another.
 
-Pin consumers to `@v1` or to `@v1.0.35`. Do not point them at a branch.
+Pin consumers to `@v1` or to `@v1.0.36`. Do not point them at a branch.

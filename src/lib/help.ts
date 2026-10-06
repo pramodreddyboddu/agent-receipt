@@ -153,9 +153,10 @@ Options:
   --transcript <file>    Record tool calls from this transcript (JSONL or JSON)
   --adapter <name>       Parser: claude-code, cursor, grok, or codex
   --policy-pack <name>   Evaluate a policy pack (repeatable). builtin:baseline
-                         or a file. Union with config policyPacks. Deny hits
-                         exit 2. Warn hits are reported. A missing or invalid
-                         pack exits 1. See \`help policy\`.
+                         or a file. A comma-separated list is rejected;
+                         repeat the flag. Union with config policyPacks.
+                         Deny hits exit 2. Warn hits are reported. A missing
+                         or invalid pack exits 1. See \`help policy\`.
   --cwd <path>           Run as if started in this directory
 
 \`--transcript\` adds a \`## Tool calls\` section inside the hashed body.
@@ -1817,6 +1818,7 @@ Options:
   --fail-on <level>      high, medium, or low. gate defaults to high
   --policy <file>        YAML with failOn and requireSignature. Flag wins
   --policy-pack <name>   Policy pack (repeatable). builtin:<name> or a file.
+                         A comma-separated list is rejected; repeat the flag.
                          Deny hits fail the gate. Warn hits are reported.
                          Not used by --command attest-verify.
   --require-signature    Require a valid sidecar (alias: --require-sig)
@@ -1874,8 +1876,10 @@ matches, and 0 when there are only warnings or no hits. A missing pack
 exits 1. It never passes silently.
 
 \`--policy-pack\` on capture, wrap, share, verify, watch, and pr-comment
-repeats. Deny hits exit 2. Warn hits are reported. With no pack configured,
-those commands omit the policy keys and behave as before.
+repeats. A comma-separated list is rejected. Repeat the flag:
+\`--policy-pack <name> --policy-pack <name>\`. Deny hits exit 2. Warn hits
+are reported. With no pack configured, those commands omit the policy keys
+and behave as before.
 
 \`--json\` prints one object (\`ok\`, \`command\`, \`action\`, \`version\`,
 \`exitCode\`).
@@ -1886,6 +1890,52 @@ Examples:
   agent-receipt policy lint policies/baseline.yml
   agent-receipt policy test builtin:baseline
   agent-receipt wrap --policy-pack builtin:baseline --json
+`,
+
+  view: `agent-receipt view — local read-only receipt viewer
+
+Usage:
+  agent-receipt view [--port <n>] [--host 127.0.0.1] [--open] [--json]
+  agent-receipt view --static <dir> [--json]
+  agent-receipt view --receipts <dir> [--cwd <dir>]
+
+\`view\` serves the receipt store in a browser. The server is node:http
+only. It binds 127.0.0.1 port 4173 unless you pass \`--port\` or \`--host\`.
+\`--port 0\` picks a free port and prints the URL. A non-loopback host is
+refused unless \`--allow-remote\` is also passed, which prints a warning.
+\`--json\` prints one line (\`url\`, \`port\`, \`receiptCount\`, \`pid\`) and
+keeps serving. \`--open\` opens the default browser and does not fail the
+command when it cannot.
+
+\`--static <dir>\` writes \`index.html\` and \`data.json\` and exits. CSS and
+script are inline. There is no CDN and no external font. The same inputs
+write the same bytes. Open \`index.html\` from disk.
+
+The page lists time, agent, adapter, risk, exit, signed or unsigned,
+verify status, and policy-pack hits. Filters cover agent, risk, signed,
+failed, and text. A receipt shows commands, files, tool calls, the gate,
+policy hits, signature, keyless, attestation, and hash-chain position.
+Linked receipts show a parent/child session tree with host labels.
+
+\`GET /api/receipts\`, \`GET /api/receipts/:id\`, \`GET /api/sessions\`, and
+\`GET /api/verify/:id\` are the only API routes. Any other method returns
+405. Unknown routes return 404 JSON. Receipt ids are an in-memory index.
+A path is never a receipt id. The Host header must be the bound
+host:port.
+
+View always redacts. \`--no-redact\` is rejected. Host labels that are not
+secrets stay visible. Verify status uses the same hash and signature
+checks as \`verify\`, including \`--trusted-key\` and \`--require-sig\`. A
+tampered receipt is FAILED.
+
+\`doctor\` reports the viewer as INFO. That row is not a failure.
+
+Examples:
+  agent-receipt view
+  agent-receipt view --port 0 --open
+  agent-receipt view --json
+  agent-receipt view --static ./viewer-dist
+  agent-receipt view --require-sig --trusted-key <fp>
 `,
 
   help: `agent-receipt help — show usage
@@ -1944,6 +1994,7 @@ Commands:
   prune                  Delete old receipts under outDir (opt-in; trusted prune; --dry-run, --force). autoPrune runs this after capture/wrap/watch
   retain                 Alias for prune
   doctor                 Health check (--json; --strict fails unset policy, unset retention, a broken audit chain, an invalid trust store, an invalid policy pack, and an expired policy exception)
+  view                   Local read-only receipt viewer (loopback; --static writes an offline bundle)
   policy                 List, show, lint, and test policy packs (builtin:<name> or a file)
   compare [a] [b]        Diff two receipts (default: last vs previous)
   diff [a] [b]           Alias for compare
@@ -2031,6 +2082,9 @@ Examples:
   agent-receipt prune --force
   agent-receipt doctor
   agent-receipt doctor --json
+  agent-receipt view
+  agent-receipt view --port 0 --json
+  agent-receipt view --static ./viewer-dist
   agent-receipt compare
   agent-receipt install-hooks
   agent-receipt help wrap

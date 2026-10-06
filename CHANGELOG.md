@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.36] — 2026-10-06
+
+### Added
+
+- `agent-receipt view` serves receipts and linked session trees in a local browser. The server is `node:http` only, binds `127.0.0.1` by default, and is read-only. `--port 0` picks a free port. `--json` prints one line (`url`, `port`, `receiptCount`, `pid`) and keeps serving. `--open` opens a browser best-effort. `--receipts` selects the directory. `--trusted-key` and `--require-sig` use the same verify rules as `verify`.
+- `agent-receipt view --static <dir>` writes a self-contained offline bundle (`index.html` and `data.json`, inline CSS and script, no CDN) that opens from `file://`. The same inputs write the same bytes.
+- JSON API: `GET /api/receipts`, `GET /api/receipts/:id`, `GET /api/sessions`, and `GET /api/verify/:id`. Other methods return 405. Receipt ids come from an in-memory index. Path traversal is rejected. A `Host` header other than the bound host:port is rejected. Responses set `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`.
+- The page lists time, agent, adapter, risk, exit, signed or unsigned, verify status, and policy-pack hits. Filters cover agent, risk, signed, failed, and text. Detail shows commands, files, tool calls, the gate, policy hits, signature, keyless, attestation, and hash-chain position. The session tree shows parent, child, and host for linked receipts.
+- View always redacts, including secrets in host labels. `--no-redact` is rejected. Host labels that are not secrets stay visible.
+- `doctor` adds an INFO `viewer` row. It is not a failure, including under `--strict`.
+- [`docs/viewer.md`](docs/viewer.md).
+
+### Changed
+
+- `--policy-pack` rejects a comma-separated list and tells you to repeat the flag. Repeated `--policy-pack` still works. The GitHub Action input stays comma-separated and is split into repeated flags.
+- `builtin:supply-chain` denies a PowerShell download piped to `Invoke-Expression` (`iwr`, `irm`, `Invoke-WebRequest`, or `Invoke-RestMethod` piped to `iex` or `Invoke-Expression`). Rule id `powershell-download-pipe`.
+- `action.yml` rejects version pins with a leading zero (`01.0.34`). The default pin is `1.0.36`.
+
+### Notes
+
+- Package version bumped to `1.0.36`. Pin comments that track the current cut are `v1.0.36`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
+
 ## [1.0.35] — 2026-10-06
 
 ### Added

@@ -81,7 +81,7 @@ Shipped under `policies/` and referenced as `builtin:<name>`.
 | Pack | What it denies |
 |------|----------------|
 | `builtin:baseline` | Secret and credential paths, `.github/workflows/**`, force-push and history rewrite, `curl` or `wget` piped to `sh` or `bash` |
-| `builtin:supply-chain` | Lockfiles, package install commands, publish commands. Dependency manifests (`package.json` and the same) are **warn** |
+| `builtin:supply-chain` | Lockfiles, package install commands, publish commands, and a PowerShell download piped to `Invoke-Expression` (`iwr` / `irm` / `Invoke-WebRequest` / `Invoke-RestMethod` piped to `iex` / `Invoke-Expression`). Dependency manifests (`package.json` and the same) are **warn** |
 | `builtin:ci-protect` | Workflow and CI config paths, credential paths |
 | `builtin:strict` | The three packs above, plus `unsigned: true` |
 
@@ -104,9 +104,11 @@ policyExceptions:
 ```
 
 `policyPacks` entries are `builtin:<name>` or a file path. Repeat
-`--policy-pack` on the command line. Flags are applied first, then the config
-list. The same rule id later in that list wins. Pack paths cannot contain a
-comma: repeatable flags are joined with commas.
+`--policy-pack` on the command line. The flag does not accept a
+comma-separated list. Pass `--policy-pack <name> --policy-pack <name>`.
+A pack path that itself contains a comma is rejected with that same error.
+Flags are applied first, then the config list. The same rule id later in
+that list wins.
 
 An exception needs `rule`, `path` (a glob), and `reason`. `expires` is
 `YYYY-MM-DD` in UTC. The exception applies on that date. A date before today

@@ -42,7 +42,7 @@ npm install -D @pramodreddyboddu/agent-receipt
 ## GitHub Action
 
 Gate a pull request with one `uses:` line. The action runs a pinned
-`agent-receipt` (`1.0.35` by default, never `latest`) and posts a sticky
+`agent-receipt` (`1.0.36` by default, never `latest`) and posts a sticky
 summary comment.
 
 ```yaml
@@ -85,6 +85,25 @@ Per-repo defaults live in `.agent-receipt.yml` (`policyPacks`,
 date). An expired exception does not suppress the hit. Full format:
 [`docs/policy-packs.md`](docs/policy-packs.md). Schema:
 [`docs/policy-pack.schema.json`](docs/policy-pack.schema.json).
+
+## Local viewer
+
+`agent-receipt view` serves the receipt store in a browser on `127.0.0.1`.
+It is read-only, offline, and always redacted. There is no `--no-redact`.
+
+```bash
+agent-receipt view
+agent-receipt view --port 0 --open
+agent-receipt view --json
+agent-receipt view --static ./viewer-dist
+```
+
+`--static` writes `index.html` and `data.json` with inline CSS and script
+(no CDN). Open `index.html` from disk or upload the directory as a CI
+artifact. A non-loopback `--host` is refused unless you also pass
+`--allow-remote`.
+
+Details: [`docs/viewer.md`](docs/viewer.md).
 
 ## Hero path: `wrap` at session end
 
@@ -189,7 +208,8 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `report [path\|last]` | Signed one-page HTML report. `report --session <id>` or `report <path/to/*.session>` covers a tree. `report verify <file.html> [more.html ...]` re-renders the page from the signed payload and requires the same bytes. The worst exit code wins |
 | `audit` / `log` | Local log of capture, watch, wrap, share, export, and prune deletes (`.agent-receipt/audit.jsonl`, experimental hash chain). `--event`, `--agent`, and `--failed` filter the listing |
 | `prune` / `retain` | Delete old receipts under `outDir` when `maxCount` / `maxAgeDays` is set (`--dry-run` does not delete or audit; off by default). Trusted prune refuses the delete when the audit chain is broken (`--force` is break-glass). `autoPrune: true` or `--prune` runs that same path after capture, wrap, and watch (no `--force`; a broken chain warns and does not fail the capture) |
-| `doctor` | Health check plus a prod checklist (policy, packs, audit, keys, trust, retention, autoPrune, hooks, redact, git clean, Cursor/Grok, adapters). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`), unset retention (`maxCount` / `maxAgeDays`), a broken audit chain, an invalid trust store, an invalid policy pack, and an expired policy exception. A missing trust store stays INFO. Unset packs stay INFO under `--strict`. The `adapters` row stays INFO and does not fail `--strict`. Unset `autoPrune` stays INFO and does not fail `--strict`. Default doctor still pressure-gates unset retention. Missing signing keys stay INFO |
+| `doctor` | Health check plus a prod checklist (policy, packs, audit, keys, trust, retention, autoPrune, hooks, redact, git clean, Cursor/Grok, adapters, viewer). `--json` for scripts. `--strict` fails unset org policy (`redact` + `failOn`), unset retention (`maxCount` / `maxAgeDays`), a broken audit chain, an invalid trust store, an invalid policy pack, and an expired policy exception. A missing trust store stays INFO. Unset packs stay INFO under `--strict`. The `adapters` and `viewer` rows stay INFO and do not fail `--strict`. Unset `autoPrune` stays INFO and does not fail `--strict`. Default doctor still pressure-gates unset retention. Missing signing keys stay INFO |
+| `view` | Local read-only browser for receipts and session trees. Loopback by default. `--static <dir>` writes an offline `index.html` + `data.json` bundle. Always redacts |
 | `compare [a] [b]` | Diff two receipts (default: last vs previous) |
 | `diff [a] [b]` | Alias for `compare` |
 | `install-hooks` | Opt-in post-commit auto-capture (`--pre-push` optional) |
@@ -468,7 +488,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.35`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.36`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
