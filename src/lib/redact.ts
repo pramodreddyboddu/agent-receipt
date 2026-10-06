@@ -13,77 +13,86 @@ export function isReceiptArtifactPath(path: string): boolean {
 }
 
 /** Patterns that look like live secrets in diffs / risk detail. */
+/**
+ * Token prefixes sit inside MCP names (`srv_AKIA…__q`). `\b` does not match
+ * after `_` or before `_`, because both are word characters. A letter/digit
+ * lookaround matches there and still stops at a real word character.
+ */
 const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
   {
-    re: /\bAKIA[0-9A-Z]{16}\b/g,
+    re: /(?<![A-Za-z0-9])AKIA[0-9A-Z]{16}(?![A-Za-z0-9])/g,
     replacement: 'AKIA[REDACTED]',
   },
   {
-    re: /\bASIA[0-9A-Z]{16}\b/g,
+    re: /(?<![A-Za-z0-9])ASIA[0-9A-Z]{16}(?![A-Za-z0-9])/g,
     replacement: 'ASIA[REDACTED]',
   },
   {
     // ghp_ classic, gho_ OAuth, ghu_ user-to-server, ghs_ server, ghr_ refresh
-    re: /\b(gh[pousr]_)[A-Za-z0-9]{36}\b/g,
+    re: /(?<![A-Za-z0-9])(gh[pousr]_)[A-Za-z0-9]{36}(?![A-Za-z0-9])/g,
     replacement: '$1[REDACTED]',
   },
   {
-    re: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/g,
+    re: /(?<![A-Za-z0-9])(tok_)[A-Za-z0-9_\-]{8,}(?![A-Za-z0-9])/g,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    re: /(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{22,}(?![A-Za-z0-9])/g,
     replacement: 'github_pat_[REDACTED]',
   },
   {
-    re: /\b(glpat-)[A-Za-z0-9\-_]{20,}\b/g,
+    re: /(?<![A-Za-z0-9])(glpat-)[A-Za-z0-9\-_]{20,}(?![A-Za-z0-9])/g,
     replacement: '$1[REDACTED]',
   },
   {
-    re: /\b(npm_)[A-Za-z0-9]{36}\b/g,
+    re: /(?<![A-Za-z0-9])(npm_)[A-Za-z0-9]{36}(?![A-Za-z0-9])/g,
     replacement: '$1[REDACTED]',
   },
   {
-    re: /\b(AIza)[0-9A-Za-z\-_]{35}\b/g,
+    re: /(?<![A-Za-z0-9])(AIza)[0-9A-Za-z\-_]{35}(?![A-Za-z0-9])/g,
     replacement: '$1[REDACTED]',
   },
   {
-    re: /\b(ya29\.)[0-9A-Za-z\-_]{20,}/g,
+    re: /(?<![A-Za-z0-9])(ya29\.)[0-9A-Za-z\-_]{20,}/g,
     replacement: '$1[REDACTED]',
   },
   {
-    re: /\b((?:sk|rk)_(?:live|test)_)[0-9A-Za-z]{10,}\b/g,
+    re: /(?<![A-Za-z0-9])((?:sk|rk)_(?:live|test)_)[0-9A-Za-z]{10,}(?![A-Za-z0-9])/g,
     replacement: '$1[REDACTED]',
   },
   {
-    re: /\bSG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g,
+    re: /(?<![A-Za-z0-9])SG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g,
     replacement: 'SG.[REDACTED]',
   },
   {
-    re: /\bxox[baprs]-[A-Za-z0-9-]{10,}/g,
+    re: /(?<![A-Za-z0-9])xox[baprs]-[A-Za-z0-9-]{10,}/g,
     replacement: 'xox[REDACTED]',
   },
   {
-    re: /\bxox[ce]-[A-Za-z0-9-]{10,}/g,
+    re: /(?<![A-Za-z0-9])xox[ce]-[A-Za-z0-9-]{10,}/g,
     replacement: 'xox[REDACTED]',
   },
   {
-    re: /\bxapp-[A-Za-z0-9-]{10,}/g,
+    re: /(?<![A-Za-z0-9])xapp-[A-Za-z0-9-]{10,}/g,
     replacement: 'xapp-[REDACTED]',
   },
   {
     // OpenAI sk- / sk-proj-, Anthropic sk-ant- (underscore form is Stripe, above).
-    re: /\b(sk-(?:proj-|ant-)?)[A-Za-z0-9_\-]{24,}\b/g,
+    re: /(?<![A-Za-z0-9])(sk-(?:proj-|ant-)?)[A-Za-z0-9_\-]{24,}(?![A-Za-z0-9])/g,
     replacement: '$1[REDACTED]',
   },
   {
-    re: /\b(hf_)[A-Za-z0-9]{20,}\b/g,
+    re: /(?<![A-Za-z0-9])(hf_)[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g,
     replacement: '$1[REDACTED]',
   },
   {
     // Groq console keys: gsk_ + 48 alphanumeric. 20+ avoids tiny lookalikes.
-    re: /\b(gsk_)[A-Za-z0-9]{20,}\b/g,
+    re: /(?<![A-Za-z0-9])(gsk_)[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g,
     replacement: '$1[REDACTED]',
   },
   {
     // xAI / Grok API keys: xai- + ~80 alphanumeric. Hyphenated model names stay.
-    re: /\b(xai-)[A-Za-z0-9]{20,}\b/g,
+    re: /(?<![A-Za-z0-9])(xai-)[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g,
     replacement: '$1[REDACTED]',
   },
   {
@@ -113,7 +122,7 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
   },
   {
     // Connection / credential URLs: scheme://user:password@host (or :password@)
-    re: /\b([a-z][a-z0-9+.-]*:\/\/(?:[^:@\/\s"'<>]*):)([^@\/\s"'<>]+)(@)/gi,
+    re: /(?<![A-Za-z0-9])([a-z][a-z0-9+.-]*:\/\/(?:[^:@\/\s"'<>]*):)([^@\/\s"'<>]+)(@)/gi,
     replacement: '$1[REDACTED]$3',
   },
   {
@@ -129,6 +138,13 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
   {
     // Generic high-entropy token assignments common in .env diffs
     re: /((?:API[_-]?KEY|SECRET[_-]?KEY|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|PASSWORD|PRIVATE[_-]?KEY|CLIENT[_-]?SECRET|ACCOUNT[_-]?KEY|SESSION[_-]?TOKEN|NPM[_-]?TOKEN)\s*[:=]\s*["']?)([^\s"'\\]{8,})/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    // Low-entropy SQL and assignment values (`pw='…'`, `password=…`) that the
+    // entropy scanner will not catch. JSON `"password":"…"` is handled before
+    // stringify, key by key, because the quote sits between the name and `:`.
+    re: /((?:pw|pwd|pass(?:word|wd)?|secret|token|api[_-]?key)\s*[:=]\s*['"]?)([^'"\s,;)\\]{4,})/gi,
     replacement: '$1[REDACTED]',
   },
   {

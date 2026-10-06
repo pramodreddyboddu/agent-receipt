@@ -4,11 +4,13 @@ const TOPICS: Record<string, string> = {
   init: `agent-receipt init — write config + setup notes
 
 Usage:
-  agent-receipt init [--cursor] [--grok] [--org] [--retention] [--auto-prune] [--cwd <path>]
+  agent-receipt init [--cursor] [--grok] [--claude] [--codex] [--org] [--retention] [--auto-prune] [--cwd <path>]
 
 Options:
-  --cursor               Drop .cursor/rules/agent-receipt.mdc (agent runs capture)
+  --cursor               Drop .cursor/rules/agent-receipt.mdc and sessionEnd and stop hooks
   --grok                 Drop .grok rule + SessionEnd hook (dirty-tree wrap, --redact)
+  --claude               Drop Claude Code SessionEnd and Stop hooks plus a project rule
+  --codex                Drop Codex SessionEnd and Stop hooks plus a marked AGENTS.md block
   --org                  Set redact: true and failOn: high (alias: --policy)
   --policy               Alias of --org
   --retention            Set maxCount: 100 and maxAgeDays: 30 (does not set autoPrune)
@@ -59,6 +61,10 @@ Creates:
   .cursor/rules/…             only with --cursor
   .grok/rules/…               only with --grok (loaded every Grok session)
   .grok/hooks/…               only with --grok (SessionEnd; needs grok --trust)
+  .claude/settings.json       only with --claude (SessionEnd and Stop)
+  .codex/hooks.json           only with --codex (SessionEnd and Stop; AGENTS.md markers)
+
+\`init --claude\`, \`init --codex\`, \`init --cursor\`, and \`init --grok\` call the same installers as \`adapters install\`. The first install snapshots the previous file bytes. A later install refreshes that snapshot when the file changed. See \`help adapters\`.
 
 Examples:
   agent-receipt init
@@ -69,7 +75,34 @@ Examples:
   agent-receipt init --retention --auto-prune
   agent-receipt init --cursor
   agent-receipt init --grok
+  agent-receipt init --claude
+  agent-receipt init --codex
   agent-receipt init --cwd ~/code/my-app
+`,
+
+  adapters: `agent-receipt adapters — native capture hooks for Claude Code, Cursor, Grok, and Codex
+
+Usage:
+  agent-receipt adapters [list|status|install|uninstall] [name] [--dry-run] [--json] [--stop|--no-stop] [--force]
+
+\`list\` (default) and \`status\` print whether each agent command is on PATH and whether this repo has the project hook. \`install\` merges the hook into the project config. \`uninstall\` puts the pre-install bytes back when the file is unchanged since install.
+
+Names: \`claude-code\` (alias \`claude\`), \`cursor\`, \`grok\`, \`codex\`. Omit the name to install or uninstall every adapter.
+
+The first install copies each file it is about to change. The copy lives under the git dir (\`git rev-parse --git-path\`), keyed to the project root, not the process cwd. A later install refreshes that snapshot when the file changed after install. Uninstall restores the snapshot when the file still matches the post-install hash. When it does not, uninstall strips only this adapter's hooks and prints \`stripped\`. \`--force\` restores the snapshot anyway. With no snapshot, uninstall strips and does not say \`restored\`. A dry-run that would drop those edits prints \`would discard user changes\`. Existing keys and other hooks stay. Invalid JSON is refused and is not rewritten. \`hooks\` must be a JSON object, and each event we install must be an array. A symlink is refused. A read-only file fails with \`permission denied\` and leaves no snapshot.
+
+\`--dry-run\` reports the paths and writes nothing, including no snapshot.
+\`--no-stop\` skips the extra Stop hook on Claude Code, Codex, and Cursor. SessionEnd stays. Codex installs SessionEnd and Stop. Grok uses SessionEnd only.
+\`--json\` prints one object: \`list\` / \`status\` use \`adapters\`; \`install\` / \`uninstall\` use \`results\` (\`files\`, \`changed\`).
+
+Hook scripts exit 0. They wrap only when the tree is dirty, ignoring the receipt out dir and the store index and audit log wrap itself writes. Wrap stdout is discarded, and the hook stops waiting after 120 seconds. They pass \`--redact\`, and pass \`--transcript\` when the host sends \`transcript_path\`. Hook commands use \`git rev-parse --show-toplevel\`.
+
+Examples:
+  agent-receipt adapters
+  agent-receipt adapters status --json
+  agent-receipt adapters install claude-code --dry-run
+  agent-receipt adapters install cursor --no-stop
+  agent-receipt adapters uninstall grok
 `,
 
   capture: `agent-receipt capture — snapshot a git range into a Markdown receipt
@@ -117,7 +150,28 @@ Options:
                          A broken audit chain skips the delete, warns on
                          stderr, and does not change this command's exit code.
   --no-prune             Force auto-prune off (overrides config and --prune)
+  --transcript <file>    Record tool calls from this transcript (JSONL or JSON)
+  --adapter <name>       Parser: claude-code, cursor, grok, or codex
   --cwd <path>           Run as if started in this directory
+
+\`--transcript\` adds a \`## Tool calls\` section inside the hashed body.
+MCP calls (\`mcp__server__tool\`, CallMcpTool, Codex \`mcp_tool_call\`,
+JSON-RPC \`tools/call\`) are labeled \`mcp:<server>/<tool>\`. Arguments
+are redacted before they are stringified: object keys matching
+pass, pwd, secret, token, key, auth, cred, cookie, or session become
+\`[REDACTED]\`, then the same secret patterns as \`--redact\` run, including
+token prefixes after \`_\`, a high-entropy pass, and internal hosts such
+as \`.corp\` and \`.lan\`. That happens even when \`--redact\` is off.
+A shell command is not scanned for paths. A missing
+or unparseable file warns on stderr, omits the section, and still exits 0.
+An unknown \`--adapter\` exits 1. Omit \`--adapter\` and the transcript
+is sniffed (Codex, Cursor, JSON-RPC, or Claude). An ambiguous file uses
+\`--agent\` when that label is a known adapter. The companion JSON adds
+\`toolCalls\`. Those companion fields are not covered by the receipt
+integrity hash or the Ed25519 sidecar. Trust the hashed \`## Tool calls\`
+section. Low-severity risks: \`tool-call-unmentioned-diff\` (a diff path
+no call mentions) and \`tool-call-write-not-in-diff\` (a write tool whose
+path is absent from the diff).
 
 \`--no-prune\` wins, then \`--prune\`, then config \`autoPrune: true\`.
 Absent or false: this command does not delete. \`autoPrune: true\` with no
@@ -203,7 +257,13 @@ Options:
                          autoPrune: true). No --force. A broken audit chain
                          warns and does not change the exit code.
   --no-prune             Force auto-prune off (overrides config and --prune)
+  --transcript <file>    Record tool calls from this transcript (same as capture)
+  --adapter <name>       Parser: claude-code, cursor, grok, or codex
   --cwd <path>           Run as if started in this directory
+
+\`--transcript\` and \`--adapter\` match \`capture\`. Tool arguments are
+redacted even when \`--redact\` is off. A missing transcript warns and
+the receipt is still written. An unknown adapter exits 1.
 
 \`--no-prune\` wins, then \`--prune\`, then config \`autoPrune: true\`.
 \`--json\` adds \`autoPrune\`, \`pruned\`, and \`pruneReason\` only when this
@@ -746,7 +806,7 @@ exits 2. Add \`*.report.html -text\` and \`.agent-receipt/** -text\` to
 normalized. \`audit.jsonl\` is a separate check: exactly one trailing CR on each
 line is stripped before the chain hash. A second trailing CR fails the chain.
 Invalid UTF-8 exits 2. \`renderVersion\` selects the
-renderer. Version 1 is this page. An unknown renderVersion exits 2. Bidi controls in rendered
+renderer. Version 2 is this page and includes the tool-call section when the receipt has one. Version 1 stays for pages written before that. An empty tool-call section is omitted from the payload. 1.0.30 rejects a payload that includes \`toolCalls\`, and it rejects renderVersion 2, so this page is a forward-compat break for 1.0.30. An unknown renderVersion exits 2. Bidi controls in rendered
 fields, including agent names, are shown as \`\\uXXXX\`. Share HTML uses the same escape.
 
 Candidate receipts come from outDir. \`--receipts <dir>\` searches that
@@ -801,11 +861,13 @@ or path wins. When that event is \`prune\`, or a prune event removed the
 index row, a missing capture, wrap, or watch event for that receipt is
 not tampering. The result is exit 0 and the reason is
 "receipt absent; audit.jsonl (unsigned) records a prune", under the headline
-"VERIFIED (payload only; N receipts not checked)". Exit 2 only when a
+"VERIFIED (payload only; 1 receipt not checked)" or "N receipts not checked". Exit 2 only when a
 capture, wrap, or watch event for that receipt does exist and the prune
 is timestamped more than 5 seconds before it. Clock skew of up to 5
 seconds stays payload-only. An unparseable prune or capture timestamp,
-when a capture event exists, exits 2 with that same before-capture reason.
+when a capture event exists, exits 2 with "receipt <id> prune timestamp is not a date".
+That reason does not say "timestamped before its capture". A real earlier
+date still uses the before-capture reason.
 audit.jsonl is not signed.
 Anyone with write access can extend it, so that reason does not mean the
 prune was legitimate. When the store has no retention config (\`maxCount\`,
@@ -844,8 +906,10 @@ a planted copy can win. That is unchanged.
 Exit codes:
   0  signature valid, page matches, verdict VERIFIED, every candidate acceptable
   0  VERIFIED page whose receipts are not listed in this store
-     (printed "VERIFIED (payload only; N receipts not checked)")
-  0  no --require-sig, page matches, verdict UNSIGNED (printed UNSIGNED)
+     (printed "VERIFIED (payload only; 1 receipt not checked)" or "N receipts not checked")
+  0  no --require-sig, page matches, verdict UNSIGNED
+     (printed UNSIGNED, or "UNSIGNED (1 receipt not checked)" / "N receipts not checked"
+     when this store does not list the receipt)
   1  missing file, unreadable file, or --receipts is not a readable directory
   2  bad or missing blocks, schema, signature, page bytes, BOM, CR or CRLF,
      an unacceptable candidate, a receipt deleted while the index or audit
@@ -859,7 +923,10 @@ An empty allowlist is inactive. With no trust store,
 \`--require-sig\` accepts any valid self-signed page and prints a one-line
 note. Use a trust allowlist (\`agent-receipt trust add --self\`) so a
 reviewer accepts only known keys. originalFingerprint, resignedBy, and
-signedBy are the manifest signer's claims. This is not a certificate authority.
+signedBy are the manifest signer's claims. A trusted key holder can
+re-sign an altered narrative. Trust means trusting the signer. \`report
+verify\` checks the signature and the page bytes. It does not prove the
+narrative matches an earlier unsigned draft. This is not a certificate authority.
 
 \`--json\` prints one object (command \`report\` or \`report-verify\`).
 The report does not append the audit log and does not add an index row.
@@ -1491,6 +1558,8 @@ Prod ready (short checklist — WARN/INFO do not fail the command):
   git-clean     working tree clean? Dirty is a warning, not a failure
   cursor        init --cursor rule present?
   grok          init --grok rule + SessionEnd hook present?
+  adapters      Native capture adapters (claude-code, codex, grok, cursor).
+                Always INFO, including under --strict. Does not fail doctor.
 
 Exit 0 if no FAIL checks; exit 1 otherwise. WARN/INFO are non-fatal.
 Default \`doctor\` does not fail when org policy or retention is unset.
@@ -1614,8 +1683,9 @@ Usage:
   agent-receipt <command> [options]
 
 Commands:
-  init                   Write config + notes (--org sets redact + failOn; --retention; --auto-prune; --cursor, --grok)
-  capture                Capture a git snapshot receipt (Markdown)
+  init                   Write config + notes (--org sets redact + failOn; --retention; --auto-prune; --cursor, --grok, --claude, --codex)
+  adapters               Native hooks: list, status, install, uninstall (--dry-run, --json, --no-stop)
+  capture                Capture a git snapshot receipt (Markdown; --transcript records tool calls)
   wrap                   End-of-session: capture + TL;DR + verify
   share [path]           Redact + HTML (+ optional md, or --package handoff dir) + verify + TL;DR
   export [path]          Write self-contained HTML (or Markdown) receipt
@@ -1664,6 +1734,11 @@ Examples:
   agent-receipt init --auto-prune
   agent-receipt init --cursor
   agent-receipt init --grok
+  agent-receipt init --claude
+  agent-receipt init --codex
+  agent-receipt adapters
+  agent-receipt adapters install claude-code --dry-run
+  agent-receipt capture --agent claude-code --transcript session.jsonl --adapter claude-code
   agent-receipt wrap --agent cursor --message "session done"
   agent-receipt wrap --json --fail-on high
   agent-receipt share --out share.html --md share.md

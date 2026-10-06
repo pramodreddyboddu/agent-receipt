@@ -22,6 +22,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     'package',
     'pack',
     'dry-run',
+    'stop',
+    'no-stop',
     'prune',
     'no-prune',
     'auto-prune',

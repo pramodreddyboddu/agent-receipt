@@ -61,6 +61,8 @@ export interface ProveHtmlSummary {
   deletions?: number;
   files: string[];
   risks: Array<{ severity: string; code: string; detail: string }>;
+  /** Present only when the receipt has a Tool calls section. */
+  toolCalls?: string;
 }
 
 export interface ProveHtmlOptions {
@@ -289,6 +291,9 @@ export function renderProveHtml(
     filesTable(summary),
     '<h2>Risk findings</h2>',
     risksTable(summary),
+    ...(summary.toolCalls
+      ? ['<h2>Tool calls</h2>', `<pre>${safeText(summary.toolCalls)}</pre>`]
+      : []),
     `<footer><p>${escapeHtml(PROVE_HTML_DISCLAIMER)}</p></footer>`,
     '</body>',
     '</html>',

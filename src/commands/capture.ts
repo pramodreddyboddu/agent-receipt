@@ -52,6 +52,7 @@ import {
   riskToGate,
 } from '../lib/gate.js';
 import { autoPruneGateFields, maybeAutoPrune, type AutoPruneResult } from '../lib/auto-prune.js';
+import { loadToolCallSection, toolCallCrossCheck, type ToolCallSection } from '../lib/adapters/tool-calls.js';
 
 export interface CaptureOptions {
   since?: string;
@@ -110,6 +111,10 @@ export interface CaptureOptions {
    * Off by default. Not a daemon.
    */
   autoPrune?: boolean;
+  /** Agent transcript. A missing or unparseable file warns and omits the section. */
+  transcript?: string;
+  /** Adapter name. Defaults from `--agent` when that name is known. */
+  adapter?: string;
 }
 
 export interface CaptureResult {
@@ -211,6 +216,21 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
   }
 
   const risks = analyzeRisks(files, diffs, cfg.riskAllowlist);
+  let toolCalls: ToolCallSection | undefined;
+  if (opts.transcript) {
+    const loaded = loadToolCallSection({
+      cwd,
+      transcript: opts.transcript,
+      adapter: opts.adapter,
+      agent,
+    });
+    if (!loaded.ok) {
+      console.error(`warning: ${loaded.reason}; receipt has no tool-call section`);
+    } else {
+      toolCalls = loaded.section;
+      risks.push(...toolCallCrossCheck(files.map((file) => file.path), toolCalls.events, resolve(cwd)));
+    }
+  }
   const riskSum = summarizeRisks(risks);
   const failedOn = Boolean(
     opts.failOn && meetsFailOn(riskSum.maxSeverity, opts.failOn),
@@ -238,6 +258,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     risks,
     cwd: resolve(cwd),
     uncommitted,
+    toolCalls,
   };
 
   let markdown = formatMarkdown(data, {

@@ -10,6 +10,20 @@ export const DEFAULT_MAX_RECEIPT_BYTES = 32 * 1024 * 1024;
 export const DEFAULT_MAX_SIDECAR_BYTES = 256 * 1024;
 /** session-manifest.json. Thousands of receipt rows still fit. */
 export const DEFAULT_MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
+/**
+ * Transcript file passed to wrap/capture. Over this size the section is
+ * skipped with a warning (exit 0). It is not a ByteLimitError.
+ */
+export const DEFAULT_MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
+/** Tool-call events kept on the receipt. The rest are counted as truncated. */
+export const DEFAULT_MAX_TOOL_EVENTS = 200;
+/** Characters kept in one redacted args summary or shell command. */
+export const DEFAULT_MAX_TOOL_ARG_CHARS = 240;
+/**
+ * Rendered `## Tool calls` section. Extra events are dropped and the
+ * tool-calls sha256 is recomputed over what remains.
+ */
+export const DEFAULT_MAX_TOOL_SECTION_BYTES = 32 * 1024;
 
 /** Oversize input. Callers map this to exit 2 and write nothing. */
 export class ByteLimitError extends Error {

@@ -11,6 +11,7 @@ import {
 } from '../lib/config.js';
 import { MARKER_BEGIN } from './hooks.js';
 import { CURSOR_RULE_REL } from '../lib/cursor-rule.js';
+import { listAdapterStatus } from '../lib/adapters/index.js';
 import {
   GROK_HOOK_REL,
   GROK_RULE_REL,
@@ -618,6 +619,15 @@ export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCh
     });
   }
 
+  const adapters = listAdapterStatus(cwd);
+  checks.push({
+    name: 'adapters',
+    status: 'info',
+    detail: adapters
+      .map((adapter) => `${adapter.name}: ${adapter.detected ? 'detected' : 'not detected'}, ${adapter.status}`)
+      .join('; '),
+  });
+
   if (!opts.strict) return checks;
   return applyStrictGates(cwd, checks);
 }
@@ -667,6 +677,7 @@ const PROD_CHECKS = [
   'git-clean',
   'cursor',
   'grok',
+  'adapters',
 ];
 
 /** Human sections: Environment, then Prod ready. JSON `checks` uses this order. */

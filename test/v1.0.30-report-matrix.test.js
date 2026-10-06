@@ -24,6 +24,8 @@ import { basename, dirname, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { publishRedactedReceipt } from '../dist/lib/redact.js';
+import { escapeHtml } from '../dist/lib/html.js';
+import { parseReportHtml, renderReportHtml } from '../dist/lib/report-html.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, 'bin', 'agent-receipt.js');
@@ -198,7 +200,7 @@ function assertPayloadOnly(dir, args, label, note) {
   const got = verifyCall(dir, args);
   assertCode(got, 0, label);
   assert.equal(got.body.verdict, 'VERIFIED_PAYLOAD_ONLY', `${label}\n${got.json.out}`);
-  assert.match(got.human.out, /^VERIFIED \(payload only; .+ receipts not checked/m, got.human.out);
+  assert.match(got.human.out, /^VERIFIED \(payload only; .+ receipts? not checked/m, got.human.out);
   assert.doesNotMatch(got.human.out, /^VERIFIED  report verify/m, got.human.out);
   assert.equal(got.body.failed, 0);
   if (note) {
@@ -399,7 +401,7 @@ function appendAuditLine(dir, fields) {
   const event = {
     ts: fields.ts,
     event: fields.event,
-    version: fields.version || '1.0.30',
+    version: fields.version || '1.0.31',
     experimental: true,
     path: fields.path,
     sha256: fields.sha256 ?? null,
@@ -1819,7 +1821,7 @@ const CASES = [
       const got = assertPayloadOnly(dir, ['report', 'verify', made.htmlPath], 'wipe');
       assert.equal(got.body.reason, null);
       assert.equal(got.body.notChecked, 1);
-      assert.match(got.human.out, /^VERIFIED \(payload only; 1 receipts not checked\)  report verify/m);
+      assert.match(got.human.out, /^VERIFIED \(payload only; 1 receipt not checked\)  report verify/m);
       assert.doesNotMatch(`${got.human.out}\n${got.human.err}\n${got.json.out}`, /records a prune|pruned per audit/);
     },
   },
@@ -2078,6 +2080,110 @@ const CASES = [
       assert.equal(got.body.exitCode, 2);
       const help = cli(root, ['help', 'report']);
       assert.match(help, /FAILED \(unsigned\)/);
+    },
+  },
+  {
+    id: 'm3-resign-package',
+    gate: 'regate6',
+    kind: 'genuine',
+    run() {
+      const source = initRepo('matrix-m3-a-');
+      cli(source, ['keygen']);
+      commitFile(source, 'note.txt', 'm3\n');
+      cli(source, ['wrap', '--sign', '--session', 's-m3', '--host', 'm3-host.example', '--agent', 'qa', '--message', 'm3-narrative-token']);
+      const receipt = latestReceipt(source);
+      const dest = initRepo('matrix-m3-b-');
+      cli(dest, ['keygen']);
+      copyReceiptPair(receipt, join(dest, '.agent-receipt', 'receipts', basename(receipt)));
+      const refused = cliResult(dest, ['session', 'export', 's-m3', '--json']);
+      assert.equal(refused.code, 2, refused.out + refused.err);
+      assert.match(`${refused.out}\n${refused.err}`, /--resign/);
+      const exported = parseJson(cli(dest, ['session', 'export', 's-m3', '--resign', '--json']));
+      const manifest = JSON.parse(readFileSync(join(exported.packagePath, 'session-manifest.json'), 'utf8'));
+      assert.ok(manifest.receipts[0].originalFingerprint);
+      assert.ok(manifest.receipts[0].resignedBy);
+      assert.notEqual(manifest.receipts[0].originalFingerprint, manifest.receipts[0].resignedBy);
+      const packaged = parseJson(cli(dest, ['report', exported.packagePath, '--out', join(dest, 'm3.report.html'), '--json']));
+      assertVerified(dest, ['report', 'verify', packaged.htmlPath, '--receipts', exported.packagePath], 'm3-resign');
+      const narrative = packageFiles(exported.packagePath).find((file) => readFileSync(file, 'utf8').includes('m3-narrative-token'));
+      assert.ok(narrative, 'packaged narrative missing');
+      replaceOnce(narrative, 'm3-narrative-token', 'm3-narrative-tampered');
+      assertTamper(dest, ['report', 'verify', packaged.htmlPath, '--receipts', exported.packagePath], 'm3-tamper', /fails integrity/);
+    },
+  },
+  {
+    id: 'prune-not-a-date',
+    gate: 'regate6',
+    kind: 'tamper',
+    run() {
+      const { dir, made, receipt, sha256 } = signedOne('not-a-date');
+      const capture = auditLines(dir).map((line) => JSON.parse(line)).find((event) => event.sha256 === sha256);
+      assert.ok(capture, 'expected a capture event');
+      removeReceipt(receipt);
+      appendAuditLine(dir, {
+        ts: 'not-a-date',
+        event: 'prune',
+        path: relFrom(dir, receipt),
+        sha256,
+      });
+      const got = assertTamper(
+        dir,
+        ['report', 'verify', made.htmlPath],
+        'prune-not-a-date',
+        /prune timestamp is not a date/,
+      );
+      assert.doesNotMatch(got.body?.reason ?? '', /timestamped before its capture/);
+      const help = cli(root, ['help', 'report']);
+      assert.match(help, /prune timestamp is not a date/);
+      assert.doesNotMatch(help, /unparseable prune or capture timestamp, when a capture event exists, exits 2 with that same before-capture reason/);
+    },
+  },
+  {
+    id: 'unsigned-not-checked-count',
+    gate: 'regate6',
+    kind: 'genuine',
+    run() {
+      const { html } = unsignedFixture();
+      const fresh = initRepo('matrix-unsigned-count-');
+      const file = join(fresh, 'moved.report.html');
+      writeFileSync(file, html);
+      const got = verifyCall(fresh, ['report', 'verify', file]);
+      assert.equal(got.human.code, 0, `${got.human.out}\n${got.human.err}`);
+      assert.match(got.human.out, /^UNSIGNED \(1 receipt not checked\)/m);
+      assert.equal(got.body.verdict, 'UNSIGNED');
+      assert.equal(got.body.notChecked, 1);
+      const required = cliResult(fresh, ['report', 'verify', file, '--require-sig']);
+      assert.equal(required.code, 2, required.out + required.err);
+
+      const listedRepo = initRepo('matrix-unsigned-listed-');
+      commitFile(listedRepo, 'note.txt', 'listed\n');
+      cli(listedRepo, ['wrap', '--agent', 'ci', '--message', 'listed unsigned']);
+      const made = parseJson(cli(listedRepo, ['report', 'last', '--json']));
+      removeReceipt(latestReceipt(listedRepo));
+      assertTamper(listedRepo, ['report', 'verify', made.htmlPath], 'unsigned-still-listed', /still lists it/);
+    },
+  },
+  {
+    id: 'legacy-cr-page',
+    gate: 'regate6',
+    kind: 'genuine',
+    run() {
+      const escaped = escapeHtml('a\rb');
+      assert.equal(escaped.includes('\r'), false);
+      assert.match(escaped, /\\u000D/);
+      const { html } = unsignedFixture();
+      const parsed = parseReportHtml(html);
+      parsed.payload.receipts[0].message = 'line\rbreak';
+      const page = renderReportHtml(parsed.payload, null);
+      assert.equal(page.includes('\r'), false);
+      assert.match(page, /\\u000D/);
+      const fresh = initRepo('matrix-cr-');
+      const file = join(fresh, 'cr.report.html');
+      writeFileSync(file, page);
+      const got = verifyCall(fresh, ['report', 'verify', file]);
+      assert.equal(got.human.code, 0, `${got.human.out}\n${got.human.err}`);
+      assert.match(got.human.out, /^UNSIGNED \(1 receipt not checked\)/m);
+      assert.equal(got.body.notChecked, 1);
     },
   },
 ];
