@@ -183,12 +183,38 @@ function summarize(input: unknown): string {
   }
 }
 
-/** Keys whose values are secrets even when the value itself is low-entropy. */
-const SENSITIVE_ARG_KEY = /pass|pwd|secret|token|key|auth|cred|cookie|session/i;
+/**
+ * A secret-shaped key, after camelCase is split (`apiKey` → `api_key`).
+ * `key` must be its own token so `keyboard` and `monkey` stay. No `/g`:
+ * `RegExp.test` with `/g` remembers `lastIndex`.
+ */
+const SENSITIVE_ARG_KEY =
+  /(^|[^a-z0-9])(pass(?:word|wd)?|pwd|secrets?|tokens?|auth(?:orization|entication|n)?|cred(?:ential)?s?|cookies?|sessions?|keys?)([^a-z0-9]|$)/i;
+
+function normalizeArgKey(key: string): string {
+  return key
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[-\s]+/g, '_')
+    .toLowerCase();
+}
+
+/** Path-like keys are file names, not secrets, even when they contain `key`. */
+function isPathLikeArgKey(key: string): boolean {
+  return key.includes('/') || key.includes('\\');
+}
+
+/** True when the whole value should be replaced. Path keys are not. */
+export function isSensitiveArgKey(key: string): boolean {
+  if (isPathLikeArgKey(key)) return false;
+  return SENSITIVE_ARG_KEY.test(normalizeArgKey(key));
+}
 
 /**
  * Walk tool arguments before they are stringified. A JSON `"password":"…"`
  * value never matches `password=…` because the quote sits in front of `:`.
+ * Free text under a non-sensitive key (`contents`, `new_string`) still goes
+ * through `redactTranscriptText`.
  */
 export function redactArgsValue(value: unknown, depth = 0): unknown {
   if (depth > 8) return '[REDACTED]';
@@ -196,7 +222,7 @@ export function redactArgsValue(value: unknown, depth = 0): unknown {
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = SENSITIVE_ARG_KEY.test(key) ? '[REDACTED]' : redactArgsValue(child, depth + 1);
+      out[key] = isSensitiveArgKey(key) ? '[REDACTED]' : redactArgsValue(child, depth + 1);
     }
     return out;
   }

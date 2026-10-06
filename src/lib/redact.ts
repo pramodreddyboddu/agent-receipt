@@ -148,6 +148,13 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
     replacement: '$1[REDACTED]',
   },
   {
+    // 1–3 character assignment values (`password="ab"`). The `{4,}` pattern
+    // above already took longer values. The lookahead keeps `password=[REDACTED]`
+    // from being matched again.
+    re: /((?:pw|pwd|pass(?:word|wd)?|secret|token|api[_-]?key)\s*[:=]\s*['"]?)([^'"\s,;)\\]{1,3})(?=['"\s,;)\\]|$)/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
     // Truncated high-entropy previews from prior risk findings (e.g. "K8vQm2nXp9Lr…")
     re: /\b([A-Za-z0-9+/=_\-.]{8,})…/g,
     replacement: '[REDACTED]…',

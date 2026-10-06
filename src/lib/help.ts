@@ -395,20 +395,90 @@ Examples:
   agent-receipt share receipt.md --fail-on high --json
 `,
 
+  attest: `agent-receipt attest — in-toto Statement v1 in a DSSE envelope
+
+Usage:
+  agent-receipt attest [path|last] [--out <file>] [--predicate run|slsa] [--slsa] [--session <id>] [--no-sign] [--json]
+  agent-receipt attest --verify <file.intoto.jsonl> [--trusted-key <fp>] [--json]
+  agent-receipt attest verify <file.intoto.jsonl>
+  agent-receipt export [path] --format intoto
+
+Writes one DSSE envelope per line (\`.intoto.jsonl\`). Payload type is
+\`application/vnd.in-toto+json\`. The statement \`_type\` is
+\`https://in-toto.io/Statement/v1\`. The default predicate is
+\`https://agent-receipt.dev/run/v1\` (agent, session, commands, tool calls,
+policy hits, exit code, hash-chain head). \`--slsa\` or \`--predicate slsa\`
+uses \`https://slsa.dev/provenance/v1\` (\`buildDefinition\` and \`runDetails\`).
+
+Subjects are the receipt file and changed files that are still regular files
+under the byte cap, each with a sha256 of the raw bytes. The hash-chain head
+is the receipt canonical sha256 (the hex \`verify\` prints), not the raw file
+digest. Paths are relative to the working directory. Host and workspace are
+omitted. Narrative fields are redacted before they enter the predicate.
+There is no \`--no-redact\`.
+
+A local Ed25519 key signs the DSSE pre-authentication encoding (PAE), not
+the receipt sha256 hex. \`keyid\` is the same fingerprint as \`sign\`. The
+envelope also carries the SPKI public key so a peer can check it. The
+private key is never written. Missing keys write an unsigned envelope, warn,
+and exit 0. \`--no-sign\` does the same. A corrupt key file exits 1 and
+writes nothing. A receipt that fails integrity exits 2 and writes nothing.
+
+\`attest --verify\` checks the signature, each subject digest against the
+file on disk, and the hash-chain head against the receipt. Unsigned, a bad
+signature, an untrusted fingerprint (when the allowlist is active), a
+digest mismatch, or a hash mismatch exits 2. A missing file exits 1.
+An empty trust store accepts any cryptographically valid signature and
+prints a note (\`trusted\` is null). This is not a CA.
+
+One receipt writes \`<stem>.intoto.jsonl\` beside that receipt. A session
+package writes \`<id>.intoto.jsonl\` beside the package. \`--session <id>\`
+writes \`<id>.intoto.jsonl\` beside \`outDir\`. \`--out\` is a file, or a
+directory when it exists or the path ends with \`/\`. The command does not
+append the audit log.
+
+Options:
+  --out <path>           Output file or directory (default: beside the input)
+  --predicate <run|slsa> Predicate (default: run). \`--slsa\` is the short form
+  --session <id>         Every local receipt in that session, one envelope each
+  --no-sign              Write an unsigned envelope even when keys exist
+  --verify <file>        Check a \`.intoto.jsonl\` file (alias: \`attest verify\`)
+  --trusted-key <fp>     Extra fingerprint for this verify only
+  --json                 One JSON object on stdout. Warnings stay on stderr
+  --cwd <path>           Run as if started in this directory
+
+Exit codes: 0 written, or every envelope verified. 2 integrity, signature,
+digest, or hash-chain failure. 1 usage, a missing file, or a corrupt key.
+
+Examples:
+  agent-receipt attest
+  agent-receipt attest last --slsa --json
+  agent-receipt attest --session my-session
+  agent-receipt attest .agent-receipt/my-session.session
+  agent-receipt attest --verify .agent-receipt/receipts/receipt.intoto.jsonl
+  agent-receipt export --format intoto
+`,
+
   export: `agent-receipt export — write a shareable HTML (or Markdown) receipt
 
 Usage:
   agent-receipt export [path] [--out <file>] [--redact] [--format html|markdown]
+  agent-receipt export [path] --format intoto
 
 If path is omitted, exports the newest receipt under outDir.
 Default format is self-contained HTML (no external CSS/JS) — open in a browser
 or share as a single file.
 
+\`--format intoto\` (aliases \`in-toto\`, \`dsse\`) writes the same
+\`.intoto.jsonl\` DSSE envelope as \`attest\`. It always redacts the
+predicate and does not append the audit log. See \`help attest\`.
+
 Options:
   --out <path>           Output path (default: sibling .html next to the receipt)
   --redact               Mask high/secret findings before writing
-  --include-host         With --redact, keep the Host label (default: mask it)
-  --format <html|markdown|md>
+  --include-host         With --redact, keep the Host label (default: mask it).
+                         Not accepted with \`--format intoto\` (Host is omitted).
+  --format <html|markdown|md|intoto>
                          Output format (default: html)
   --cwd <path>           Run as if started in this directory
 
@@ -417,15 +487,16 @@ sidecar when the sha256 is unchanged, or re-sign the published file when
 local keys exist and the body was rewritten. HTML stays unsigned. Peers
 verify and sign the Markdown.
 
-Appends \`.agent-receipt/audit.jsonl\` (event \`export\`). \`share\` records
-\`share\` instead, so an export made by share is not a second line.
-The line stores the output path and the markdown body's sha256 — not the
-HTML bytes and not a diff.
+HTML and Markdown append \`.agent-receipt/audit.jsonl\` (event \`export\`).
+\`--format intoto\` does not. \`share\` records \`share\` instead, so an
+export made by share is not a second line. The line stores the output path
+and the markdown body's sha256 — not the HTML bytes and not a diff.
 
 Examples:
   agent-receipt export
   agent-receipt export --out share.html --redact
   agent-receipt export receipt.md --format markdown --redact --out safe.md
+  agent-receipt export --format intoto
 `,
 
   html: `agent-receipt html — alias for export as self-contained HTML
@@ -1688,7 +1759,7 @@ Commands:
   capture                Capture a git snapshot receipt (Markdown; --transcript records tool calls)
   wrap                   End-of-session: capture + TL;DR + verify
   share [path]           Redact + HTML (+ optional md, or --package handoff dir) + verify + TL;DR
-  export [path]          Write self-contained HTML (or Markdown) receipt
+  export [path]          Write self-contained HTML, Markdown, or --format intoto
   html [path]            Alias for export as HTML
   show [path]            Pretty-print last / given receipt (full body)
   last                   Path + glance of the most recent receipt (--json for scripts)
@@ -1700,6 +1771,7 @@ Commands:
   session import <dir>   Verify a session package and merge it into outDir (alias: merge)
   keygen                 Create a local Ed25519 keypair under .agent-receipt/keys
   sign [path]            Attest the receipt sha256 into a .sig.json sidecar
+  attest [path|last]     in-toto Statement v1 in a DSSE envelope (.intoto.jsonl). attest --verify checks it
   trust                  Known-keys allowlist: list, show, add <fp>, add --self, rm <fp>
   verify [path]          Hash-check integrity (hash-only; --package checks a share dir; --require-sig opts in)
   import <dir>           Verify a share package, then copy receipt.md into outDir
@@ -1765,6 +1837,9 @@ Examples:
   agent-receipt keygen
   agent-receipt trust add --self
   agent-receipt sign
+  agent-receipt attest
+  agent-receipt attest --verify .agent-receipt/receipts/receipt.intoto.jsonl
+  agent-receipt export --format intoto
   agent-receipt verify
   agent-receipt verify --package foo.share
   agent-receipt import foo.share
@@ -1798,7 +1873,7 @@ Examples:
 Docs: https://github.com/pramodreddyboddu/agent-receipt
 Agent tips: docs/agents.md · docs/grok-cli.md · examples/ (Cursor, Grok, Claude Code, Aider)
 Prod / CI: docs/business.md · examples/org-policy.yml · examples/github/
-Schema: docs/receipt.schema.json · docs/gate.schema.json · docs/signature.schema.json · docs/report-payload.schema.json · Release: docs/RELEASE.md
+Schema: docs/receipt.schema.json · docs/gate.schema.json · docs/signature.schema.json · docs/report-payload.schema.json · docs/intoto-statement.schema.json · Release: docs/RELEASE.md
 `;
 }
 

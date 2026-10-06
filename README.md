@@ -74,6 +74,8 @@ agent-receipt verify            # integrity (hash-only)
 agent-receipt keygen             # local Ed25519 keypair (optional)
 agent-receipt trust add --self   # allowlist that fingerprint (not a CA)
 agent-receipt sign               # attest the receipt sha256
+agent-receipt attest            # in-toto Statement in a DSSE envelope
+agent-receipt attest --verify .agent-receipt/receipts/*.intoto.jsonl
 agent-receipt prove             # hash + audit link + signature status
 agent-receipt prove --page      # human one-pager beside the receipt (foo.prove.md)
 agent-receipt prove --html      # offline HTML verification report (foo.prove.html)
@@ -130,6 +132,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `watch` | Poll git; auto-capture on commits **or dirty tree** (`--once`, `--commits-only`) |
 | `keygen [--force]` | Create a local Ed25519 keypair under `.agent-receipt/keys/` (PKCS8 private, SPKI public). Idempotent; `--force` rotates. No network |
 | `sign [path]` | Hash-check a receipt, then write `foo.sig.json` over the sha256 hex. Missing keys exit 1. Hash failure exits 2 and writes nothing. Capture and wrap sign only with `--sign` |
+| `attest [path\|last]` | in-toto Statement v1 inside a DSSE envelope (`.intoto.jsonl`). Subjects are the receipt and changed files. `--slsa` writes SLSA Provenance v1. `--verify` checks the signature, subject digests, and the hash-chain head. `export --format intoto` is the same writer |
 | `trust` | Known-keys allowlist: `list`, `show`, `add <fp>`, `add --self`, `rm <fp>` on `.agent-receipt/trusted-keys.txt`. `trust show` is read-only and reports whether the local key is listed. Not a CA |
 | `verify [path]` | Hash-check tamper-evident integrity. Default stays hash-only (unsigned receipts still pass). `--package` checks a `share --package` directory (manifest, file hashes, receipt, optional signatures). `--require-sig` requires a valid `*.sig.json` and, when a trust store is configured, a known fingerprint. `--json` includes `trailingIgnored` (boolean) |
 | `import <dir>` | Verify a share package, then copy `receipt.md` (and `receipt.sig.json` when present) into the local receipt store. `--dry-run` writes nothing. Not a local capture |
@@ -416,7 +419,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.31`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.32`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -570,6 +573,17 @@ Peers verify and sign the Markdown. `share --package` puts that HTML and
 the Markdown (plus optional `receipt.sig.json` and `manifest.json`) in one
 `foo.share/` directory so a peer can open the page and still verify the proof.
 
+`attest` (v1.0.32) writes that same local key over an in-toto Statement v1
+wrapped in a DSSE envelope (`.intoto.jsonl`). The signature covers the DSSE
+PAE bytes, not the receipt sha256 hex. Subjects are the receipt file and
+changed files, each hashed as raw bytes. The predicate carries the run
+(or SLSA Provenance v1 with `--slsa`) and the receipt hash-chain head.
+Narrative fields are redacted first. Missing keys write an unsigned envelope
+and warn. The private key is never included. `attest --verify` checks the
+signature, the subject digests on disk, and the hash-chain head. An empty
+trust store accepts any cryptographically valid signature. This is not a CA.
+`export --format intoto` is the same writer and does not append the audit log.
+
 Thin local Ed25519 attest landed in 1.0.16. `verify --require-sig` and the
 portable sidecar handoff landed in 1.0.17. A thin known-keys allowlist
 landed in 1.0.18. A signed CI drop-in (`sign`, require-sig, trust examples)
@@ -587,8 +601,10 @@ multi-agent receipt linking landed in v1.0.28 (session, parent, `wrap --link`,
 `session import`, optional `session-manifest.sig.json`). The signed one-page
 HTML report landed in v1.0.30 (`report`, `report verify`). Native capture
 adapters for Claude Code, Cursor, Grok CLI, and Codex, plus MCP tool-call
-capture, landed in v1.0.31 (`adapters`, `capture --transcript`). Full PKI/CA, minisign,
-GPG, default auto-sign on capture without that config, and a long-running
+capture, landed in v1.0.31 (`adapters`, `capture --transcript`). in-toto
+Statement v1 and SLSA Provenance v1 export landed in v1.0.32 (`attest`,
+`export --format intoto`, DSSE). Full PKI/CA, minisign,
+GPG, Sigstore keyless signing, default auto-sign on capture without that config, and a long-running
 prune daemon are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).
