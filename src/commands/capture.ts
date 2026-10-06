@@ -23,7 +23,7 @@ import {
 } from '../lib/risk.js';
 import { loadConfig, ensureOutDir } from '../lib/config.js';
 import { filterIgnored } from '../lib/ignore.js';
-import { isLocalKeyMaterialPath, signIfKeys } from '../lib/sign.js';
+import { isLocalKeyMaterialPath, loadKeys, signIfKeys } from '../lib/sign.js';
 import {
   formatMarkdown,
   formatJson,
@@ -53,6 +53,13 @@ import {
 } from '../lib/gate.js';
 import { autoPruneGateFields, maybeAutoPrune, type AutoPruneResult } from '../lib/auto-prune.js';
 import { loadToolCallSection, toolCallCrossCheck, type ToolCallSection } from '../lib/adapters/tool-calls.js';
+import {
+  evaluateActivePolicy,
+  policyGateFields,
+  receiptDisplayPath,
+  stampPolicySection,
+  type PolicyGateResult,
+} from '../lib/policy.js';
 
 export interface CaptureOptions {
   since?: string;
@@ -115,6 +122,11 @@ export interface CaptureOptions {
   transcript?: string;
   /** Adapter name. Defaults from `--agent` when that name is known. */
   adapter?: string;
+  /**
+   * Repeatable `--policy-pack` (builtin name or file). Union with config
+   * `policyPacks`, flags first. Empty means only the config list applies.
+   */
+  policyPacks?: string[];
 }
 
 export interface CaptureResult {
@@ -128,6 +140,11 @@ export interface CaptureResult {
   ignored: number;
   jsonPath: string | null;
   sha256: string | null;
+  /** Why the gate failed, when it did. Null when the run passed the gate. */
+  reason: string | null;
+  policyPacks?: string[];
+  policyPackHits?: PolicyGateResult['policyPackHits'];
+  policyDenied?: boolean;
 }
 
 export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
@@ -232,9 +249,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     }
   }
   const riskSum = summarizeRisks(risks);
-  const failedOn = Boolean(
-    opts.failOn && meetsFailOn(riskSum.maxSeverity, opts.failOn),
-  );
+  const riskFailed = Boolean(opts.failOn && meetsFailOn(riskSum.maxSeverity, opts.failOn));
 
   const data: ReceiptData = {
     version: VERSION,
@@ -271,15 +286,6 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     // Keep an opted-in host on the local receipt. share / export mask it.
     markdown = appendHashFooter(prepareRedactedBody(markdown, { maskHost: false }));
   }
-  const quiet = Boolean(opts.quiet || opts.emitGate);
-  const say = (line: string) => emitLine(quiet, line);
-
-  // TL;DR from the (possibly redacted) receipt blockquote
-  const tldrMatch = markdown.match(/> \*\*TL;DR\*\*\s+(.+)/);
-  const tldr =
-    tldrMatch?.[1]?.trim() ||
-    `${agent || 'agent'} · ${data.files.length} files · range ${rangeLabel}`;
-
   let outPath: string;
   if (opts.out) {
     outPath = resolve(cwd, opts.out);
@@ -289,6 +295,39 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     outPath = join(dir, defaultReceiptFilename());
   }
 
+  let signing = false;
+  if (opts.sign) {
+    try {
+      loadKeys(cwd);
+      signing = true;
+    } catch {
+      signing = false;
+    }
+  }
+  const policy = evaluateActivePolicy(cwd, opts.policyPacks, [
+    {
+      receipt: receiptDisplayPath(cwd, outPath),
+      markdown,
+      bytes: Buffer.byteLength(markdown, 'utf8'),
+      unsigned: !signing,
+    },
+  ]);
+  if (policy) markdown = stampPolicySection(markdown, policy.policyPackHits);
+  const failedOn = riskFailed || Boolean(policy?.policyDenied);
+  const reasonParts: string[] = [];
+  if (riskFailed) reasonParts.push(failOnReason(opts.failOn, riskSum.maxSeverity));
+  if (policy?.reason) reasonParts.push(policy.reason);
+  const reason = reasonParts.length ? reasonParts.join('; ') : null;
+
+  const quiet = Boolean(opts.quiet || opts.emitGate);
+  const say = (line: string) => emitLine(quiet, line);
+
+  // TL;DR from the (possibly redacted) receipt blockquote
+  const tldrMatch = markdown.match(/> \*\*TL;DR\*\*\s+(.+)/);
+  const tldr =
+    tldrMatch?.[1]?.trim() ||
+    `${agent || 'agent'} · ${data.files.length} files · range ${rangeLabel}`;
+
   writeFileSync(outPath, markdown, 'utf8');
 
   let jsonPath: string | null = null;
@@ -296,7 +335,16 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     jsonPath = outPath.replace(/\.md$/i, '') + '.json';
     writeFileSync(
       jsonPath,
-      JSON.stringify(formatJson(data, markdown, failedOn), null, 2) + '\n',
+      JSON.stringify(
+        formatJson(
+          data,
+          markdown,
+          failedOn,
+          policy ? { hits: policy.policyPackHits, denied: policy.policyDenied } : null,
+        ),
+        null,
+        2,
+      ) + '\n',
       'utf8',
     );
     say(color.dim(`Wrote JSON:    ${jsonPath}`));
@@ -383,12 +431,15 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     );
   }
 
-  if (failedOn && opts.failOn) {
+  if (riskFailed && opts.failOn) {
     console.error(
       color.red('✗') +
         ` fail-on ${opts.failOn}: max severity is ${riskSum.maxSeverity}` +
         ` (${riskSum.high}H/${riskSum.medium}M/${riskSum.low}L) — receipt written, exiting 2`,
     );
+  }
+  if (policy?.policyDenied && policy.reason) {
+    console.error(color.red('✗') + ` ${policy.reason} — receipt written, exiting 2`);
   }
 
   const sha256 = extractEmbeddedHash(markdown);
@@ -441,8 +492,9 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
         risk: riskToGate(riskSum),
         ignored: ignored.length,
         trailingIgnored: null,
-        reason: failedOn ? failOnReason(opts.failOn, riskSum.maxSeverity) : null,
+        reason,
         ...autoPruneGateFields(autoPruneResult),
+        ...policyGateFields(policy),
       }),
     );
   }
@@ -457,5 +509,7 @@ export function cmdCapture(cwd: string, opts: CaptureOptions): CaptureResult {
     ignored: ignored.length,
     jsonPath,
     sha256,
+    reason,
+    ...policyGateFields(policy),
   };
 }

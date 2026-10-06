@@ -1,0 +1,47 @@
+apiVersion: agent-receipt/policy/v1
+name: baseline
+description: Secrets files, workflow edits, history rewrite, and curl piped to a shell.
+rules:
+  - id: secrets-files
+    description: Deny edits to secret and credential files.
+    severity: critical
+    action: deny
+    match:
+      files:
+        - "**/.env"
+        - "**/.env.*"
+        - "**/*.pem"
+        - "**/*.p12"
+        - "**/*.pfx"
+        - "**/*credentials*"
+        - "**/*secret*.json"
+        - "**/*secret*.yml"
+        - "**/*secret*.yaml"
+        - "**/.npmrc"
+        - "**/id_rsa"
+        - "**/.netrc"
+  - id: workflow-edits
+    description: Deny edits under .github/workflows.
+    severity: high
+    action: deny
+    match:
+      files:
+        - ".github/workflows/**"
+  - id: history-rewrite
+    description: Deny force-push and history rewrite commands.
+    severity: high
+    action: deny
+    match:
+      command:
+        - 'regex:(?:^|&&|\|\||;|\|)\s*(?:sudo\s+)?git\s+push\b[^\n]*(\s--force\b|\s-f\b|\s--force-with-lease\b)'
+        - 'regex:(?:^|&&|\|\||;|\|)\s*(?:sudo\s+)?git\s+reset\s+--hard\b'
+        - 'regex:(?:^|&&|\|\||;|\|)\s*(?:sudo\s+)?git\s+filter-branch\b'
+        - 'regex:(?:^|&&|\|\||;|\|)\s*(?:sudo\s+)?git\s+rebase\b[^\n]*(\s-i\b|\s--interactive\b|\s--onto\b)'
+        - 'regex:(?:^|&&|\|\||;|\|)\s*(?:sudo\s+)?git\s+commit\b[^\n]*\s--amend\b'
+  - id: curl-pipe-shell
+    description: Deny curl or wget piped to sh or bash.
+    severity: critical
+    action: deny
+    match:
+      command:
+        - 'regex:(?:^|&&|\|\||;|\|)\s*(?:sudo\s+)?(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+)?(?:sh|bash)\b'

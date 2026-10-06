@@ -43,6 +43,8 @@ export interface WatchOptions {
    * (staged/unstaged/untracked) as well as new commits.
    */
   commitsOnly?: boolean;
+  /** Repeatable `--policy-pack`. Passed through to each capture. */
+  policyPacks?: string[];
 }
 
 export function clampInterval(n: number | undefined): number {
@@ -171,6 +173,7 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
           redact: opts.redact,
           sign: opts.sign,
           audit: 'watch',
+          policyPacks: opts.policyPacks,
         };
         if (baseline !== '(no commits)') {
           captureOpts.since = baseline;
@@ -224,6 +227,7 @@ export async function cmdWatch(cwd: string, opts: WatchOptions = {}): Promise<nu
         redact: opts.redact,
         sign: opts.sign,
         audit: 'watch',
+        policyPacks: opts.policyPacks,
       };
 
       let result: CaptureResult;

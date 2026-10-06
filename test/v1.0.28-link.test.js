@@ -169,13 +169,13 @@ describe('v1.0.28 multi-agent receipt linking', () => {
     assert.match(changelog, /full PKI\/CA/);
     assert.match(changelog, /npm Trusted Publishing/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.34');
+    assert.equal(pkg.version, '1.0.35');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.34');
-    assert.equal(lock.packages[''].version, '1.0.34');
+    assert.equal(lock.version, '1.0.35');
+    assert.equal(lock.packages[''].version, '1.0.35');
     assert.equal(lock.packages[''].dependencies, undefined);
-    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.34/);
+    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.35/);
     const help = cli(root, ['help', 'session']);
     assert.match(help, /session <id>/);
     assert.match(help, /orphan/);
@@ -1237,7 +1237,7 @@ _No file changes in range._
     assert.match(md, /^- \*\*Message\*\*: x$/m);
     assert.match(md, /^  - \*\*Session\*\*: s-spoof$/m);
     assert.match(md, /^  - \*\*Parent\*\*: r-5555555555555555$/m);
-    assert.equal(parseSessionHeader(md).Version, '1.0.34');
+    assert.equal(parseSessionHeader(md).Version, '1.0.35');
     assert.equal(parseSessionHeader(md).Session, undefined);
     const meta = parseLinkMeta(md);
     assert.equal(meta.session, null);

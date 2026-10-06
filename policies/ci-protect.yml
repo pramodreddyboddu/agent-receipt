@@ -1,0 +1,29 @@
+apiVersion: agent-receipt/policy/v1
+name: ci-protect
+description: CI configuration edits and credential paths.
+rules:
+  - id: ci-config
+    description: Deny edits to workflow and CI configuration.
+    severity: high
+    action: deny
+    match:
+      files:
+        - ".github/workflows/**"
+        - "**/.gitlab-ci.yml"
+        - "**/.gitlab-ci.yaml"
+        - ".circleci/**"
+        - "**/Jenkinsfile"
+        - "**/.travis.yml"
+        - "**/.travis.yaml"
+  - id: credential-paths
+    description: Deny edits to credential and secret-store paths.
+    severity: critical
+    action: deny
+    match:
+      files:
+        - "**/*credentials*"
+        - "**/.aws/**"
+        - "**/secrets/**"
+        - "**/*.pem"
+        - "**/.npmrc"
+        - "**/.netrc"

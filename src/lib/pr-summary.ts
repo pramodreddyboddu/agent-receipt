@@ -28,6 +28,7 @@ import {
 } from './receipt.js';
 import { meetsFailOn, parseFailOn, type FailOnThreshold } from './risk.js';
 import { inspectReceiptSignature } from './sign.js';
+import { evaluateActivePolicy, type PolicyPackHit } from './policy.js';
 import { VERSION } from './version.js';
 
 export const SUMMARY_MARKER = '<!-- agent-receipt:summary -->';
@@ -46,6 +47,8 @@ export interface PrSummaryOptions {
   certificateIdentityRegexp?: string;
   certificateOidcIssuer?: string;
   trustedRoot?: string;
+  /** Repeatable `--policy-pack`. Union with config `policyPacks`. */
+  policyPacks?: string[];
 }
 
 export interface PolicyHit {
@@ -93,6 +96,10 @@ export interface GateSummary {
   sharePackages: string[];
   reason: string | null;
   receipts: Array<{ path: string; verdict: 'pass' | 'fail'; sha256: string | null; message: string | null }>;
+  /** Set only when a policy pack was evaluated. Omitted otherwise. */
+  policyPacks?: string[];
+  policyPackHits?: PolicyPackHit[];
+  policyDenied?: boolean;
 }
 
 const SKIP_DIRS = new Set(['node_modules', '.git']);
@@ -525,6 +532,31 @@ export function evaluateGate(cwd: string, opts: PrSummaryOptions): GateSummary {
     }
   }
 
+  let policyPacks: string[] | undefined;
+  let policyPackHits: PolicyPackHit[] | undefined;
+  let policyDenied: boolean | undefined;
+  if (opts.command === 'attest-verify') {
+    if (opts.policyPacks?.length) {
+      throw new Error('--policy-pack is not evaluated by --command attest-verify');
+    }
+  } else {
+    const targets = files.map((file) => ({
+      receipt: displayPath(cwd, file),
+      markdown: readFileSync(file, 'utf8'),
+      absolutePath: file,
+    }));
+    const policy = evaluateActivePolicy(cwd, opts.policyPacks, targets);
+    if (policy) {
+      policyPacks = policy.policyPacks;
+      policyPackHits = policy.policyPackHits;
+      policyDenied = policy.policyDenied;
+      if (policy.policyDenied) {
+        failed = true;
+        if (policy.reason) reason = reason ? `${reason}; ${policy.reason}` : policy.reason;
+      }
+    }
+  }
+
   const exitCode: 0 | 2 = failed ? 2 : 0;
   return {
     ok: exitCode === 0,
@@ -542,6 +574,9 @@ export function evaluateGate(cwd: string, opts: PrSummaryOptions): GateSummary {
     sharePackages: findSharePackages(cwd, files.filter((file) => file.endsWith('.md'))),
     reason: reason ? clip(reason, 500) : null,
     receipts: rows,
+    ...(policyPacks !== undefined
+      ? { policyPacks, policyPackHits: policyPackHits ?? [], policyDenied: Boolean(policyDenied) }
+      : {}),
   };
 }
 
@@ -613,6 +648,25 @@ export function renderSummaryMarkdown(summary: GateSummary): string {
     lines.push('|-----|------|---------|--------|');
     for (const hit of summary.policyHits) {
       lines.push(`| ${hit.severity} | \`${hit.code}\` | \`${hit.receipt}\` | ${hit.detail} |`);
+    }
+  }
+  if (summary.policyPacks !== undefined) {
+    lines.push('');
+    lines.push('### Policy packs');
+    lines.push('');
+    lines.push(`**Packs:** ${summary.policyPacks.map((name) => `\`${name}\``).join(', ')}`);
+    lines.push('');
+    const packHits = summary.policyPackHits ?? [];
+    if (!packHits.length) {
+      lines.push('_None._');
+    } else {
+      lines.push('| Action | Sev | Rule | Receipt | Evidence |');
+      lines.push('|--------|-----|------|---------|----------|');
+      for (const hit of packHits.slice(0, 20)) {
+        lines.push(
+          `| ${hit.action} | ${hit.severity} | \`${hit.rule}\` | \`${hit.receipt}\` | ${hit.evidence} |`,
+        );
+      }
     }
   }
   lines.push('');

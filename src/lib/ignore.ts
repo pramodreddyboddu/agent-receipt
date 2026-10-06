@@ -3,6 +3,30 @@
  * Supports: *, ?, **, and leading/trailing path segments.
  */
 
+/**
+ * Null when a pack or exception glob is usable.
+ * A short reason when lint should reject it.
+ * `**` is only allowed as its own path segment (`**` / `foo/**` / `**` / `*.env` forms).
+ */
+export function globPatternError(pattern: string): string | null {
+  if (typeof pattern !== 'string' || !pattern.trim()) return 'glob is empty';
+  if (/[\u0000-\u001f\u007f]/.test(pattern)) return 'glob contains control characters';
+  const p = pattern.trim();
+  let open = 0;
+  for (const ch of p) {
+    if (ch === '[') open++;
+    else if (ch === ']') {
+      if (open === 0) return 'glob has an unmatched ]';
+      open--;
+    }
+  }
+  if (open !== 0) return 'glob has an unclosed [';
+  for (const part of p.split('/')) {
+    if (part.includes('**') && part !== '**') return '** must be its own path segment';
+  }
+  return null;
+}
+
 export function globToRegExp(pattern: string): RegExp {
   let p = pattern.replace(/\\/g, '/').trim();
   if (!p) return /^$/;

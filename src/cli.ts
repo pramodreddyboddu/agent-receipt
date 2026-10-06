@@ -36,6 +36,7 @@ import { cmdReport, cmdReportVerify } from './commands/report.js';
 import { cmdAdapters } from './commands/adapters.js';
 import { cmdAttest, cmdAttestVerify, printAttestError } from './commands/attest.js';
 import { cmdPrComment, printPrCommentError } from './commands/pr-comment.js';
+import { cmdPolicy, printPolicyError, type PolicyActionName } from './commands/policy.js';
 import { parseCommentMode, parseCommentWhen, parseMode } from './lib/pr-summary.js';
 
 const JSON_GATE_COMMANDS = new Set(['capture', 'wrap', 'share', 'verify', 'import']);
@@ -257,6 +258,20 @@ function flagTrustedKeys(flags: Record<string, string | boolean>): string[] | un
 }
 
 /** A present flag must be a non-empty string. Absent stays undefined. */
+/** Repeatable `--policy-pack`. Absent when the flag was not passed. */
+function policyPackFlags(flags: Record<string, string | boolean>): string[] | undefined {
+  if (flags['policy-pack'] === undefined) return undefined;
+  if (flags['policy-pack'] === true) {
+    throw new Error('--policy-pack requires a pack name or file');
+  }
+  const parts = String(flags['policy-pack'])
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!parts.length) throw new Error('--policy-pack requires a pack name or file');
+  return parts;
+}
+
 function flagOptionalString(
   flags: Record<string, string | boolean>,
   name: string,
@@ -511,6 +526,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           autoPrune: resolveAutoPrune(cwd, flags),
           transcript: flagPath(flags, 'transcript'),
           adapter: flagPath(flags, 'adapter'),
+          policyPacks: policyPackFlags(flags),
         });
         return result.failedOn ? 2 : 0;
       }
@@ -537,6 +553,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           autoPrune: resolveAutoPrune(cwd, flags),
           transcript: flagPath(flags, 'transcript'),
           adapter: flagPath(flags, 'adapter'),
+          policyPacks: policyPackFlags(flags),
         });
         if (result.failedOn) return 2;
         return result.verified ? 0 : 2;
@@ -551,6 +568,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           json: flagBool(flags, 'json'),
           package: flagBool(flags, 'package', 'pack'),
           includeHost: flagBool(flags, 'include-host'),
+          policyPacks: policyPackFlags(flags),
         });
         return result.exitCode;
       }
@@ -705,6 +723,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           redact: resolveRedact(cwd, flags),
           sign: resolveSign(cwd, flags),
           autoPrune: resolveAutoPrune(cwd, flags),
+          policyPacks: policyPackFlags(flags),
         });
       }
       case 'verify': {
@@ -719,6 +738,9 @@ export async function run(argv: string[] = process.argv): Promise<number> {
               'verify --package requires a share package directory or manifest.json.',
             );
           }
+          if (flags['policy-pack'] !== undefined) {
+            throw new Error('--policy-pack is not supported with verify --package');
+          }
           const result = cmdVerifyPackage(cwd, pathArg, {
             json: flagBool(flags, 'json'),
             failOn,
@@ -732,6 +754,8 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           failOn,
           requireSig: flagBool(flags, 'require-sig', 'require-signature'),
           trustedKeys: flagTrustedKeys(flags),
+          applyPolicy: true,
+          policyPacks: policyPackFlags(flags),
         });
         return result.exitCode;
       }
@@ -1020,11 +1044,12 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           'api-url',
           'event',
           'event-path',
+          'policy-pack',
         ]);
         for (const key of Object.keys(flags)) {
           if (!known.has(key)) {
             throw new Error(
-              `Unknown flag: --${key}. pr-comment accepts --command, --receipts, --fail-on, --policy, --require-signature, --comment, --comment-mode, --dry-run, --out, --json, --repo, --pr, --api-url, and --event-path.`,
+              `Unknown flag: --${key}. pr-comment accepts --command, --receipts, --fail-on, --policy, --policy-pack, --require-signature, --comment, --comment-mode, --dry-run, --out, --json, --repo, --pr, --api-url, and --event-path.`,
             );
           }
         }
@@ -1067,6 +1092,33 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           pr,
           apiUrl: flagOptionalString(flags, 'api-url'),
           eventPath: flagOptionalString(flags, 'event-path') || flagOptionalString(flags, 'event'),
+          policyPacks: policyPackFlags(flags),
+        });
+      }
+      case 'policy': {
+        for (const key of Object.keys(flags)) {
+          if (key !== 'cwd' && key !== 'json') {
+            throw new Error(`Unknown flag: --${key}. policy accepts --json and --cwd.`);
+          }
+        }
+        const action = positional[0] || 'list';
+        if (action !== 'list' && action !== 'show' && action !== 'lint' && action !== 'test') {
+          throw new Error('policy action must be list, show, lint, or test');
+        }
+        if (action === 'list' && positional.length > 1) {
+          throw new Error('policy list does not take a pack. Use policy show <pack>.');
+        }
+        if ((action === 'show' || action === 'lint') && positional.length !== 2) {
+          throw new Error(`policy ${action} requires a pack name or file`);
+        }
+        if (action === 'test' && positional.length < 2) {
+          throw new Error('policy test requires a pack name or file');
+        }
+        return cmdPolicy(cwd, {
+          action: action as PolicyActionName,
+          pack: positional[1],
+          receipts: action === 'test' ? positional.slice(2) : undefined,
+          json: flagBool(flags, 'json'),
         });
       }
       case 'install-hooks':
@@ -1110,6 +1162,8 @@ export async function run(argv: string[] = process.argv): Promise<number> {
       printSignError(msg);
     } else if (command === 'pr-comment' && flagBool(flags, 'json')) {
       printPrCommentError(msg);
+    } else if (command === 'policy' && flagBool(flags, 'json')) {
+      printPolicyError(msg);
     } else if (command && JSON_GATE_COMMANDS.has(command) && flagBool(flags, 'json')) {
       printGate(errorGate(command, msg));
     } else {

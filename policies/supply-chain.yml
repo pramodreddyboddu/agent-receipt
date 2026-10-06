@@ -1,0 +1,45 @@
+apiVersion: agent-receipt/policy/v1
+name: supply-chain
+description: Lockfiles, dependency manifests, package installs, and publish commands.
+rules:
+  - id: lockfiles
+    description: Deny lockfile changes.
+    severity: high
+    action: deny
+    match:
+      files:
+        - "**/package-lock.json"
+        - "**/yarn.lock"
+        - "**/pnpm-lock.yaml"
+        - "**/bun.lock"
+        - "**/bun.lockb"
+        - "**/Cargo.lock"
+        - "**/poetry.lock"
+        - "**/Gemfile.lock"
+        - "**/composer.lock"
+        - "**/go.sum"
+  - id: dependency-manifests
+    description: Warn when a dependency manifest changes.
+    severity: medium
+    action: warn
+    match:
+      files:
+        - "**/package.json"
+        - "**/Cargo.toml"
+        - "**/pyproject.toml"
+        - "**/requirements.txt"
+        - "**/Gemfile"
+        - "**/go.mod"
+        - "**/composer.json"
+  - id: package-install
+    description: Deny package install commands.
+    severity: high
+    action: deny
+    match:
+      packageInstall: true
+  - id: publish-commands
+    description: Deny package publish and upload commands.
+    severity: critical
+    action: deny
+    match:
+      publish: true

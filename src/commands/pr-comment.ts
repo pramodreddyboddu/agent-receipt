@@ -43,6 +43,8 @@ export interface PrCommentOptions {
   pr?: number;
   apiUrl?: string;
   eventPath?: string;
+  /** Repeatable `--policy-pack`. Union with config `policyPacks`. */
+  policyPacks?: string[];
 }
 
 export function printPrCommentError(message: string): void {
@@ -88,6 +90,7 @@ export async function cmdPrComment(cwd: string, opts: PrCommentOptions): Promise
     certificateIdentityRegexp: opts.certificateIdentityRegexp,
     certificateOidcIssuer: opts.certificateOidcIssuer,
     trustedRoot: opts.trustedRoot,
+    policyPacks: opts.policyPacks,
   });
   if (opts.command === 'attest-verify' && failOn) summary.failOn = failOn;
 
@@ -173,6 +176,13 @@ export async function cmdPrComment(cwd: string, opts: PrCommentOptions): Promise
     warning,
     reason: summary.reason,
     summary: markdown,
+    ...(summary.policyPacks !== undefined
+      ? {
+          policyPacks: summary.policyPacks,
+          policyPackHits: summary.policyPackHits ?? [],
+          policyDenied: Boolean(summary.policyDenied),
+        }
+      : {}),
   };
 
   if (opts.json) {

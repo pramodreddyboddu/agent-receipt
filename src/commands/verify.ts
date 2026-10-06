@@ -17,6 +17,11 @@ import {
 } from '../lib/gate.js';
 import { inspectReceiptSignature, type SignatureStatus } from '../lib/sign.js';
 import { applyTrust, loadTrustedFingerprints } from '../lib/trust.js';
+import {
+  evaluateActivePolicy,
+  policyGateFields,
+  receiptDisplayPath,
+} from '../lib/policy.js';
 
 export interface VerifyCommandOptions {
   /** Suppress human stdout (JSON gate commands, or a caller that prints its own summary). */
@@ -38,6 +43,13 @@ export interface VerifyCommandOptions {
    * Union with the file and config. Used only when `requireSig` is set.
    */
   trustedKeys?: string[];
+  /**
+   * Evaluate `--policy-pack` and config `policyPacks`. Nested hash checks
+   * leave this off so they do not run the pack twice.
+   */
+  applyPolicy?: boolean;
+  /** Repeatable `--policy-pack`. Used when `applyPolicy` is set. */
+  policyPacks?: string[];
 }
 
 export interface VerifyCommandResult {
@@ -109,7 +121,17 @@ export function cmdVerify(
   const quiet = Boolean(opts.quiet || opts.json);
   const reported = reportVerify(path, text, { quiet });
   const risk = parseRiskSummaryMarkdown(text);
-  const failedOn = Boolean(opts.failOn && meetsFailOn(risk.maxSeverity, opts.failOn));
+  const policy = opts.applyPolicy
+    ? evaluateActivePolicy(cwd, opts.policyPacks, [
+        {
+          receipt: receiptDisplayPath(cwd, path),
+          markdown: text,
+          absolutePath: path,
+        },
+      ])
+    : null;
+  const riskFailed = Boolean(opts.failOn && meetsFailOn(risk.maxSeverity, opts.failOn));
+  const failedOn = riskFailed || Boolean(policy?.policyDenied);
   const redacted = text.includes('**Redacted**');
   const requireSig = Boolean(opts.requireSig);
 
@@ -154,11 +176,14 @@ export function cmdVerify(
     }
   }
 
-  if (!quiet && failedOn && opts.failOn) {
+  if (!quiet && riskFailed && opts.failOn) {
     console.error(
       color.red('✗') +
         ` ${failOnReason(opts.failOn, risk.maxSeverity)} — exiting 2`,
     );
+  }
+  if (!quiet && policy?.policyDenied && policy.reason) {
+    console.error(color.red('✗') + ` ${policy.reason} — exiting 2`);
   }
 
   const exitCode: 0 | 2 = !reported.ok || failedOn || sigFailed ? 2 : 0;
@@ -166,10 +191,11 @@ export function cmdVerify(
   if (reported.ok && sigFailed && signature?.reason) {
     reason = signature.reason;
   }
-  if (reported.ok && failedOn && opts.failOn) {
+  if (reported.ok && riskFailed && opts.failOn) {
     const fail = failOnReason(opts.failOn, risk.maxSeverity);
     reason = reason ? `${reason}; ${fail}` : fail;
   }
+  if (policy?.reason) reason = reason ? `${reason}; ${policy.reason}` : policy.reason;
 
   if (opts.json) {
     const gate: GateReport = finalizeGate({
@@ -191,6 +217,7 @@ export function cmdVerify(
       trailingIgnored: reported.trailingIgnored,
       reason: reason || null,
       ...(signature ? { signature } : {}),
+      ...policyGateFields(policy),
     });
     printGate(gate);
   }

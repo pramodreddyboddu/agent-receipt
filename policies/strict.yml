@@ -1,0 +1,14 @@
+apiVersion: agent-receipt/policy/v1
+name: strict
+description: Baseline, supply-chain, and CI protection, plus a required signature.
+extends:
+  - builtin:baseline
+  - builtin:supply-chain
+  - builtin:ci-protect
+rules:
+  - id: require-signature
+    description: Deny a receipt that has no valid signature sidecar.
+    severity: high
+    action: deny
+    match:
+      unsigned: true

@@ -23,6 +23,7 @@ import { auditLogPath, verifyAuditChain } from '../lib/audit.js';
 import { retentionCheck } from '../lib/retention.js';
 import { loadKeys, privateKeyPath, publicKeyPath } from '../lib/sign.js';
 import { inspectTrustForDoctor } from '../lib/trust.js';
+import { policyDoctorDetail } from '../lib/policy.js';
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'info';
 
@@ -500,6 +501,13 @@ export function runDoctorChecks(cwd: string, opts: DoctorOptions = {}): DoctorCh
     });
   }
 
+  const packs = policyDoctorDetail(cwd);
+  checks.push({
+    name: 'packs',
+    status: packs.problem && opts.strict ? 'fail' : 'info',
+    detail: packs.detail,
+  });
+
   const auditFile = auditLogPath(cwd);
   if (existsSync(auditFile)) {
     const chain = verifyAuditChain(cwd);
@@ -667,6 +675,7 @@ const PROD_CHECKS = [
   'hooks',
   'redact',
   'policy',
+  'packs',
   'audit',
   'keys',
   'sign',
@@ -746,7 +755,7 @@ export function cmdDoctor(cwd: string, opts: DoctorOptions = {}): number {
   if (opts.strict) {
     console.log(
       color.dim(
-        'strict: a broken audit chain fails. Unset org policy (redact + failOn) fails even when outDir is small (init --org). Unset retention (maxCount / maxAgeDays) fails on any outDir (init --retention). CI --fail-on is still the risk gate.',
+        'strict: a broken audit chain fails. Unset org policy (redact + failOn) fails even when outDir is small (init --org). Unset retention (maxCount / maxAgeDays) fails on any outDir (init --retention). An invalid policy pack or an expired policy exception fails. CI --fail-on is still the risk gate.',
       ),
     );
   }

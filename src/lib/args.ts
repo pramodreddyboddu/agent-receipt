@@ -35,7 +35,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     'keyless',
   ]);
   // Repeatable flags are joined with commas (`--trusted-key a --trusted-key b`).
-  const repeatable = new Set(['trusted-key']);
+  const repeatable = new Set(['trusted-key', 'policy-pack']);
 
   const assignFlag = (key: string, value: string | boolean): void => {
     if (typeof value === 'string' && repeatable.has(key) && typeof flags[key] === 'string') {

@@ -63,6 +63,10 @@ const hasDist =
 const missing = [];
 if (!hasBin) missing.push('bin/agent-receipt.js (or bin/)');
 if (!hasDist) missing.push('dist/ (e.g. dist/index.js)');
+for (const pack of ['baseline.yml', 'supply-chain.yml', 'ci-protect.yml', 'strict.yml']) {
+  const needle = `policies/${pack}`;
+  if (!lines.some((l) => l.includes(needle))) missing.push(needle);
+}
 
 if (missing.length) {
   console.error('pack:check failed — tarball missing required paths:');

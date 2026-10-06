@@ -1,5 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { parseNestedYaml } from './nested-yaml.js';
+import { globPatternError } from './ignore.js';
 
 export interface AgentReceiptConfig {
   outDir: string;
@@ -67,6 +69,29 @@ export interface AgentReceiptConfig {
   trustedFingerprints?: string[];
   /** Set when `trustedFingerprints` was present but an entry was not 64 hex. */
   trustedFingerprintsInvalid?: string;
+  /**
+   * Policy pack refs (`builtin:baseline` or a file path). Absent when the
+   * key is not set. An empty list means the key was set and names nothing.
+   */
+  policyPacks?: string[];
+  /**
+   * Per-repo exceptions. `expires` is inclusive (YYYY-MM-DD, UTC). An
+   * expired exception does not suppress a hit.
+   */
+  policyExceptions?: PolicyException[];
+  /**
+   * Set when `policyPacks` / `policyExceptions` were present but invalid.
+   * Not reported by `validateConfig` (doctor's config row stays independent).
+   * The gate and `doctor --strict` fail closed on this string.
+   */
+  policyConfigInvalid?: string;
+}
+
+export interface PolicyException {
+  rule: string;
+  path: string;
+  reason: string;
+  expires?: string;
 }
 
 const FP64 = /^[0-9a-f]{64}$/;
@@ -183,6 +208,109 @@ function parseRetentionInt(
   return undefined;
 }
 
+const EXCEPTION_KEYS = new Set(['rule', 'path', 'reason', 'expires']);
+
+function validIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map((part) => parseInt(part, 10));
+  if (!year || !month || !day) return false;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
+/**
+ * Read `policyPacks` / `policyExceptions` with the nested parser.
+ * Files that do not mention those keys skip it, so existing flat configs
+ * keep the simple reader.
+ */
+function readPolicyOverlay(text: string): {
+  policyPacks?: string[];
+  policyExceptions?: PolicyException[];
+  policyConfigInvalid?: string;
+} {
+  if (!/(^|\n)\s*policyPacks\s*:/.test(text) && !/(^|\n)\s*policyExceptions\s*:/.test(text)) {
+    return {};
+  }
+  let tree: unknown;
+  try {
+    tree = parseNestedYaml(text);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { policyConfigInvalid: `policy config is invalid: ${message}` };
+  }
+  if (!tree || typeof tree !== 'object' || Array.isArray(tree)) {
+    return { policyConfigInvalid: 'policy config is invalid: document must be a map' };
+  }
+  const rec = tree as Record<string, unknown>;
+  let policyPacks: string[] | undefined;
+  if (rec.policyPacks !== undefined) {
+    const raw = rec.policyPacks;
+    const items = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : null;
+    if (!items) {
+      return { policyConfigInvalid: 'policy config is invalid: policyPacks must be a list of pack names' };
+    }
+    const packs: string[] = [];
+    for (const item of items) {
+      if (typeof item !== 'string' || !item.trim()) {
+        return {
+          policyConfigInvalid: 'policy config is invalid: policyPacks entries must be non-empty strings',
+        };
+      }
+      packs.push(item.trim());
+    }
+    policyPacks = packs;
+  }
+  let policyExceptions: PolicyException[] | undefined;
+  if (rec.policyExceptions !== undefined) {
+    if (!Array.isArray(rec.policyExceptions)) {
+      return { policyConfigInvalid: 'policy config is invalid: policyExceptions must be a list' };
+    }
+    const exceptions: PolicyException[] = [];
+    for (const entry of rec.policyExceptions) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return { policyConfigInvalid: 'policy config is invalid: a policy exception must be a map' };
+      }
+      const obj = entry as Record<string, unknown>;
+      for (const key of Object.keys(obj)) {
+        if (!EXCEPTION_KEYS.has(key)) {
+          return { policyConfigInvalid: `policy config is invalid: unknown policy exception key ${key}` };
+        }
+      }
+      const rule = typeof obj.rule === 'string' ? obj.rule.trim() : '';
+      const path = typeof obj.path === 'string' ? obj.path.trim() : '';
+      const reason = typeof obj.reason === 'string' ? obj.reason.trim() : '';
+      if (!rule) {
+        return { policyConfigInvalid: 'policy config is invalid: policy exception rule is required' };
+      }
+      if (!path) {
+        return { policyConfigInvalid: 'policy config is invalid: policy exception path is required' };
+      }
+      if (!reason) {
+        return { policyConfigInvalid: 'policy config is invalid: policy exception reason is required' };
+      }
+      const globErr = globPatternError(path);
+      if (globErr) {
+        return { policyConfigInvalid: `policy config is invalid: policy exception path ${globErr}` };
+      }
+      let expires: string | undefined;
+      if (obj.expires !== undefined && obj.expires !== null && obj.expires !== '') {
+        const rawDate = typeof obj.expires === 'string' ? obj.expires.trim() : '';
+        if (!validIsoDate(rawDate)) {
+          return {
+            policyConfigInvalid: 'policy config is invalid: policy exception expires must be YYYY-MM-DD',
+          };
+        }
+        expires = rawDate;
+      }
+      exceptions.push(expires ? { rule, path, reason, expires } : { rule, path, reason });
+    }
+    policyExceptions = exceptions;
+  }
+  return { policyPacks, policyExceptions };
+}
+
 function asStringList(v: YamlValue | undefined, fallback: string[]): string[] {
   if (Array.isArray(v)) return v.map(String);
   if (typeof v === 'string' && v.trim()) {
@@ -200,7 +328,9 @@ export function loadConfig(cwd: string): AgentReceiptConfig {
       riskAllowlist: [...DEFAULTS.riskAllowlist],
     };
   }
-  const parsed = parseSimpleYaml(readFileSync(path, 'utf8'));
+  const text = readFileSync(path, 'utf8');
+  const parsed = parseSimpleYaml(text);
+  const policy = readPolicyOverlay(text);
   let redact = DEFAULTS.redact;
   let redactInvalid = false;
   if (parsed.redact !== undefined) {
@@ -278,6 +408,9 @@ export function loadConfig(cwd: string): AgentReceiptConfig {
     retentionInvalid: retentionInvalid.length ? retentionInvalid : undefined,
     trustedFingerprints,
     trustedFingerprintsInvalid,
+    policyPacks: policy.policyPacks,
+    policyExceptions: policy.policyExceptions,
+    policyConfigInvalid: policy.policyConfigInvalid,
   };
 }
 
@@ -421,6 +554,17 @@ riskAllowlist: []
 # from examples/ or docs/ when the list should stay out of this
 # gitignored directory.
 # trustedFingerprints: []
+
+# Policy packs (docs/policy-packs.md). Refs are builtin:<name> or a file.
+# Deny hits fail capture / wrap / share / verify / pr-comment (exit 2).
+# Warn hits are reported only. A missing or invalid pack fails closed.
+# policyPacks:
+#   - builtin:baseline
+# policyExceptions:
+#   - rule: secrets-files
+#     path: "**/.env.example"
+#     reason: templates are not secrets
+#     expires: 2099-01-01
 `;
   writeFileSync(configFile, yaml, 'utf8');
 

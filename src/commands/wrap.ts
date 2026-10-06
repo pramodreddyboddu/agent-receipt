@@ -6,11 +6,11 @@ import { parseFailOn, type FailOnThreshold } from '../lib/risk.js';
 import { color } from '../lib/color.js';
 import {
   emitLine,
-  failOnReason,
   finalizeGate,
   printGate,
   riskToGate,
 } from '../lib/gate.js';
+import { policyGateFields } from '../lib/policy.js';
 import { recordAuditEvent } from '../lib/audit.js';
 import { autoPruneGateFields, maybeAutoPrune } from '../lib/auto-prune.js';
 
@@ -56,6 +56,8 @@ export interface WrapOptions {
   transcript?: string;
   /** Adapter name. Passed through to capture. */
   adapter?: string;
+  /** Repeatable `--policy-pack`. Union with config `policyPacks` inside capture. */
+  policyPacks?: string[];
 }
 
 export interface WrapResult {
@@ -127,6 +129,7 @@ export function cmdWrap(cwd: string, opts: WrapOptions = {}): WrapResult {
     sign: opts.sign,
     transcript: opts.transcript,
     adapter: opts.adapter,
+    policyPacks: opts.policyPacks,
   });
 
   let tldr = capture.tldr;
@@ -184,11 +187,8 @@ export function cmdWrap(cwd: string, opts: WrapOptions = {}): WrapResult {
     : undefined;
 
   if (opts.json) {
-    const reason = !verified
-      ? verifiedReport.reason || 'verify failed'
-      : capture.failedOn
-        ? failOnReason(opts.failOn, capture.riskSum.maxSeverity)
-        : null;
+    let reason = !verified ? verifiedReport.reason || 'verify failed' : null;
+    if (capture.reason) reason = reason ? `${reason}; ${capture.reason}` : capture.reason;
     printGate(
       finalizeGate({
         command: 'wrap',
@@ -208,6 +208,18 @@ export function cmdWrap(cwd: string, opts: WrapOptions = {}): WrapResult {
         trailingIgnored: verifiedReport.trailingIgnored,
         reason,
         ...autoPruneGateFields(autoPruneResult),
+        ...policyGateFields(
+          capture.policyPacks
+            ? {
+                policyPacks: capture.policyPacks,
+                policyPackHits: capture.policyPackHits ?? [],
+                policyDenied: Boolean(capture.policyDenied),
+                reason: capture.reason,
+                expired: [],
+                rules: 0,
+              }
+            : null,
+        ),
       }),
     );
   }
