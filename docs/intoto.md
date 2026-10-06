@@ -23,6 +23,8 @@ agent-receipt export --format intoto
 
 The private key never enters the file. Missing keys, or `--no-sign`, write `"signatures": []`, print a warning, and exit 0. `attest --verify` of that file exits 2.
 
+`attest --keyless` writes the same statement and also a Sigstore bundle, `<stem>.sigstore.json`. That signature is ECDSA P-256 over the same PAE. Verify the bundle, not the ECDSA bytes inside the jsonl. See [keyless.md](keyless.md).
+
 The PAE is `DSSEv1 <len(type)> <type> <len(body)> <body>` per DSSE spec 1.0.2. Lengths are ASCII decimal byte counts with no leading zeros.
 
 ## Statement

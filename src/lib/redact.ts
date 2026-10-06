@@ -144,14 +144,14 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
     // Low-entropy SQL and assignment values (`pw='…'`, `password=…`) that the
     // entropy scanner will not catch. JSON `"password":"…"` is handled before
     // stringify, key by key, because the quote sits between the name and `:`.
-    re: /((?:pw|pwd|pass(?:word|wd)?|secret|token|api[_-]?key)\s*[:=]\s*['"]?)([^'"\s,;)\\]{4,})/gi,
+    re: /(?<![A-Za-z0-9])((?:pw|pwd|pass(?:word|wd)?|secret|token|api[_-]?key)\s*[:=]\s*['"]?)([^'"\s,;)\\]{4,})/gi,
     replacement: '$1[REDACTED]',
   },
   {
     // 1–3 character assignment values (`password="ab"`). The `{4,}` pattern
     // above already took longer values. The lookahead keeps `password=[REDACTED]`
     // from being matched again.
-    re: /((?:pw|pwd|pass(?:word|wd)?|secret|token|api[_-]?key)\s*[:=]\s*['"]?)([^'"\s,;)\\]{1,3})(?=['"\s,;)\\]|$)/gi,
+    re: /(?<![A-Za-z0-9])((?:pw|pwd|pass(?:word|wd)?|secret|token|api[_-]?key)\s*[:=]\s*['"]?)([^'"\s,;)\\]{1,3})(?=['"\s,;)\\]|$)/gi,
     replacement: '$1[REDACTED]',
   },
   {
@@ -160,6 +160,82 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
     replacement: '[REDACTED]…',
   },
 ];
+
+const ASSIGNMENT_KEY =
+  /(?<![A-Za-z0-9])(?:["'](?:pw|pwd|pass(?:word|wd)?|secret|token|api[_-]?key)["']|(?:pw|pwd|pass(?:word|wd)?|secret|token|api[_-]?key))(?=\s*[:=])/gi;
+
+const PASSPHRASE_STOPWORDS = new Set([
+  'the', 'a', 'an', 'is', 'to', 'for', 'and', 'or', 'of', 'in', 'on', 'with',
+  'this', 'that', 'please', 'see', 'stored', 'your', 'you', 'we', 'be', 'it',
+  'as', 'at', 'by', 'from', 'are', 'was', 'if', 'not', 'do', 'use', 'using',
+  'should', 'must', 'can', 'will', 'when', 'into', 'than', 'then', 'also',
+  'only', 'just', 'about', 'here', 'there', 'keep',
+]);
+
+const PASSPHRASE_WORD = /^[A-Za-z][A-Za-z0-9]{2,20}$/;
+
+/**
+ * Assignment values the token patterns miss: quoted JSON (`"password":"…"`),
+ * short quotes, and dictionary passphrases (`password: correct horse …`).
+ * A key must be followed by `:` or `=`. Prose and words such as compass or
+ * passport are left alone. Runs before the token patterns.
+ */
+function redactSecretAssignments(text: string): string {
+  const re = new RegExp(ASSIGNMENT_KEY.source, 'gi');
+  let out = '';
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    const sep = /^\s*[:=]\s*/.exec(text.slice(re.lastIndex));
+    if (!sep) continue;
+    const valueStart = re.lastIndex + sep[0].length;
+    out += text.slice(last, valueStart);
+    const quote = text[valueStart];
+    if (quote === '"' || quote === "'") {
+      let i = valueStart + 1;
+      while (i < text.length) {
+        if (text[i] === '\\') {
+          i += 2;
+          continue;
+        }
+        if (text[i] === quote) break;
+        i += 1;
+      }
+      if (i >= text.length) {
+        out += `${quote}[REDACTED]`;
+        last = text.length;
+        break;
+      }
+      out += `${quote}[REDACTED]${quote}`;
+      last = i + 1;
+      re.lastIndex = last;
+      continue;
+    }
+    const token = /^[^'"\s,;)\\]+/.exec(text.slice(valueStart));
+    if (!token) {
+      last = valueStart;
+      re.lastIndex = last;
+      continue;
+    }
+    let end = valueStart + token[0].length;
+    if (PASSPHRASE_WORD.test(token[0]) && !PASSPHRASE_STOPWORDS.has(token[0].toLowerCase())) {
+      let extra = 0;
+      while (extra < 5) {
+        const next = /^ [A-Za-z][A-Za-z0-9]{2,20}/.exec(text.slice(end));
+        if (!next) break;
+        const word = next[0].slice(1);
+        if (PASSPHRASE_STOPWORDS.has(word.toLowerCase())) break;
+        end += next[0].length;
+        extra += 1;
+      }
+    }
+    out += '[REDACTED]';
+    last = end;
+    re.lastIndex = last;
+  }
+  out += text.slice(last);
+  return out;
+}
 
 /** Risk codes whose detail rows should be fully masked in findings tables. */
 const HIGH_SECRET_CODES = new Set([
@@ -191,7 +267,7 @@ export function isHighSecretRiskCode(code: string): boolean {
 }
 
 export function redactSecretsInText(text: string): string {
-  let out = text;
+  let out = redactSecretAssignments(text);
   for (const { re, replacement } of SECRET_VALUE_PATTERNS) {
     out = out.replace(re, replacement);
   }

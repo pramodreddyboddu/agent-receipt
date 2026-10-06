@@ -399,7 +399,9 @@ Examples:
 
 Usage:
   agent-receipt attest [path|last] [--out <file>] [--predicate run|slsa] [--slsa] [--session <id>] [--no-sign] [--json]
+  agent-receipt attest [path|last] --keyless [--identity-token <file|->] [--fulcio-url <url>] [--rekor-url <url>] [--json]
   agent-receipt attest --verify <file.intoto.jsonl> [--trusted-key <fp>] [--json]
+  agent-receipt attest --verify <file.sigstore.json> --certificate-identity <id> --certificate-oidc-issuer <issuer> [--trusted-root <file>] [--json]
   agent-receipt attest verify <file.intoto.jsonl>
   agent-receipt export [path] --format intoto
 
@@ -423,6 +425,20 @@ envelope also carries the SPKI public key so a peer can check it. The
 private key is never written. Missing keys write an unsigned envelope, warn,
 and exit 0. \`--no-sign\` does the same. A corrupt key file exits 1 and
 writes nothing. A receipt that fails integrity exits 2 and writes nothing.
+\`sign --keyless\` is not a command. Keyless signing is \`attest --keyless\`.
+
+\`attest --keyless\` signs one receipt with an ephemeral P-256 key that is
+never stored. The OIDC token comes from \`--identity-token <file>\` (use
+\`-\` for stdin), else \`SIGSTORE_ID_TOKEN\`, else the GitHub Actions
+ambient token (\`ACTIONS_ID_TOKEN_REQUEST_URL\` with audience \`sigstore\`).
+Fulcio (default \`https://fulcio.sigstore.dev\`, \`--fulcio-url\`) issues a
+short-lived certificate. Rekor (default \`https://rekor.sigstore.dev\`,
+\`--rekor-url\`) records the entry. The bundle is
+\`application/vnd.dev.sigstore.bundle.v0.3+json\`, written as
+\`<stem>.sigstore.json\` beside the \`.intoto.jsonl\`. The token is never
+written and never logged. A network error, HTTP error, or timeout exits 1
+and writes nothing. \`--keyless\` conflicts with \`--no-sign\` and signs
+one receipt only. See \`docs/keyless.md\`.
 
 \`attest --verify\` checks the signature, each subject digest against the
 file on disk, and the hash-chain head against the receipt. Unsigned, a bad
@@ -430,6 +446,16 @@ signature, an untrusted fingerprint (when the allowlist is active), a
 digest mismatch, or a hash mismatch exits 2. A missing file exits 1.
 An empty trust store accepts any cryptographically valid signature and
 prints a note (\`trusted\` is null). This is not a CA.
+
+A \`.sigstore.json\` bundle is checked offline. Pass exactly one of
+\`--certificate-identity\` or \`--certificate-identity-regexp\`, and
+\`--certificate-oidc-issuer\`. Missing identity or issuer exits 1. The
+certificate must chain to the trusted root (embedded public-good Fulcio
+and Rekor, or \`--trusted-root\`), be valid at the Rekor integrated time,
+match the SAN and issuer, and the DSSE, signed entry timestamp, and
+inclusion proof must verify. A bad signature, identity, issuer, or time
+exits 2. The Ed25519 allowlist is not consulted for a bundle. An ECDSA
+signature inside \`.intoto.jsonl\` is not a substitute for the bundle.
 
 One receipt writes \`<stem>.intoto.jsonl\` beside that receipt. A session
 package writes \`<id>.intoto.jsonl\` beside the package. \`--session <id>\`
@@ -442,8 +468,16 @@ Options:
   --predicate <run|slsa> Predicate (default: run). \`--slsa\` is the short form
   --session <id>         Every local receipt in that session, one envelope each
   --no-sign              Write an unsigned envelope even when keys exist
-  --verify <file>        Check a \`.intoto.jsonl\` file (alias: \`attest verify\`)
-  --trusted-key <fp>     Extra fingerprint for this verify only
+  --keyless              Sign with Sigstore (ephemeral P-256, Fulcio, Rekor)
+  --identity-token <f>   OIDC token file, or \`-\` for stdin (else env, else Actions)
+  --fulcio-url <url>     Fulcio base URL (default: public-good Fulcio)
+  --rekor-url <url>      Rekor base URL (default: public-good Rekor)
+  --verify <file>        Check a \`.intoto.jsonl\` or a \`.sigstore.json\` bundle
+  --certificate-identity <id>     Required SAN (email or URI) for a bundle
+  --certificate-identity-regexp <re>  Full-match SAN pattern. Not with --certificate-identity
+  --certificate-oidc-issuer <url> Required OIDC issuer for a bundle
+  --trusted-root <file>  Sigstore trusted_root.json. Replaces the embedded root
+  --trusted-key <fp>     Extra fingerprint for an Ed25519 verify only
   --json                 One JSON object on stdout. Warnings stay on stderr
   --cwd <path>           Run as if started in this directory
 
@@ -456,6 +490,8 @@ Examples:
   agent-receipt attest --session my-session
   agent-receipt attest .agent-receipt/my-session.session
   agent-receipt attest --verify .agent-receipt/receipts/receipt.intoto.jsonl
+  agent-receipt attest --keyless --identity-token oidc.jwt
+  agent-receipt attest --verify receipt.sigstore.json --certificate-identity https://github.com/org/repo --certificate-oidc-issuer https://token.actions.githubusercontent.com
   agent-receipt export --format intoto
 `,
 
@@ -1203,7 +1239,9 @@ of the sha256 hex string — the same hex verify uses — not the raw Markdown.
 Sidecar fields: alg ("ed25519"), version (1), sha256, fingerprint,
 signature (base64 raw 64-byte signature), publicKey (SPKI PEM). The
 public key is embedded so a peer can verify without the local keys
-directory. The private key is never written.
+directory. The private key is never written. \`sign --keyless\` is not supported.
+Keyless OIDC signing is \`attest --keyless\` (a Sigstore bundle, not
+\`foo.sig.json\`).
 
 capture, wrap, and watch sign when you pass \`--sign\` or when config
 \`sign: true\` (missing keys leave the receipt unsigned and do not exit 2).
@@ -1771,7 +1809,7 @@ Commands:
   session import <dir>   Verify a session package and merge it into outDir (alias: merge)
   keygen                 Create a local Ed25519 keypair under .agent-receipt/keys
   sign [path]            Attest the receipt sha256 into a .sig.json sidecar
-  attest [path|last]     in-toto Statement v1 in a DSSE envelope (.intoto.jsonl). attest --verify checks it
+  attest [path|last]     in-toto Statement v1 in a DSSE envelope (.intoto.jsonl). --keyless writes a Sigstore bundle. attest --verify checks either
   trust                  Known-keys allowlist: list, show, add <fp>, add --self, rm <fp>
   verify [path]          Hash-check integrity (hash-only; --package checks a share dir; --require-sig opts in)
   import <dir>           Verify a share package, then copy receipt.md into outDir

@@ -253,6 +253,37 @@ function flagTrustedKeys(flags: Record<string, string | boolean>): string[] | un
   }
   return parts;
 }
+
+/** A present flag must be a non-empty string. Absent stays undefined. */
+function flagOptionalString(
+  flags: Record<string, string | boolean>,
+  name: string,
+): string | undefined {
+  const value = flags[name];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`--${name} requires a value`);
+  }
+  return value;
+}
+
+function attestWriteOptions(
+  flags: Record<string, string | boolean>,
+  predicate: 'run' | 'slsa',
+) {
+  return {
+    out: flagString(flags, 'out', 'o'),
+    json: flagBool(flags, 'json'),
+    predicate,
+    session: flagString(flags, 'session'),
+    noSign: flagBool(flags, 'no-sign'),
+    keyless: flagBool(flags, 'keyless'),
+    identityToken: flagOptionalString(flags, 'identity-token'),
+    fulcioUrl: flagOptionalString(flags, 'fulcio-url'),
+    rekorUrl: flagOptionalString(flags, 'rekor-url'),
+  };
+}
+
 const KEYGEN_FLAGS = new Set(['cwd', 'json', 'force']);
 const SIGN_FLAGS = new Set(['cwd', 'json']);
 
@@ -287,6 +318,14 @@ const ATTEST_FLAGS = new Set([
   'trusted-key',
   'no-redact',
   'include-host',
+  'keyless',
+  'identity-token',
+  'fulcio-url',
+  'rekor-url',
+  'certificate-identity',
+  'certificate-identity-regexp',
+  'certificate-oidc-issuer',
+  'trusted-root',
 ]);
 
 function assertKnownAttestFlags(
@@ -297,7 +336,7 @@ function assertKnownAttestFlags(
   for (const key of Object.keys(flags)) {
     if (!known.has(key)) {
       throw new Error(
-        `Unknown flag: --${key}. attest accepts --out, --predicate run|slsa, --slsa, --session, --no-sign, --verify, --trusted-key, --json, and --cwd.`,
+        `Unknown flag: --${key}. attest accepts --out, --predicate run|slsa, --slsa, --session, --no-sign, --keyless, --identity-token, --fulcio-url, --rekor-url, --verify, --certificate-identity, --certificate-identity-regexp, --certificate-oidc-issuer, --trusted-root, --trusted-key, --json, and --cwd.`,
       );
     }
   }
@@ -535,6 +574,14 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           if (flags.out !== undefined || flags.o !== undefined) {
             throw new Error('--out writes an attestation. It is not a verify flag.');
           }
+          if (
+            flags.keyless !== undefined ||
+            flags['identity-token'] !== undefined ||
+            flags['fulcio-url'] !== undefined ||
+            flags['rekor-url'] !== undefined
+          ) {
+            throw new Error('--keyless signs an attestation. It is not a verify flag.');
+          }
           let file = '';
           if (sub) {
             if (positional.length !== 2) {
@@ -552,10 +599,22 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           return cmdAttestVerify(cwd, file, {
             json,
             trustedKeys: flagTrustedKeys(flags),
+            certificateIdentity: flagOptionalString(flags, 'certificate-identity'),
+            certificateIdentityRegexp: flagOptionalString(flags, 'certificate-identity-regexp'),
+            certificateOidcIssuer: flagOptionalString(flags, 'certificate-oidc-issuer'),
+            trustedRoot: flagOptionalString(flags, 'trusted-root'),
           });
         }
         if (flags['trusted-key'] !== undefined) {
           throw new Error('--trusted-key is for attest --verify.');
+        }
+        if (
+          flags['certificate-identity'] !== undefined ||
+          flags['certificate-identity-regexp'] !== undefined ||
+          flags['certificate-oidc-issuer'] !== undefined ||
+          flags['trusted-root'] !== undefined
+        ) {
+          throw new Error('certificate identity flags are for attest --verify of a Sigstore bundle.');
         }
         if (positional.length > 1) {
           throw new Error('attest accepts one receipt, one session package, or `last`.');
@@ -563,13 +622,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         if (flags.session !== undefined && positional.length) {
           throw new Error('--session does not take a path. Usage: agent-receipt attest --session <id>');
         }
-        return cmdAttest(cwd, positional[0], {
-          out: flagString(flags, 'out', 'o'),
-          json,
-          predicate,
-          session: flagString(flags, 'session'),
-          noSign: flagBool(flags, 'no-sign'),
-        });
+        return cmdAttest(cwd, positional[0], attestWriteOptions(flags, predicate));
       }
       case 'export': {
         const fmt = (flagString(flags, 'format') || 'html').toLowerCase();
@@ -579,19 +632,21 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           if (flags['trusted-key'] !== undefined || flags.verify !== undefined) {
             throw new Error('export --format intoto writes an attestation. Use `attest --verify` to check one.');
           }
+          if (
+            flags['certificate-identity'] !== undefined ||
+            flags['certificate-identity-regexp'] !== undefined ||
+            flags['certificate-oidc-issuer'] !== undefined ||
+            flags['trusted-root'] !== undefined
+          ) {
+            throw new Error('certificate identity flags are for attest --verify of a Sigstore bundle.');
+          }
           if (positional.length > 1) {
             throw new Error('export --format intoto accepts one receipt, one session package, or `last`.');
           }
           if (flags.session !== undefined && positional.length) {
             throw new Error('--session does not take a path.');
           }
-          return cmdAttest(cwd, positional[0], {
-            out: flagString(flags, 'out', 'o'),
-            json: flagBool(flags, 'json'),
-            predicate,
-            session: flagString(flags, 'session'),
-            noSign: flagBool(flags, 'no-sign'),
-          });
+          return cmdAttest(cwd, positional[0], attestWriteOptions(flags, predicate));
         }
         cmdExport(cwd, positional[0], {
           out: flagString(flags, 'out', 'o'),

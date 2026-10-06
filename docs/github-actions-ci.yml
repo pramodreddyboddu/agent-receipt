@@ -19,6 +19,9 @@
 # below includes adapters install --dry-run.
 # v1.0.32 left that live file unchanged for the same reason. The smoke
 # below includes attest last and attest --verify.
+# v1.0.33 left that live file unchanged for the same reason.
+# Keyless signing is docs/keyless.md only. This mirror does not call
+# the public Fulcio or Rekor services.
 name: CI
 
 on:
