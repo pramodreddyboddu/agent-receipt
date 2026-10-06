@@ -60,6 +60,12 @@ embeds the SPKI public key and never the private key. An unsigned envelope
 is not integrity: `attest --verify` exits 2. An empty trust store still
 accepts any cryptographically valid signature. This is not a CA.
 
+`attest --keyless` (1.0.33) uses an ephemeral P-256 key and a short-lived
+Fulcio certificate. The OIDC token and the private key are not stored.
+Verify requires the certificate identity and the OIDC issuer. The embedded
+SCT is not checked. The time source is the Rekor integrated time. This is
+still not a CA.
+
 It is **not**:
 
 - A certificate authority or a PKI product (no minisign, GPG, or OpenPGP)

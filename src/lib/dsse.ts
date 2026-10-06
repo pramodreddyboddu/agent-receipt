@@ -236,7 +236,15 @@ export function verifyEnvelopeSignatures(
     }
     const sigBuf = decodeBase64(sig.sig);
     if (sigBuf.length !== 64) {
-      return { ok: false, fingerprint: derived, publicKey: pem, reason: 'DSSE signature is not 64 bytes' };
+      const ecdsa = sigBuf.length > 0 && sigBuf[0] === 0x30;
+      return {
+        ok: false,
+        fingerprint: derived,
+        publicKey: pem,
+        reason: ecdsa
+          ? 'DSSE signature is not a 64-byte Ed25519 signature. Verify the Sigstore bundle (.sigstore.json) with attest --verify, --certificate-identity, and --certificate-oidc-issuer.'
+          : 'DSSE signature is not 64 bytes',
+      };
     }
     let ok = false;
     try {

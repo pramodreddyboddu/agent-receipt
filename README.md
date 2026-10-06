@@ -419,7 +419,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.32`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.33`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -578,11 +578,20 @@ wrapped in a DSSE envelope (`.intoto.jsonl`). The signature covers the DSSE
 PAE bytes, not the receipt sha256 hex. Subjects are the receipt file and
 changed files, each hashed as raw bytes. The predicate carries the run
 (or SLSA Provenance v1 with `--slsa`) and the receipt hash-chain head.
-Narrative fields are redacted first. Missing keys write an unsigned envelope
-and warn. The private key is never included. `attest --verify` checks the
-signature, the subject digests on disk, and the hash-chain head. An empty
-trust store accepts any cryptographically valid signature. This is not a CA.
+Narrative fields are redacted first. A secret in a subject filename is
+redacted too. Missing keys write an unsigned envelope and warn. The private
+key is never included. `attest --verify` checks the signature, the subject
+digests on disk, and the hash-chain head. An empty trust store accepts any
+cryptographically valid signature. This is not a CA.
 `export --format intoto` is the same writer and does not append the audit log.
+
+`attest --keyless` (v1.0.33) signs one statement with an ephemeral P-256 key
+and an OIDC token (a file, `SIGSTORE_ID_TOKEN`, or GitHub Actions
+`id-token: write`). Fulcio issues a short-lived certificate. Rekor records
+the entry. The bundle is `<stem>.sigstore.json`. The private key and the
+token are never stored. Verify the bundle with `--certificate-identity` and
+`--certificate-oidc-issuer`. See [`docs/keyless.md`](docs/keyless.md).
+`sign --keyless` is not a command.
 
 Thin local Ed25519 attest landed in 1.0.16. `verify --require-sig` and the
 portable sidecar handoff landed in 1.0.17. A thin known-keys allowlist
@@ -603,8 +612,9 @@ HTML report landed in v1.0.30 (`report`, `report verify`). Native capture
 adapters for Claude Code, Cursor, Grok CLI, and Codex, plus MCP tool-call
 capture, landed in v1.0.31 (`adapters`, `capture --transcript`). in-toto
 Statement v1 and SLSA Provenance v1 export landed in v1.0.32 (`attest`,
-`export --format intoto`, DSSE). Full PKI/CA, minisign,
-GPG, Sigstore keyless signing, default auto-sign on capture without that config, and a long-running
+`export --format intoto`, DSSE). Sigstore keyless signing landed in v1.0.33
+(`attest --keyless`, a Sigstore bundle, offline identity verify). Full PKI/CA, minisign,
+GPG, default auto-sign on capture without that config, and a long-running
 prune daemon are still deferred.
 
 Heuristic risk scanning has limits — see [`SECURITY.md`](SECURITY.md).

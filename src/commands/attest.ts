@@ -5,8 +5,14 @@
  * PAE when a local key exists. Missing keys write an unsigned envelope and
  * warn. The private key is never written.
  *
+ * `attest --keyless` signs that same PAE with an ephemeral P-256 key, asks
+ * Fulcio for a short-lived certificate, and uploads the entry to Rekor.
+ * The bundle is `<stem>.sigstore.json`. The private key and the OIDC token
+ * are never written. `sign --keyless` is not this command.
+ *
  * `attest --verify` checks the signature, each subject digest against the
  * file on disk, and the hash-chain head against the receipt canonical sha256.
+ * A Sigstore bundle also requires the certificate identity and OIDC issuer.
  */
 import {
   existsSync,
@@ -29,6 +35,13 @@ import {
   verifyEnvelopeSignatures,
   type DsseSignature,
 } from '../lib/dsse.js';
+import {
+  isSigstoreBundle,
+  KeylessError,
+  signKeyless,
+  verifyKeylessFile,
+  type IdentityPolicy,
+} from '../lib/sigstore/keyless.js';
 import { sha256Hex } from '../lib/hash.js';
 import {
   buildStatement,
@@ -101,11 +114,19 @@ export interface AttestOptions {
   session?: string;
   noSign?: boolean;
   trustedKeys?: string[];
+  keyless?: boolean;
+  identityToken?: string;
+  fulcioUrl?: string;
+  rekorUrl?: string;
 }
 
 export interface AttestVerifyOptions {
   json?: boolean;
   trustedKeys?: string[];
+  certificateIdentity?: string;
+  certificateIdentityRegexp?: string;
+  certificateOidcIssuer?: string;
+  trustedRoot?: string;
 }
 
 interface LineResult {
@@ -151,6 +172,15 @@ function clip(value: string | null, max = 2000): string | null {
 function narrative(value: string | null): string | null {
   if (!value) return null;
   return clip(redactSecretsInText(value));
+}
+
+function scrubJwt(message: string): string {
+  return message.replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?/g, '[REDACTED]');
+}
+
+/** Subject names are redacted so a secret in a filename does not enter the statement. */
+function publicName(name: string): string {
+  return redactSecretsInText(name);
 }
 
 function sectionAfter(text: string, heading: string): string {
@@ -295,8 +325,9 @@ function buildRun(cwd: string, receiptPath: string, kind: PredicateKind): BuiltR
   }
   const redacted = redactMarkdownBody(original, { maskHost: true });
   const fields = fieldsOf(redacted);
-  // File names stay as written so subject paths still resolve. Narrative
-  // sections are read from the redacted body, then redacted again.
+  // Names in the statement are redacted. Verify maps a `[REDACTED]` name
+  // back through this original file table. Narrative sections come from
+  // the redacted body.
   const files = parseFiles(sectionAfter(original, 'Files changed'));
   const tools = parseTools(sectionAfter(redacted, 'Tool calls'));
   const policyHits = parsePolicy(sectionAfter(redacted, 'Risk findings'));
@@ -306,18 +337,23 @@ function buildRun(cwd: string, receiptPath: string, kind: PredicateKind): BuiltR
   const subjects: Subject[] = [];
   const fileFacts: FileFact[] = [];
   const seen = new Set<string>();
-  const addSubject = (name: string, filePath: string): string | null => {
-    if (seen.has(name)) {
-      const existing = subjects.find((subject) => subject.name === name);
-      return existing ? existing.digest.sha256 : null;
-    }
+  const addSubject = (rawName: string, filePath: string): string | null => {
     const digest = hashRegularFile(filePath);
     if (!digest) return null;
+    const name = publicName(rawName);
+    if (seen.has(name)) {
+      const existing = subjects.find((subject) => subject.name === name);
+      if (existing && existing.digest.sha256 !== digest) {
+        fail('subject name collision after redaction');
+      }
+      return existing ? existing.digest.sha256 : null;
+    }
     seen.add(name);
     subjects.push({ name, digest: { sha256: digest } });
     return digest;
   };
 
+  const publishedReceipt = publicName(receiptName);
   const receiptDigest = addSubject(receiptName, abs);
   if (!receiptDigest) fail(`receipt could not be hashed: ${receiptName}`);
 
@@ -326,7 +362,7 @@ function buildRun(cwd: string, receiptPath: string, kind: PredicateKind): BuiltR
     const digest = fileAbs ? hashRegularFile(fileAbs) : null;
     if (fileAbs && digest) addSubject(displayName(cwd, fileAbs) || file.name, fileAbs);
     fileFacts.push({
-      name: file.name,
+      name: publicName(file.name),
       status: file.status,
       digest,
     });
@@ -346,7 +382,7 @@ function buildRun(cwd: string, receiptPath: string, kind: PredicateKind): BuiltR
     failedOn,
     hashChainHead: integrity.actual,
     auditChainHead: auditHead(cwd),
-    receiptName,
+    receiptName: publishedReceipt,
     branch: narrative(fields.Branch ?? null),
     head: fields.HEAD && /^[0-9a-f]{7,64}$/i.test(fields.HEAD) ? fields.HEAD.toLowerCase() : null,
     files: fileFacts,
@@ -481,10 +517,16 @@ function printCreate(report: Record<string, unknown>, json: boolean | undefined)
     return;
   }
   console.log(color.green('wrote') + ` ${report.path}`);
+  if (typeof report.bundlePath === 'string') {
+    console.log(color.green('bundle') + ` ${report.bundlePath}`);
+  }
   console.log(color.dim(`predicate ${report.predicateType}`));
   console.log(color.dim(`envelopes ${report.envelopes}`));
   console.log(color.dim(`subjects ${report.subjects}`));
-  if (report.signed === true) {
+  if (report.keyless === true) {
+    console.log(color.dim(`keyless ${report.certificateIdentity || ''}`));
+    console.log(color.dim(`issuer ${report.certificateIssuer || ''}`));
+  } else if (report.signed === true) {
     console.log(color.dim(`signed ${report.fingerprint}`));
   } else {
     console.log(color.yellow('unsigned'));
@@ -501,9 +543,27 @@ export function printAttestError(message: string, command: 'attest' | 'attest-ve
       path: null,
       signed: false,
       redacted: true,
-      reason: message,
+      reason: scrubJwt(message),
     }),
   );
+}
+
+function sigstoreBundlePath(intotoPath: string): string {
+  if (intotoPath.endsWith('.intoto.jsonl')) {
+    return `${intotoPath.slice(0, -'.intoto.jsonl'.length)}.sigstore.json`;
+  }
+  const slash = Math.max(intotoPath.lastIndexOf('/'), intotoPath.lastIndexOf('\\'));
+  const dot = intotoPath.lastIndexOf('.');
+  if (dot > slash) return `${intotoPath.slice(0, dot)}.sigstore.json`;
+  return `${intotoPath}.sigstore.json`;
+}
+
+function removeQuiet(abs: string): void {
+  try {
+    unlinkSync(abs);
+  } catch {
+    /* a missing file needs no rollback */
+  }
 }
 
 /**
@@ -512,15 +572,18 @@ export function printAttestError(message: string, command: 'attest' | 'attest-ve
  * fails integrity (nothing is written). Exit 0 when the file is written,
  * including the unsigned path.
  */
-export function cmdAttest(
+export async function cmdAttest(
   cwd: string,
   pathArg: string | undefined,
   opts: AttestOptions = {},
-): number {
+): Promise<number> {
   const kind: PredicateKind = opts.predicate === 'slsa' ? 'slsa' : 'run';
   const predicateType = kind === 'slsa' ? PREDICATE_SLSA : PREDICATE_RUN;
   try {
     const source = receiptSource(cwd, pathArg, opts.session);
+    if (opts.keyless) {
+      return await attestKeyless(cwd, source, kind, predicateType, opts);
+    }
     const loaded = opts.noSign ? { keys: null, missing: true } : tryKeys(cwd);
     const warning = opts.noSign ? UNSIGNED_FLAG : loaded.missing ? UNSIGNED_MISSING : null;
     const lines: string[] = [];
@@ -561,7 +624,7 @@ export function cmdAttest(
     );
     return 0;
   } catch (err) {
-    if (err instanceof AttestFailError || err instanceof AttestUsageError) {
+    if (err instanceof AttestFailError || err instanceof AttestUsageError || err instanceof KeylessError) {
       printCreate(
         {
           ok: false,
@@ -576,7 +639,7 @@ export function cmdAttest(
           subjects: 0,
           redacted: true,
           warning: null,
-          reason: err.message,
+          reason: scrubJwt(err.message),
         },
         opts.json,
       );
@@ -584,6 +647,267 @@ export function cmdAttest(
     }
     throw err;
   }
+}
+
+async function attestKeyless(
+  cwd: string,
+  source: ReceiptSource,
+  kind: PredicateKind,
+  predicateType: string,
+  opts: AttestOptions,
+): Promise<number> {
+  if (opts.noSign) fail('--keyless conflicts with --no-sign');
+  if (opts.session || source.paths.length !== 1) fail('keyless signing signs one receipt');
+  const built = buildRun(cwd, source.paths[0], kind);
+  const signed = await signKeyless(built.body, {
+    identityTokenPath: opts.identityToken,
+    fulcioUrl: opts.fulcioUrl,
+    rekorUrl: opts.rekorUrl,
+  });
+  const out = outputPath(cwd, opts.out, `${safeStem(source.label)}.intoto.jsonl`, source.fallbackDir);
+  const bundleOut = sigstoreBundlePath(out);
+  const intotoAbs = resolve(cwd, out);
+  const bundleAbs = resolve(cwd, bundleOut);
+  const receiptAbs = resolve(cwd, source.paths[0]);
+  if (intotoAbs === receiptAbs || bundleAbs === receiptAbs) {
+    fail('refusing to write the attestation over the receipt');
+  }
+  let wrote: string | null = null;
+  try {
+    writeLines(cwd, out, [envelopeJson(signed.envelope)]);
+    wrote = intotoAbs;
+    writeLines(cwd, bundleOut, [signed.bundleJson]);
+  } catch (err) {
+    if (wrote) removeQuiet(wrote);
+    throw err;
+  }
+  printCreate(
+    {
+      ok: true,
+      command: 'attest',
+      version: VERSION,
+      exitCode: 0,
+      path: intotoAbs,
+      bundlePath: bundleAbs,
+      signed: true,
+      keyless: true,
+      fingerprint: signed.envelope.signatures[0]?.keyid ?? null,
+      certificateIdentity: signed.identity,
+      certificateIdentities: signed.identity ? [signed.identity] : [],
+      certificateIssuer: signed.issuer,
+      integratedTime: signed.integratedTime,
+      logIndex: signed.logIndex,
+      predicateType,
+      envelopes: 1,
+      subjects: built.subjects,
+      redacted: true,
+      warning: null,
+      reason: null,
+    },
+    opts.json,
+  );
+  return 0;
+}
+
+function receiptsMatching(cwd: string, redactedName: string): string[] {
+  const hits: string[] = [];
+  for (const filePath of listOutDirReceipts(cwd)) {
+    const rel = displayName(cwd, filePath);
+    if (rel && publicName(rel) === redactedName) hits.push(filePath);
+  }
+  return hits;
+}
+
+function filesMatching(cwd: string, receiptAbs: string, redactedName: string): string[] {
+  let original = '';
+  try {
+    original = readReceipt(receiptAbs);
+  } catch {
+    return [];
+  }
+  const hits: string[] = [];
+  for (const file of parseFiles(sectionAfter(original, 'Files changed'))) {
+    if (publicName(file.name) !== redactedName) continue;
+    const abs = resolveInside(cwd, file.name);
+    if (abs && isRegularFile(abs)) hits.push(abs);
+  }
+  const rel = displayName(cwd, receiptAbs);
+  if (rel && publicName(rel) === redactedName) hits.push(receiptAbs);
+  return [...new Set(hits)];
+}
+
+function resolveReceiptPathByName(cwd: string, name: string): { path: string | null; reason: string | null } {
+  const literal = resolveInside(cwd, name);
+  if (literal && isRegularFile(literal)) return { path: literal, reason: null };
+  if (!name.includes('[REDACTED]')) return { path: null, reason: `receipt subject missing: ${name}` };
+  const hits = receiptsMatching(cwd, name);
+  if (hits.length === 1) return { path: hits[0], reason: null };
+  if (hits.length > 1) return { path: null, reason: 'subject name is ambiguous after redaction' };
+  return { path: null, reason: `receipt subject missing: ${name}` };
+}
+
+function resolveSubjectPath(
+  cwd: string,
+  name: string,
+  receiptAbs: string | null,
+): { path: string | null; reason: string | null } {
+  const literal = resolveInside(cwd, name);
+  if (literal && isRegularFile(literal)) return { path: literal, reason: null };
+  if (!name.includes('[REDACTED]') || !receiptAbs) return { path: null, reason: `subject missing: ${name}` };
+  const hits = filesMatching(cwd, receiptAbs, name);
+  if (hits.length === 1) return { path: hits[0], reason: null };
+  if (hits.length > 1) return { path: null, reason: 'subject name is ambiguous after redaction' };
+  return { path: null, reason: `subject missing: ${name}` };
+}
+
+interface StatementAssessment {
+  predicateType: string | null;
+  subjects: number;
+  subjectsOk: boolean;
+  hashChainOk: boolean;
+  reason: string | null;
+}
+
+function assessStatement(cwd: string, body: Buffer): StatementAssessment | { error: string } {
+  const statement = parseStatement(body);
+  if (!statement.ok) return { error: statement.reason };
+  const reasons: string[] = [];
+  let subjectsOk = true;
+  const receiptHit = resolveReceiptPathByName(cwd, statement.value.receiptName);
+  const receiptAbs = receiptHit.path;
+  if (!receiptAbs && receiptHit.reason) reasons.push(receiptHit.reason);
+  for (const subject of statement.value.subjects) {
+    const hit = resolveSubjectPath(cwd, subject.name, receiptAbs);
+    if (!hit.path) {
+      subjectsOk = false;
+      reasons.push(hit.reason || `subject missing: ${subject.name}`);
+      continue;
+    }
+    let actual = '';
+    try {
+      if (lstatSync(hit.path).size > DEFAULT_MAX_RECEIPT_BYTES) {
+        subjectsOk = false;
+        reasons.push(`subject ${subject.name} is over the byte cap`);
+        continue;
+      }
+      actual = sha256FileBytes(hit.path);
+    } catch {
+      subjectsOk = false;
+      reasons.push(`subject missing: ${subject.name}`);
+      continue;
+    }
+    if (actual !== subject.digest.sha256) {
+      subjectsOk = false;
+      reasons.push(`subject ${subject.name} digest mismatch`);
+    }
+  }
+  let hashChainOk = false;
+  if (!receiptAbs || !isRegularFile(receiptAbs)) {
+    if (!reasons.some((reason) => reason.startsWith('receipt subject missing') || reason.includes('ambiguous'))) {
+      reasons.push(`receipt subject missing: ${statement.value.receiptName}`);
+    }
+  } else {
+    const text = readFileSync(receiptAbs, 'utf8');
+    const integrity = receiptIntegrity(text);
+    if (!integrity.ok) reasons.push(`receipt failed integrity: ${integrity.reason}`);
+    else if (integrity.actual !== statement.value.hashChainHead) reasons.push('hash-chain head does not match receipt');
+    else hashChainOk = true;
+  }
+  const unique = [...new Set(reasons)];
+  const ok = subjectsOk && hashChainOk && unique.length === 0;
+  return {
+    predicateType: statement.value.predicateType,
+    subjects: statement.value.subjects.length,
+    subjectsOk,
+    hashChainOk,
+    reason: ok ? null : unique.join('; '),
+  };
+}
+
+function wholeBundle(text: string): unknown | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{')) return null;
+  try {
+    const value = JSON.parse(trimmed) as unknown;
+    return isSigstoreBundle(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function bundlePolicy(opts: AttestVerifyOptions): IdentityPolicy {
+  const exact = opts.certificateIdentity !== undefined;
+  const regexp = opts.certificateIdentityRegexp !== undefined;
+  if (exact === regexp) {
+    fail('exactly one of --certificate-identity or --certificate-identity-regexp is required');
+  }
+  const issuer = opts.certificateOidcIssuer?.trim() || '';
+  if (!issuer) fail('--certificate-oidc-issuer is required');
+  if (regexp) {
+    const pattern = opts.certificateIdentityRegexp || '';
+    if (pattern.length > 512) fail('certificate identity regexp is too long');
+    try {
+      new RegExp(`^(?:${pattern})$`);
+    } catch {
+      fail('certificate identity regexp is invalid');
+    }
+  }
+  return {
+    identity: opts.certificateIdentity,
+    identityRegexp: opts.certificateIdentityRegexp,
+    issuer,
+  };
+}
+
+function verifySigstoreBundle(cwd: string, abs: string, value: unknown, opts: AttestVerifyOptions): number {
+  const policy = bundlePolicy(opts);
+  const checked = verifyKeylessFile(value, policy, opts.trustedRoot);
+  const assessed = checked.ok ? assessStatement(cwd, checked.payload) : null;
+  const statementError = assessed && 'error' in assessed ? assessed.error : null;
+  const fields = assessed && !('error' in assessed) ? assessed : null;
+  const reasons: string[] = [];
+  if (!checked.ok) reasons.push(checked.reason);
+  if (statementError) reasons.push(statementError);
+  if (fields?.reason) reasons.push(fields.reason);
+  const exitCode: 0 | 1 | 2 = !checked.ok ? checked.exitCode : reasons.length ? 2 : 0;
+  const reason = reasons.length ? scrubJwt([...new Set(reasons)].join('; ')) : null;
+  const report = {
+    ok: exitCode === 0,
+    command: 'attest-verify',
+    version: VERSION,
+    exitCode,
+    path: abs,
+    envelopes: 1,
+    failed: exitCode === 0 ? 0 : 1,
+    signed: checked.ok,
+    keyless: true,
+    trusted: null,
+    fingerprint: null,
+    certificateIdentity: checked.ok ? checked.identity : null,
+    certificateIssuer: checked.ok ? checked.issuer : null,
+    integratedTime: checked.ok ? checked.integratedTime : null,
+    logIndex: checked.ok ? checked.logIndex : null,
+    predicateType: fields ? fields.predicateType : null,
+    subjects: fields ? fields.subjects : 0,
+    subjectsOk: fields ? fields.subjectsOk : false,
+    hashChainOk: fields ? fields.hashChainOk : false,
+    redacted: true,
+    reason,
+    warning: null,
+  };
+  if (opts.json) {
+    console.log(JSON.stringify(report));
+  } else if (exitCode === 0 && checked.ok) {
+    console.log(color.green('OK') + ` ${abs}`);
+    console.log(color.dim(`keyless ${checked.identity}`));
+    console.log(color.dim(`issuer ${checked.issuer}`));
+    console.log(color.dim(`subjects ${report.subjects} match`));
+    console.log(color.dim('hash-chain head matches'));
+  } else {
+    console.error(color.red('FAILED') + ` ${abs}`);
+    console.error(color.red(`  ${reason || 'failed'}`));
+  }
+  return exitCode;
 }
 
 function publicKeyFor(
@@ -660,8 +984,8 @@ function verifyOne(
   } else if (trustStoreActive(store)) {
     trusted = true;
   }
-  const statement = parseStatement(parsed.body);
-  if (!statement.ok) {
+  const assessed = assessStatement(cwd, parsed.body);
+  if ('error' in assessed) {
     return {
       line,
       ok: false,
@@ -672,63 +996,20 @@ function verifyOne(
       subjects: 0,
       subjectsOk: false,
       hashChainOk: false,
-      reason: statement.reason,
+      reason: assessed.error,
     };
   }
-  const reasons: string[] = [];
-  let subjectsOk = true;
-  for (const subject of statement.value.subjects) {
-    const abs = resolveInside(cwd, subject.name);
-    if (!abs || !isRegularFile(abs)) {
-      subjectsOk = false;
-      reasons.push(`subject missing: ${subject.name}`);
-      continue;
-    }
-    let actual = '';
-    try {
-      if (lstatSync(abs).size > DEFAULT_MAX_RECEIPT_BYTES) {
-        subjectsOk = false;
-        reasons.push(`subject ${subject.name} is over the byte cap`);
-        continue;
-      }
-      actual = sha256FileBytes(abs);
-    } catch {
-      subjectsOk = false;
-      reasons.push(`subject missing: ${subject.name}`);
-      continue;
-    }
-    if (actual !== subject.digest.sha256) {
-      subjectsOk = false;
-      reasons.push(`subject ${subject.name} digest mismatch`);
-    }
-  }
-  let hashChainOk = false;
-  const receiptAbs = resolveInside(cwd, statement.value.receiptName);
-  if (!receiptAbs || !isRegularFile(receiptAbs)) {
-    reasons.push(`receipt subject missing: ${statement.value.receiptName}`);
-  } else {
-    const text = readFileSync(receiptAbs, 'utf8');
-    const integrity = receiptIntegrity(text);
-    if (!integrity.ok) {
-      reasons.push(`receipt failed integrity: ${integrity.reason}`);
-    } else if (integrity.actual !== statement.value.hashChainHead) {
-      reasons.push('hash-chain head does not match receipt');
-    } else {
-      hashChainOk = true;
-    }
-  }
-  const ok = subjectsOk && hashChainOk && reasons.length === 0;
   return {
     line,
-    ok,
+    ok: assessed.reason === null,
     signed: true,
     fingerprint: sig.fingerprint,
     trusted,
-    predicateType: statement.value.predicateType,
-    subjects: statement.value.subjects.length,
-    subjectsOk,
-    hashChainOk,
-    reason: ok ? null : reasons.join('; '),
+    predicateType: assessed.predicateType,
+    subjects: assessed.subjects,
+    subjectsOk: assessed.subjectsOk,
+    hashChainOk: assessed.hashChainOk,
+    reason: assessed.reason,
   };
 }
 
@@ -756,6 +1037,16 @@ export function cmdAttestVerify(
     fail('attestation starts with a UTF-8 BOM');
   }
   const text = raw.toString('utf8');
+  const bundle = wholeBundle(text);
+  if (bundle) return verifySigstoreBundle(cwd, abs, bundle, opts);
+  if (
+    opts.certificateIdentity !== undefined ||
+    opts.certificateIdentityRegexp !== undefined ||
+    opts.certificateOidcIssuer !== undefined ||
+    opts.trustedRoot !== undefined
+  ) {
+    fail('certificate identity flags are for a Sigstore bundle');
+  }
   const rows: Array<{ line: number; value: unknown }> = [];
   const pieces = text.split('\n');
   if (pieces.length && pieces[pieces.length - 1] === '') pieces.pop();

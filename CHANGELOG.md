@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.33] — 2026-10-06
+
+### Added
+
+- `attest --keyless` signs one in-toto statement with an ephemeral P-256 key. Fulcio issues a short-lived certificate from an OIDC token. Rekor stores the DSSE entry. The bundle is `application/vnd.dev.sigstore.bundle.v0.3+json`, written as `<stem>.sigstore.json` beside the `.intoto.jsonl`. The private key and the OIDC token are never written and never logged. `sign --keyless` is not a command.
+- The OIDC token comes from `--identity-token <file>` (`-` is stdin), else `SIGSTORE_ID_TOKEN`, else the GitHub Actions ambient token (`ACTIONS_ID_TOKEN_REQUEST_URL` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, audience `sigstore`). `--fulcio-url` and `--rekor-url` override the public-good hosts. A network error, HTTP error, or timeout exits 1 and writes nothing.
+- `attest --verify <bundle.sigstore.json>` checks the bundle offline. `--certificate-identity` or `--certificate-identity-regexp`, plus `--certificate-oidc-issuer`, are required. Missing them exits 1. The certificate must chain to the trusted root (embedded public-good Fulcio and Rekor, or `--trusted-root`), be valid at the Rekor integrated time, and match the SAN and issuer. The DSSE signature, signed entry timestamp, checkpoint, and inclusion proof are checked, then the subject digests and the hash-chain head. A mismatch exits 2. See [`docs/keyless.md`](docs/keyless.md).
+
+### Fixed
+
+- A secret in an attestation subject filename is redacted (`AKIA…` becomes `AKIA[REDACTED]`). Verify still resolves the file from the on-disk receipt. Two files that redact to the same name with different digests fail closed.
+- Dictionary passphrases in free text are redacted (`password: "correct horse battery staple"`, and `"password":"hunter2"`). Prose without an assignment, and words such as `compass` or `passport`, stay.
+
+### Changed
+
+- Package version bumped to `1.0.33`.
+- [`README.md`](README.md), CLI help, and [`docs/keyless.md`](docs/keyless.md) document keyless signing. Pin comments that track the current cut are `v1.0.33`.
+
+### Notes
+
+- Live workflow files were not edited. The checkout token has no `workflow` scope. The GitHub Actions example in [`docs/keyless.md`](docs/keyless.md) is a snippet only. [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) does not call the public Fulcio or Rekor services.
+- This cut does not publish to npm. No new runtime dependencies. This is not a certificate authority. Embedded SCT verification is not implemented. Historical Rekor keys are not embedded. `attest` does not append `audit.jsonl`.
+- Still deferred: a published GitHub Action, policy packs, a local web viewer, full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
+
 ## [1.0.32] — 2026-10-06
 
 ### Added

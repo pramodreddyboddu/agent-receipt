@@ -32,6 +32,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     'resign',
     'no-sign',
     'slsa',
+    'keyless',
   ]);
   // Repeatable flags are joined with commas (`--trusted-key a --trusted-key b`).
   const repeatable = new Set(['trusted-key']);
@@ -61,7 +62,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
           continue;
         }
         const next = rest[i + 1];
-        if (next && !next.startsWith('-')) {
+        // `--identity-token -` reads stdin. A lone `-` is otherwise a flag.
+        const stdinToken = key === 'identity-token' && next === '-';
+        if (next && (!next.startsWith('-') || stdinToken)) {
           assignFlag(key, next);
           i++;
         } else {
