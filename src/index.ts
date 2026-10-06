@@ -27,6 +27,24 @@ export { cmdVerifyPackage } from './commands/verify-package.js';
 export { cmdImport } from './commands/import.js';
 export { cmdProve } from './commands/prove.js';
 export { cmdReport, cmdReportVerify } from './commands/report.js';
+export { cmdAttest, cmdAttestVerify, printAttestError } from './commands/attest.js';
+export {
+  DSSE_PAYLOAD_TYPE,
+  dssePae,
+  signEnvelope,
+  unsignedEnvelope,
+  parseEnvelope,
+  verifyEnvelopeSignatures,
+} from './lib/dsse.js';
+export {
+  STATEMENT_TYPE,
+  PREDICATE_RUN,
+  PREDICATE_SLSA,
+  SLSA_BUILDER_ID,
+  buildStatement,
+  parseStatement,
+  statementBytes,
+} from './lib/intoto.js';
 export { cmdSession } from './commands/session.js';
 export { cmdSessionExport } from './commands/session-export.js';
 export { cmdSessionImport } from './commands/session-import.js';

@@ -34,6 +34,7 @@ import { cmdPrune } from './commands/prune.js';
 import { cmdTrust } from './commands/trust.js';
 import { cmdReport, cmdReportVerify } from './commands/report.js';
 import { cmdAdapters } from './commands/adapters.js';
+import { cmdAttest, cmdAttestVerify, printAttestError } from './commands/attest.js';
 
 const JSON_GATE_COMMANDS = new Set(['capture', 'wrap', 'share', 'verify', 'import']);
 
@@ -273,6 +274,54 @@ function assertKnownSignFlags(flags: Record<string, string | boolean>): void {
   }
 }
 
+const ATTEST_FLAGS = new Set([
+  'cwd',
+  'json',
+  'out',
+  'o',
+  'verify',
+  'predicate',
+  'slsa',
+  'session',
+  'no-sign',
+  'trusted-key',
+  'no-redact',
+  'include-host',
+]);
+
+function assertKnownAttestFlags(
+  flags: Record<string, string | boolean>,
+  extra: string[] = [],
+): void {
+  const known = new Set([...ATTEST_FLAGS, ...extra]);
+  for (const key of Object.keys(flags)) {
+    if (!known.has(key)) {
+      throw new Error(
+        `Unknown flag: --${key}. attest accepts --out, --predicate run|slsa, --slsa, --session, --no-sign, --verify, --trusted-key, --json, and --cwd.`,
+      );
+    }
+  }
+}
+
+/** `run` unless `--slsa` or `--predicate slsa`. Those two conflict with `--predicate run`. */
+function resolveAttestPredicate(flags: Record<string, string | boolean>): 'run' | 'slsa' {
+  if (flags['no-redact'] !== undefined) {
+    throw new Error('attest always redacts the predicate. There is no --no-redact.');
+  }
+  if (flags['include-host'] !== undefined) {
+    throw new Error('attest omits the Host line. There is no --include-host.');
+  }
+  const slsa = flagBool(flags, 'slsa');
+  const raw = flags.predicate;
+  if (raw === true) throw new Error('--predicate requires run or slsa');
+  const name = typeof raw === 'string' ? raw.toLowerCase() : undefined;
+  if (name && name !== 'run' && name !== 'slsa') {
+    throw new Error('--predicate must be run or slsa');
+  }
+  if (slsa && name === 'run') throw new Error('--slsa conflicts with --predicate run');
+  return slsa || name === 'slsa' ? 'slsa' : 'run';
+}
+
 function assertKnownProveFlags(flags: Record<string, string | boolean>): void {
   for (const key of Object.keys(flags)) {
     if (!PROVE_FLAGS.has(key)) {
@@ -464,8 +513,86 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         });
         return result.exitCode;
       }
+      case 'attest': {
+        assertKnownAttestFlags(flags);
+        const predicate = resolveAttestPredicate(flags);
+        const json = flagBool(flags, 'json');
+        const verifyFlag = flags.verify;
+        const sub = positional[0] === 'verify';
+        if (sub || verifyFlag !== undefined) {
+          if (sub && verifyFlag !== undefined) {
+            throw new Error('Pass either `attest verify <file>` or `attest --verify <file>`.');
+          }
+          if (flags.session !== undefined) {
+            throw new Error('--session writes an attestation. It is not a verify flag.');
+          }
+          if (flags['no-sign'] !== undefined) {
+            throw new Error('--no-sign writes an unsigned attestation. It is not a verify flag.');
+          }
+          if (flags.predicate !== undefined || flags.slsa !== undefined) {
+            throw new Error('--predicate and --slsa choose what to write. They are not verify flags.');
+          }
+          if (flags.out !== undefined || flags.o !== undefined) {
+            throw new Error('--out writes an attestation. It is not a verify flag.');
+          }
+          let file = '';
+          if (sub) {
+            if (positional.length !== 2) {
+              throw new Error('Usage: agent-receipt attest verify <file.intoto.jsonl>');
+            }
+            file = positional[1];
+          } else if (typeof verifyFlag === 'string') {
+            if (positional.length) {
+              throw new Error('Usage: agent-receipt attest --verify <file.intoto.jsonl>');
+            }
+            file = verifyFlag;
+          } else {
+            throw new Error('attest --verify requires a file');
+          }
+          return cmdAttestVerify(cwd, file, {
+            json,
+            trustedKeys: flagTrustedKeys(flags),
+          });
+        }
+        if (flags['trusted-key'] !== undefined) {
+          throw new Error('--trusted-key is for attest --verify.');
+        }
+        if (positional.length > 1) {
+          throw new Error('attest accepts one receipt, one session package, or `last`.');
+        }
+        if (flags.session !== undefined && positional.length) {
+          throw new Error('--session does not take a path. Usage: agent-receipt attest --session <id>');
+        }
+        return cmdAttest(cwd, positional[0], {
+          out: flagString(flags, 'out', 'o'),
+          json,
+          predicate,
+          session: flagString(flags, 'session'),
+          noSign: flagBool(flags, 'no-sign'),
+        });
+      }
       case 'export': {
-        const fmt = flagString(flags, 'format');
+        const fmt = (flagString(flags, 'format') || 'html').toLowerCase();
+        if (fmt === 'intoto' || fmt === 'in-toto' || fmt === 'dsse') {
+          assertKnownAttestFlags(flags, ['format', 'redact']);
+          const predicate = resolveAttestPredicate(flags);
+          if (flags['trusted-key'] !== undefined || flags.verify !== undefined) {
+            throw new Error('export --format intoto writes an attestation. Use `attest --verify` to check one.');
+          }
+          if (positional.length > 1) {
+            throw new Error('export --format intoto accepts one receipt, one session package, or `last`.');
+          }
+          if (flags.session !== undefined && positional.length) {
+            throw new Error('--session does not take a path.');
+          }
+          return cmdAttest(cwd, positional[0], {
+            out: flagString(flags, 'out', 'o'),
+            json: flagBool(flags, 'json'),
+            predicate,
+            session: flagString(flags, 'session'),
+            noSign: flagBool(flags, 'no-sign'),
+          });
+        }
         cmdExport(cwd, positional[0], {
           out: flagString(flags, 'out', 'o'),
           redact: flagBool(flags, 'redact'),
@@ -835,7 +962,16 @@ export async function run(argv: string[] = process.argv): Promise<number> {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (command === 'prove' && flagBool(flags, 'json')) {
+    const exportFmt = typeof flags.format === 'string' ? flags.format.toLowerCase() : '';
+    const attestExport =
+      command === 'export' &&
+      (exportFmt === 'intoto' || exportFmt === 'in-toto' || exportFmt === 'dsse');
+    if ((command === 'attest' || attestExport) && flagBool(flags, 'json')) {
+      const verifying =
+        command === 'attest' &&
+        (flags.verify !== undefined || positional[0] === 'verify');
+      printAttestError(msg, verifying ? 'attest-verify' : 'attest');
+    } else if (command === 'prove' && flagBool(flags, 'json')) {
       printProveError(msg);
     } else if (command === 'keygen' && flagBool(flags, 'json')) {
       printKeygenError(msg);

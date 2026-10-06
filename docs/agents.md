@@ -148,6 +148,7 @@ Inside Aider:
 | Known-keys allowlist | `agent-receipt trust add --self` or `trust add <fingerprint>`. `trust show` reports whether the local key is listed (not a CA) |
 | Prove this run | `agent-receipt prove` (hash + audit link + signature status) |
 | Local Ed25519 attest | `agent-receipt keygen` then `agent-receipt sign` (not a CA) |
+| in-toto / SLSA export | `agent-receipt attest` then `agent-receipt attest --verify <file.intoto.jsonl>` |
 | Newest receipt JSON | `agent-receipt last --json` |
 | Whole-branch review | `agent-receipt capture --since main --full` |
 | Fail CI on secrets | `agent-receipt capture --fail-on high` |

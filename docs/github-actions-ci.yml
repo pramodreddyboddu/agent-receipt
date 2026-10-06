@@ -17,6 +17,8 @@
 # (no workflow).
 # v1.0.31 left that live file unchanged for the same reason. The smoke
 # below includes adapters install --dry-run.
+# v1.0.32 left that live file unchanged for the same reason. The smoke
+# below includes attest last and attest --verify.
 name: CI
 
 on:
@@ -297,3 +299,11 @@ jobs:
           node bin/agent-receipt.js help adapters >/dev/null
           node bin/agent-receipt.js adapters install claude-code --dry-run --cwd "$tmp"
           test ! -e "$tmp/.claude"
+          # v1.0.32: in-toto attestation. keygen is idempotent when keys exist.
+          # The trust store may be empty; verify still accepts a valid signature.
+          node bin/agent-receipt.js keygen --cwd "$tmp"
+          node bin/agent-receipt.js attest last --json --cwd "$tmp" > "$tmp/attest.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="attest"||g.exitCode!==0||g.signed!==true||typeof g.path!=="string"||!g.path.endsWith(".intoto.jsonl")||!fs.existsSync(g.path)){console.error(g); process.exit(1)} const line=fs.readFileSync(g.path,"utf8").trim().split("\n")[0]; if(line.indexOf("PRIVATE KEY")!==-1){console.error("private key"); process.exit(1)} const env=JSON.parse(line); const body=JSON.parse(Buffer.from(env.payload,"base64").toString("utf8")); if(body._type!=="https://in-toto.io/Statement/v1"||env.payloadType!=="application/vnd.in-toto+json"||!Array.isArray(body.subject)||body.subject.length<1){console.error(body); process.exit(1)}' "$tmp/attest.json"
+          att=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).path)' "$tmp/attest.json")
+          node bin/agent-receipt.js attest --verify "$att" --json --cwd "$tmp" > "$tmp/attest-verify.json"
+          node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="attest-verify"||g.exitCode!==0||g.signed!==true||g.subjectsOk!==true||g.hashChainOk!==true){console.error(g); process.exit(1)}' "$tmp/attest-verify.json"

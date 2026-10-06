@@ -30,6 +30,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     'link',
     'include-host',
     'resign',
+    'no-sign',
+    'slsa',
   ]);
   // Repeatable flags are joined with commas (`--trusted-key a --trusted-key b`).
   const repeatable = new Set(['trusted-key']);

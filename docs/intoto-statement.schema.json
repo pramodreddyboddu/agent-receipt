@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/intoto-statement.schema.json",
+  "title": "AgentReceiptInTotoStatement",
+  "description": "in-toto Statement v1 written by `agent-receipt attest` as the DSSE payload (payloadType application/vnd.in-toto+json). The on-disk file is .intoto.jsonl: one envelope per line, not this object alone. Subjects use sha256 of the raw file bytes. hashChainHead is the receipt canonical sha256. The private key is not in the statement. Narrative fields are redacted before they are copied. This is not a CA.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["_type", "subject", "predicateType", "predicate"],
+  "properties": {
+    "_type": {
+      "const": "https://in-toto.io/Statement/v1"
+    },
+    "subject": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "digest"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path relative to the working directory. Not an absolute path."
+          },
+          "digest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sha256"],
+            "properties": {
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "SHA-256 of the raw file bytes."
+              }
+            }
+          }
+        }
+      }
+    },
+    "predicateType": {
+      "enum": [
+        "https://agent-receipt.dev/run/v1",
+        "https://slsa.dev/provenance/v1"
+      ]
+    },
+    "predicate": {
+      "type": "object",
+      "description": "Run facts (https://agent-receipt.dev/run/v1) or SLSA Provenance v1 (buildDefinition and runDetails). See docs/intoto.md."
+    }
+  }
+}

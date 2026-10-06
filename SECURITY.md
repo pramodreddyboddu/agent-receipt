@@ -53,6 +53,13 @@ It does fail `verify --require-sig`. `share` and Markdown `export` copy a
 matching sidecar or re-sign the published Markdown when local keys exist.
 They do not attach a stale sidecar, and they do not sign HTML.
 
+`attest` (1.0.32) signs a DSSE envelope around an in-toto Statement with
+that same local Ed25519 key. The signed bytes are the DSSE
+pre-authentication encoding, not the receipt sha256 hex. The envelope
+embeds the SPKI public key and never the private key. An unsigned envelope
+is not integrity: `attest --verify` exits 2. An empty trust store still
+accepts any cryptographically valid signature. This is not a CA.
+
 It is **not**:
 
 - A certificate authority or a PKI product (no minisign, GPG, or OpenPGP)

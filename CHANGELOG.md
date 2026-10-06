@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.32] — 2026-10-06
+
+### Added
+
+- `agent-receipt attest [path|last]` writes an in-toto Statement v1 (`_type` `https://in-toto.io/Statement/v1`) inside a DSSE envelope, one envelope per line (`.intoto.jsonl`). Payload type is `application/vnd.in-toto+json`. The signature is Ed25519 over the DSSE pre-authentication encoding (PAE), using the same local key as `sign`. `keyid` is that fingerprint. The envelope also carries the SPKI public key. The private key is never written. Missing keys write an unsigned envelope, warn, and exit 0. `--no-sign` does the same. A corrupt key file exits 1 and writes nothing.
+- The default predicate is `https://agent-receipt.dev/run/v1` (agent, session, commands, tool calls, policy hits, exit code, and the hash-chain head). `--slsa` or `--predicate slsa` writes SLSA Provenance v1 (`https://slsa.dev/provenance/v1`) with `buildDefinition` and `runDetails`. Subjects are the receipt and changed files that are still regular files under the byte cap. Each digest is sha256 of the raw file bytes. The hash-chain head is the receipt canonical sha256, the same hex `verify` prints. Paths stay relative to the working directory. Host and workspace are omitted.
+- `attest --verify <file>` (alias `attest verify <file>`) checks the DSSE signature against the trusted public keys, each subject digest against the file on disk, and the hash-chain head against the receipt. Unsigned, a bad signature, an untrusted fingerprint when the allowlist is active, a digest mismatch, or a hash mismatch exits 2. A missing file exits 1. An empty trust store accepts any cryptographically valid signature and prints a note (`trusted` is null). `--json` prints one object on stdout for create and verify. Warnings stay on stderr.
+- `export --format intoto` (aliases `in-toto` and `dsse`) writes the same envelope as `attest`. It does not append the audit log. HTML and Markdown export are unchanged.
+- One receipt writes `<stem>.intoto.jsonl` beside that receipt. A session package writes `<id>.intoto.jsonl` beside the package, one envelope per packaged receipt. `--session <id>` writes `<id>.intoto.jsonl` beside `outDir`. A receipt that fails integrity exits 2 and writes nothing. See [`docs/intoto.md`](docs/intoto.md) and [`docs/intoto-statement.schema.json`](docs/intoto-statement.schema.json).
+
+### Fixed
+
+- Write and Edit free text now redacts 1–3 character assignment values such as `password="ab"`. Longer values still use the existing pattern.
+- Encoded secrets (base64 or even-length hex that decodes to printable ASCII and matches a secret pattern) are redacted in transcript text, including values stored under a non-sensitive key.
+- Tool-argument keys are secret-shaped tokens after camelCase is split (`apiKey`, `api_key`). A path that merely contains `key` (`keyboard`, `src/keys/config.ts`, `file_path`) is no longer replaced wholesale.
+
+### Changed
+
+- Package version bumped to `1.0.32`.
+- [`README.md`](README.md), CLI help, [`docs/agents.md`](docs/agents.md), [`docs/business.md`](docs/business.md), [`docs/ci-signed-gate.md`](docs/ci-signed-gate.md), and [`SECURITY.md`](SECURITY.md) document attestation export. Pin comments that track the current cut are `v1.0.32`.
+- [`docs/github-actions-ci.yml`](docs/github-actions-ci.yml) keeps the earlier smokes and adds an `attest last` / `attest --verify` smoke. Live [`.github/workflows/*`](.github/workflows) was not edited.
+
+### Notes
+
+- Live workflow files were not edited. The checkout token has no `workflow` scope. Install the mirror after `gh auth refresh -h github.com -s workflow`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This cut does not publish to npm. No new runtime dependencies. This is not a certificate authority. `attest` does not append `audit.jsonl`.
+- Subject digests are the files on disk at attest time. A later edit fails `attest --verify` (fail closed). Verify must run where those relative paths still exist.
+- Still deferred: Sigstore keyless signing, a published GitHub Action (the drop-in under `examples/github/` stays an example to copy), policy packs, a local web viewer, full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync (no `workflow` OAuth scope), and npm Trusted Publishing.
+
 ## [1.0.31] — 2026-10-06
 
 ### Added
