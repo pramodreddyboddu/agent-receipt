@@ -1908,8 +1908,19 @@ keeps serving. \`--open\` opens the default browser and does not fail the
 command when it cannot.
 
 \`--static <dir>\` writes \`index.html\` and \`data.json\` and exits. CSS and
-script are inline. There is no CDN and no external font. The same inputs
+script are inline. There is no CDN and no external font. The only link is
+an empty favicon, \`<link rel="icon" href="data:,">\`. The same inputs
 write the same bytes. Open \`index.html\` from disk.
+
+The Content-Security-Policy is \`default-src 'none'\` with the sha256 of
+the inline script and the inline style. \`connect-src\` is \`'self'\` while
+serving and \`'none'\` in the static bundle. \`img-src data:\` allows that
+empty favicon so the browser does not request \`/favicon.ico\`.
+\`base-uri\` and \`form-action\` are \`'none'\`. There is no
+\`unsafe-inline\`, \`unsafe-eval\`, wildcard, or remote origin.
+\`frame-ancestors 'none'\` is on the HTTP header only. Browsers ignore that
+directive in a meta tag and log a console error, so the meta policy omits
+it.
 
 The page lists time, agent, adapter, risk, exit, signed or unsigned,
 verify status, and policy-pack hits. Filters cover agent, risk, signed,

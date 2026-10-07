@@ -62,9 +62,11 @@ agent-receipt view --static ./viewer-dist
 ```
 
 That writes `index.html` and `data.json` and exits. It does not listen.
-CSS and script are inline. There is no external font and no `http://` or
-`https://` asset. Open `index.html` from disk (`file://`) or upload the
-directory as a CI artifact. The same receipts write the same bytes.
+CSS and script are inline. The only `<link>` is an empty favicon,
+`<link rel="icon" href="data:,">`. There is no external font and no
+`http://` or `https://` asset. Open `index.html` from disk (`file://`) or
+upload the directory as a CI artifact. The same receipts write the same
+bytes.
 
 `--json` with `--static` prints one object (`command`, `ok`, `static`,
 `out`, `receiptCount`) and does not start a server. Do not pass `--port`,
@@ -100,13 +102,27 @@ backslash, and an absolute path are rejected.
   through the secret masks. Nested receipt bodies are still omitted.
 - Verification reads the original receipt bytes. The page shows the redacted
   fields. A tampered body is `FAILED`, never `OK`.
-- `Content-Security-Policy` is `default-src 'none'` plus the sha256 of the
-  inline style and the inline script. The live server also sets
-  `connect-src 'self'` so the page can fetch `/api`. The static page sets
-  `connect-src 'none'` and embeds the snapshot. The same policy is in a
-  `<meta>` tag and, while serving, the HTTP header.
+- `Content-Security-Policy` does not use `'unsafe-inline'`, `'unsafe-eval'`,
+  `*`, or a remote origin. The document policy is:
+
+  `default-src 'none'; script-src 'sha256-<inline script>'; style-src 'sha256-<inline style>'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'`
+
+  The sha256 values are the hashes of the inline `<script>` and `<style>`
+  text. `connect-src` is `'self'` while serving, so the page can fetch
+  `/api` on the same host and port. The static bundle uses
+  `connect-src 'none'` and embeds the snapshot. `img-src data:` is the
+  narrowest source that allows the empty favicon. Without that icon,
+  Chrome requests `/favicon.ico` and logs a violation. `base-uri 'none'`
+  and `form-action 'none'` block injected base URLs and form posts.
+  The same directives are in the `<meta>` tag. The live HTML response
+  also sends them as a header and adds `frame-ancestors 'none'`.
+  Browsers ignore `frame-ancestors` inside `<meta>` and print a console
+  error, so the meta policy omits it. The header is what blocks framing.
+  A static file has no header.
+  JSON responses use a separate header with no document sources:
+  `default-src 'none'; script-src 'none'; style-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'`.
 - `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` are
-  set on every response.
+  set on every response. HTML responses also set `X-Frame-Options: DENY`.
 - The `Host` header must equal the bound host and port (`[::1]:port` when
   the bind is IPv6). Anything else is 403. That blocks a DNS rebinding
   client that sends a public Host to the loopback port.

@@ -27,7 +27,7 @@ steps:
   - uses: actions/setup-node@v4
     with:
       node-version: 20
-  - run: npm install -g github:pramodreddyboddu/agent-receipt#v1.0.36
+  - run: npm install -g github:pramodreddyboddu/agent-receipt#v1.0.37
   - run: agent-receipt init && agent-receipt capture --agent ci
   - run: agent-receipt attest --keyless --json
   - run: >
