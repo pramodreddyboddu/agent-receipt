@@ -13,6 +13,7 @@ import {
   writeStaticViewer,
   type ViewerCatalog,
 } from '../lib/viewer.js';
+import { isLoopbackBindHost, normalizeAllowedHosts, type AllowedHost } from '../lib/viewer-host.js';
 
 export interface ViewOptions {
   port?: number;
@@ -22,6 +23,8 @@ export interface ViewOptions {
   json?: boolean;
   staticDir?: string;
   allowRemote?: boolean;
+  /** Raw repeatable `--allowed-host` values. Normalized before listen. */
+  allowedHosts?: string[];
   trustedKeys?: string[];
   requireSig?: boolean;
   noRedact?: boolean;
@@ -32,9 +35,8 @@ function stdoutLine(line: string): void {
   writeSync(1, `${line}\n`);
 }
 
-function isLoopback(host: string): boolean {
-  const bare = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
-  return bare === '127.0.0.1' || bare === 'localhost' || bare === '::1';
+function allowedHostList(allowed: readonly AllowedHost[]): string {
+  return allowed.map((entry) => entry.normalized).join(', ');
 }
 
 function urlHost(host: string, port: number): string {
@@ -67,10 +69,19 @@ export async function cmdView(cwd: string, opts: ViewOptions = {}): Promise<numb
   if (opts.noRedact) {
     throw new Error('view always redacts. There is no --no-redact.');
   }
+  const allowed = normalizeAllowedHosts(opts.allowedHosts ?? []);
   if (opts.staticDir !== undefined) {
     if (!opts.staticDir.trim()) throw new Error('view --static requires an output directory');
-    if (opts.port !== undefined || opts.host !== undefined || opts.openBrowser || opts.allowRemote) {
-      throw new Error('view --static does not listen. Omit --port, --host, --open, and --allow-remote.');
+    if (
+      opts.port !== undefined ||
+      opts.host !== undefined ||
+      opts.openBrowser ||
+      opts.allowRemote ||
+      allowed.length > 0
+    ) {
+      throw new Error(
+        'view --static does not listen. Omit --port, --host, --open, --allow-remote, and --allowed-host.',
+      );
     }
     const out = isAbsolute(opts.staticDir) ? opts.staticDir : resolve(cwd, opts.staticDir);
     const catalog = catalogFor(cwd, opts);
@@ -98,14 +109,20 @@ export async function cmdView(cwd: string, opts: ViewOptions = {}): Promise<numb
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new Error('--port must be an integer from 0 to 65535');
   }
-  if (!isLoopback(host) && !opts.allowRemote) {
+  if (!isLoopbackBindHost(host) && !opts.allowRemote) {
     throw new Error(
       `Refusing to bind ${host}. The viewer binds 127.0.0.1 unless you pass --allow-remote.`,
     );
   }
+  const remoteNames = allowed.filter((entry) => !entry.loopback);
+  if (remoteNames.length > 0 && !opts.allowRemote) {
+    throw new Error(
+      `Refusing --allowed-host ${allowedHostList(remoteNames)}. Pass --allow-remote to accept a non-loopback Host, or use only 127.0.0.1, localhost, or ::1.`,
+    );
+  }
 
   const catalog = catalogFor(cwd, opts);
-  const bound = { host, port };
+  const bound = { host, port, allowedHosts: allowed };
   const server: Server = createViewerServer(catalog, bound);
   const count = catalog.snapshot.receipts.length;
 
@@ -137,9 +154,11 @@ export async function cmdView(cwd: string, opts: ViewOptions = {}): Promise<numb
       const boundPort = addr && typeof addr === 'object' ? addr.port : port;
       bound.port = boundPort;
       const url = `http://${urlHost(host, boundPort)}/`;
-      if (!isLoopback(host) && opts.allowRemote) {
+      if (!isLoopbackBindHost(host) && opts.allowRemote) {
+        const listed = allowedHostList(allowed);
+        const suffix = listed ? ` Allowed hosts: ${listed}.` : '';
         console.error(
-          `warning: --allow-remote binds ${host}. The viewer is meant for 127.0.0.1.`,
+          `warning: --allow-remote binds ${host}. The viewer is meant for 127.0.0.1. There is no auth.${suffix}`,
         );
       }
       if (opts.json) {
@@ -149,6 +168,7 @@ export async function cmdView(cwd: string, opts: ViewOptions = {}): Promise<numb
             port: boundPort,
             receiptCount: count,
             pid: process.pid,
+            allowedHosts: allowed.map((entry) => entry.normalized),
           }),
         );
       } else {

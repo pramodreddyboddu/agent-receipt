@@ -1896,6 +1896,7 @@ Examples:
 
 Usage:
   agent-receipt view [--port <n>] [--host 127.0.0.1] [--open] [--json]
+  agent-receipt view --host 0.0.0.0 --allow-remote --allowed-host <name>
   agent-receipt view --static <dir> [--json]
   agent-receipt view --receipts <dir> [--cwd <dir>]
 
@@ -1903,14 +1904,40 @@ Usage:
 only. It binds 127.0.0.1 port 4173 unless you pass \`--port\` or \`--host\`.
 \`--port 0\` picks a free port and prints the URL. A non-loopback host is
 refused unless \`--allow-remote\` is also passed, which prints a warning.
-\`--json\` prints one line (\`url\`, \`port\`, \`receiptCount\`, \`pid\`) and
-keeps serving. \`--open\` opens the default browser and does not fail the
-command when it cannot.
+\`--json\` prints one line (\`url\`, \`port\`, \`receiptCount\`, \`pid\`,
+\`allowedHosts\`) and keeps serving. \`allowedHosts\` is empty when you
+did not pass \`--allowed-host\`. \`--open\` opens the default browser and
+does not fail the command when it cannot.
+
+\`--allowed-host <name>\` (repeatable) is an exact Host allowlist for a
+LAN browser. The value is a hostname, an IPv4 address, or an IPv6
+address. IPv6 is compared in compressed lowercase form, so
+\`fd00:0::1\`, \`[fd00::1]\`, and \`fd00::1\` are the same entry. Add
+\`:port\` only when that Host port is not the bound port. Without
+\`:port\` the name matches the bound port only. Names are lowercased.
+IPv4 must be four decimal octets from 0 to 255 with no leading zeros
+(\`192.168.1.20\`). A last label that is all digits or \`0x\` hex is
+rejected (\`127.1\`, \`2130706433\`, \`0x7f000001\`, \`1234\`,
+\`010.0.0.1\`). Punycode labels (\`xn--\`) are accepted. Unicode
+internationalized names are rejected; pass the \`xn--\` form. There is
+no DNS lookup, no interface list, and no wildcard. A comma-separated
+list is rejected. Repeat the flag: \`--allowed-host <name> --allowed-host <name>\`.
+An empty value, a value that starts with \`-\`, schemes, paths,
+whitespace, and userinfo are rejected before the server listens.
+\`--allowed-host -h\` is that usage error. It does not print help.
+A non-loopback name requires \`--allow-remote\`. \`127.0.0.1\`,
+\`localhost\`, and \`::1\` do not. \`--allowed-host\` is rejected with
+\`--static\`.
+
+The remote-bind warning lists the allowed hosts. Anyone who can reach
+the port and send an allowed Host can read the redacted receipts.
+There is no auth. \`X-Forwarded-Host\` is ignored.
 
 \`--static <dir>\` writes \`index.html\` and \`data.json\` and exits. CSS and
 script are inline. There is no CDN and no external font. The only link is
 an empty favicon, \`<link rel="icon" href="data:,">\`. The same inputs
-write the same bytes. Open \`index.html\` from disk.
+write the same bytes. Open \`index.html\` from disk. Do not pass
+\`--allowed-host\` with \`--static\`.
 
 The Content-Security-Policy is \`default-src 'none'\` with the sha256 of
 the inline script and the inline style. \`connect-src\` is \`'self'\` while
@@ -1932,7 +1959,8 @@ Linked receipts show a parent/child session tree with host labels.
 \`GET /api/verify/:id\` are the only API routes. Any other method returns
 405. Unknown routes return 404 JSON. Receipt ids are an in-memory index.
 A path is never a receipt id. The Host header must be the bound
-host:port.
+host:port or an \`--allowed-host\` entry. IPv6 matches in compressed
+form. Two Host headers are HTTP 400. \`X-Forwarded-Host\` is ignored.
 
 View always redacts. \`--no-redact\` is rejected. Host labels that are not
 secrets stay visible. Verify status uses the same hash and signature
@@ -1945,6 +1973,7 @@ Examples:
   agent-receipt view
   agent-receipt view --port 0 --open
   agent-receipt view --json
+  agent-receipt view --host 0.0.0.0 --allow-remote --allowed-host myhost.local
   agent-receipt view --static ./viewer-dist
   agent-receipt view --require-sig --trusted-key <fp>
 `,
@@ -2095,6 +2124,7 @@ Examples:
   agent-receipt doctor --json
   agent-receipt view
   agent-receipt view --port 0 --json
+  agent-receipt view --host 0.0.0.0 --allow-remote --allowed-host myhost.local
   agent-receipt view --static ./viewer-dist
   agent-receipt compare
   agent-receipt install-hooks

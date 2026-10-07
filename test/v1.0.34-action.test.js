@@ -279,7 +279,7 @@ function startGithub(mode = 'ok') {
   });
 }
 
-describe('v1.0.37 GitHub Action and pr-comment', { concurrency: 1 }, () => {
+describe('v1.0.38 GitHub Action and pr-comment', { concurrency: 1 }, () => {
   const dirs = [];
   after(() => {
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
@@ -366,7 +366,7 @@ describe('v1.0.37 GitHub Action and pr-comment', { concurrency: 1 }, () => {
     ]) {
       assert.ok(action.inputs[key], `missing input ${key}`);
     }
-    assert.equal(action.inputs.version.default, '1.0.37');
+    assert.equal(action.inputs.version.default, '1.0.38');
     assert.equal(action.inputs.command.default, 'gate');
     assert.equal(action.inputs.comment.default, 'on');
     assert.equal(action.inputs['comment-mode'].default, 'update');
@@ -428,18 +428,18 @@ describe('v1.0.37 GitHub Action and pr-comment', { concurrency: 1 }, () => {
 
     const bad = spawnSync('bash', [scriptPath], {
       encoding: 'utf8',
-      env: { ...baseEnv, AR_VERSION: '1.0.37', AR_COMMAND: 'ship' },
+      env: { ...baseEnv, AR_VERSION: '1.0.38', AR_COMMAND: 'ship' },
     });
     assert.equal(bad.status, 1, bad.stderr);
     assert.match(bad.stderr, /command must be/);
 
     const ok = spawnSync('bash', [scriptPath], {
       encoding: 'utf8',
-      env: { ...baseEnv, AR_VERSION: '1.0.37' },
+      env: { ...baseEnv, AR_VERSION: '1.0.38' },
     });
     assert.equal(ok.status, 0, ok.stdout + ok.stderr);
     const args = readFileSync(npxLog, 'utf8');
-    assert.match(args, /@pramodreddyboddu\/agent-receipt@1\.0\.37/);
+    assert.match(args, /@pramodreddyboddu\/agent-receipt@1\.0\.38/);
     assert.equal(args.includes('latest'), false);
     assert.match(args, /pr-comment/);
     const produced = readFileSync(output, 'utf8');
@@ -583,7 +583,7 @@ describe('v1.0.37 GitHub Action and pr-comment', { concurrency: 1 }, () => {
     assert.equal(failed.code, 2, failed.out + failed.err);
     const body = JSON.parse(failed.out);
     assert.equal(body.command, 'pr-comment');
-    assert.equal(body.version, '1.0.37');
+    assert.equal(body.version, '1.0.38');
     assert.equal(body.verdict, 'fail');
     assert.equal(body.exitCode, 2);
     assert.equal(body.ok, false);
@@ -607,9 +607,9 @@ describe('v1.0.37 GitHub Action and pr-comment', { concurrency: 1 }, () => {
     assert.match(ok.summary, /\*\*Verdict:\*\* pass/);
   });
 
-  it('documents 1.0.37 and rejects an unknown command', () => {
+  it('documents 1.0.38 and rejects an unknown command', () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.37');
+    assert.equal(pkg.version, '1.0.38');
     assert.equal(pkg.dependencies, undefined);
     const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     assert.match(changelog, /## \[1\.0\.34\]/);

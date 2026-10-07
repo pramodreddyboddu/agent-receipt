@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.38] — 2026-10-07
+
+### Added
+
+- `agent-receipt view --allowed-host <name>` (repeatable) accepts a LAN browser on a remote bind. Each value is a hostname, a canonical IPv4 address, or a bracketed or bare IPv6 address, optionally with `:port`. Without a port the name matches the bound port only. An entry with `:port` matches that port only. IPv6 is stored in compressed lowercase form, so `[fd00::1]`, `fd00::1`, and `fd00:0::1` are the same entry. Names are lowercased. The match is exact. There is no DNS lookup, no interface scan, and no wildcard.
+- `--allowed-host` requires `--allow-remote` unless every value is loopback (`127.0.0.1`, `localhost`, or `::1`). It is rejected with `--static`. A comma-separated list is rejected. Repeat the flag. Empty values, a value that starts with `-`, wildcards, schemes, paths, whitespace, and userinfo are rejected before the server listens. Punycode labels (`xn--`) are accepted. Unicode internationalized names are rejected.
+- The Host check accepts the bound host:port and each allowed host. `X-Forwarded-Host` and similar headers are ignored. A second `Host` header is HTTP 400 `{"error":"bad request"}`. Anything else is still 403 `{"error":"forbidden"}`.
+- `--json` on a live bind adds `allowedHosts` (a normalized array, empty when the flag is omitted). The `--allow-remote` warning lists those hosts and says there is no auth. The default bind stays `127.0.0.1`.
+
+### Fixed
+
+- `--allowed-host` and the live Host check reject a non-canonical numeric address. A last label that is all digits or `0x` hex is rejected unless the value is a canonical IPv4 address: four decimal octets from 0 to 255 with no leading zeros. `127.1`, `2130706433`, `0x7f000001`, `1234`, and `010.0.0.1` are rejected. `192.168.1.20` still matches.
+- IPv6 entries compare in compressed lowercase form. `fd00:0::1` matches `[fd00::1]`. Brackets on the flag are optional.
+- `--allowed-host ""` fails with `--allowed-host requires a hostname, IPv4 address, or IPv6 address.` It does not report `view does not take a receipt path`.
+- `--allowed-host -h`, and any other value that starts with `-`, is a usage error and exits non-zero. It does not print help.
+- Punycode labels (`xn--`) stay allowed. A Unicode internationalized name is rejected. [`README.md`](README.md), [`docs/viewer.md`](docs/viewer.md), and `view --help` say so.
+
+### Notes
+
+- Package version bumped to `1.0.38`. Pin comments that track the current cut are `v1.0.38`. The action default pin is `1.0.38`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
+
 ## [1.0.37] — 2026-10-07
 
 ### Fixed
