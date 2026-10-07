@@ -70,7 +70,20 @@ export function parseArgs(argv: string[]): ParsedArgs {
         const next = rest[i + 1];
         // `--identity-token -` reads stdin. A lone `-` is otherwise a flag.
         const stdinToken = key === 'identity-token' && next === '-';
-        if (next && (!next.startsWith('-') || stdinToken)) {
+        // `--allowed-host ""` and `--allowed-host -h` are values. An empty
+        // argv is falsy, and `-h` would otherwise print help and exit 0.
+        // A following long option such as `--port` still means the hostname
+        // was omitted. `--help` and `--version` are the exceptions: in this
+        // position they are values, not a successful help or version exit.
+        const singleDash = next !== undefined && next.startsWith('-') && !next.startsWith('--');
+        const allowedHostValue =
+          key === 'allowed-host' &&
+          next !== undefined &&
+          (next.length === 0 || next === '--help' || next === '--version' || singleDash);
+        if (
+          next !== undefined &&
+          (allowedHostValue || (next.length > 0 && (!next.startsWith('-') || stdinToken)))
+        ) {
           assignFlag(key, next);
           i++;
         } else {

@@ -104,9 +104,15 @@ CSS and script, `img-src data:` for an empty favicon, no remote asset.
 Open `index.html` from disk or upload the directory as a CI artifact. A
 non-loopback `--host` is refused unless you also pass `--allow-remote`.
 LAN browsers send their own Host, so also pass repeatable
-`--allowed-host` (an exact hostname or IP, optional `:port`). There is
-no auth: anyone who can reach the port and send an allowed Host can
-read redacted receipts. `X-Forwarded-Host` is ignored.
+`--allowed-host` (an exact hostname or IP, optional `:port`). IPv4 must
+be a canonical dotted quad (`192.168.1.20`): four decimal octets 0–255
+with no leading zeros. Short, decimal, hex, and padded forms (`127.1`,
+`2130706433`, `0x7f000001`, `010.0.0.1`) are rejected. IPv6 is matched
+in compressed lowercase form, so `fd00:0::1` and `[fd00::1]` are the
+same entry. Punycode labels (`xn--`) are accepted. Unicode names are
+rejected; pass the `xn--` form. There is no auth: anyone who can reach
+the port and send an allowed Host can read redacted receipts.
+`X-Forwarded-Host` is ignored.
 
 Details: [`docs/viewer.md`](docs/viewer.md).
 

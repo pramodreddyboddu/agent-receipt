@@ -1911,15 +1911,23 @@ does not fail the command when it cannot.
 
 \`--allowed-host <name>\` (repeatable) is an exact Host allowlist for a
 LAN browser. The value is a hostname, an IPv4 address, or an IPv6
-address (\`[fd00::1]\` and \`fd00::1\` are the same entry). Add \`:port\`
-only when that Host port is not the bound port. Without \`:port\` the
-name matches the bound port only. Names are lowercased. There is no
-DNS lookup, no interface list, and no wildcard. A comma-separated list
-is rejected. Repeat the flag: \`--allowed-host <name> --allowed-host <name>\`.
-Empty values, schemes, paths, whitespace, and userinfo are rejected
-before the server listens. A non-loopback name requires
-\`--allow-remote\`. \`127.0.0.1\`, \`localhost\`, and \`::1\` do not.
-\`--allowed-host\` is rejected with \`--static\`.
+address. IPv6 is compared in compressed lowercase form, so
+\`fd00:0::1\`, \`[fd00::1]\`, and \`fd00::1\` are the same entry. Add
+\`:port\` only when that Host port is not the bound port. Without
+\`:port\` the name matches the bound port only. Names are lowercased.
+IPv4 must be four decimal octets from 0 to 255 with no leading zeros
+(\`192.168.1.20\`). A last label that is all digits or \`0x\` hex is
+rejected (\`127.1\`, \`2130706433\`, \`0x7f000001\`, \`1234\`,
+\`010.0.0.1\`). Punycode labels (\`xn--\`) are accepted. Unicode
+internationalized names are rejected; pass the \`xn--\` form. There is
+no DNS lookup, no interface list, and no wildcard. A comma-separated
+list is rejected. Repeat the flag: \`--allowed-host <name> --allowed-host <name>\`.
+An empty value, a value that starts with \`-\`, schemes, paths,
+whitespace, and userinfo are rejected before the server listens.
+\`--allowed-host -h\` is that usage error. It does not print help.
+A non-loopback name requires \`--allow-remote\`. \`127.0.0.1\`,
+\`localhost\`, and \`::1\` do not. \`--allowed-host\` is rejected with
+\`--static\`.
 
 The remote-bind warning lists the allowed hosts. Anyone who can reach
 the port and send an allowed Host can read the redacted receipts.
@@ -1951,7 +1959,8 @@ Linked receipts show a parent/child session tree with host labels.
 \`GET /api/verify/:id\` are the only API routes. Any other method returns
 405. Unknown routes return 404 JSON. Receipt ids are an in-memory index.
 A path is never a receipt id. The Host header must be the bound
-host:port or an \`--allowed-host\` entry. \`X-Forwarded-Host\` is ignored.
+host:port or an \`--allowed-host\` entry. IPv6 matches in compressed
+form. Two Host headers are HTTP 400. \`X-Forwarded-Host\` is ignored.
 
 View always redacts. \`--no-redact\` is rejected. Host labels that are not
 secrets stay visible. Verify status uses the same hash and signature

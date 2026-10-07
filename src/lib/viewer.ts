@@ -934,14 +934,30 @@ function jsonError(res: ServerResponse, status: number, error: string, extra: Re
   }));
 }
 
+/** Every Host header, in wire order. `headers.host` keeps only the first. */
+function hostHeaderValues(req: IncomingMessage): string[] {
+  const found: string[] = [];
+  const raw = req.rawHeaders;
+  for (let i = 0; i + 1 < raw.length; i += 2) {
+    if (raw[i].toLowerCase() === 'host') found.push(raw[i + 1]);
+  }
+  return found;
+}
+
 export function createViewerServer(catalog: ViewerCatalog, bound: ViewerBound): Server {
   const page = renderViewerPage(null, true);
   const pageCsp = viewerDocumentHeaderPolicy(true);
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     req.resume();
-    // Host is the only authority. X-Forwarded-Host, Forwarded, and similar
-    // headers are ignored so a proxy header cannot widen the allowlist.
-    const hostHeader = req.headers.host;
+    // Host is the only authority. Two Host headers are ambiguous: this
+    // parser keeps the first, and a proxy may use the last. That is 400.
+    // X-Forwarded-Host, Forwarded, and similar headers are ignored.
+    const hostValues = hostHeaderValues(req);
+    if (hostValues.length > 1) {
+      jsonError(res, 400, 'bad request');
+      return;
+    }
+    const hostHeader = hostValues.length === 1 ? hostValues[0] : undefined;
     if (!hostHeaderAllowed(hostHeader, bound.host, bound.port, bound.allowedHosts ?? [])) {
       jsonError(res, 403, 'forbidden');
       return;

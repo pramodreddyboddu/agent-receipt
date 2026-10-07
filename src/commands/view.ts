@@ -158,7 +158,7 @@ export async function cmdView(cwd: string, opts: ViewOptions = {}): Promise<numb
         const listed = allowedHostList(allowed);
         const suffix = listed ? ` Allowed hosts: ${listed}.` : '';
         console.error(
-          `warning: --allow-remote binds ${host}. The viewer is meant for 127.0.0.1.${suffix}`,
+          `warning: --allow-remote binds ${host}. The viewer is meant for 127.0.0.1. There is no auth.${suffix}`,
         );
       }
       if (opts.json) {
