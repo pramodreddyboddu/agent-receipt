@@ -236,7 +236,10 @@ function assertSecurity(headers, { connectSelf }) {
 
 function assertNoHttpAssets(text) {
   assert.equal(/<script\s+src/i.test(text), false);
-  assert.equal(/<link\b/i.test(text), false);
+  const links = text.match(/<link\b[^>]*>/gi) || [];
+  for (const link of links) {
+    assert.equal(link, '<link rel="icon" href="data:,">');
+  }
   assert.equal(/@import/i.test(text), false);
   assert.equal(/url\s*\(/i.test(text), false);
   assert.equal(/https?:\/\//i.test(text), false);
@@ -247,7 +250,7 @@ function toolReceipt(command) {
 
 ## Session
 
-- **Version**: 1.0.36
+- **Version**: 1.0.37
 - **Agent**: ci
 
 ## Tool calls
@@ -345,7 +348,7 @@ function linkedRepo() {
   return { dir, parentId, childId, childPath: childBody.path };
 }
 
-describe('v1.0.36 local viewer', { concurrency: 1 }, () => {
+describe('v1.0.37 local viewer', { concurrency: 1 }, () => {
   after(async () => {
     await Promise.all(children.map((child) => stopChild(child)));
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
@@ -840,7 +843,7 @@ describe('v1.0.36 local viewer', { concurrency: 1 }, () => {
       assert.match(rejected.stderr, /Never latest/);
       assert.equal(rejected.npxCalled, false, version);
     }
-    for (const version of ['0.0.0', '0.5.0', '10.0.34', '1.0.36']) {
+    for (const version of ['0.0.0', '0.5.0', '10.0.34', '1.0.37']) {
       const accepted = runPin(version, 'nope');
       assert.equal(accepted.status, 1, `${version}\n${accepted.stderr}`);
       assert.match(accepted.stderr, /command must be/);

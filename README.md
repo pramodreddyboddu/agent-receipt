@@ -42,7 +42,7 @@ npm install -D @pramodreddyboddu/agent-receipt
 ## GitHub Action
 
 Gate a pull request with one `uses:` line. The action runs a pinned
-`agent-receipt` (`1.0.36` by default, never `latest`) and posts a sticky
+`agent-receipt` (`1.0.37` by default, never `latest`) and posts a sticky
 summary comment.
 
 ```yaml
@@ -99,9 +99,10 @@ agent-receipt view --static ./viewer-dist
 ```
 
 `--static` writes `index.html` and `data.json` with inline CSS and script
-(no CDN). Open `index.html` from disk or upload the directory as a CI
-artifact. A non-loopback `--host` is refused unless you also pass
-`--allow-remote`.
+(no CDN). The page uses a strict Content-Security-Policy: hashed inline
+CSS and script, `img-src data:` for an empty favicon, no remote asset.
+Open `index.html` from disk or upload the directory as a CI artifact. A
+non-loopback `--host` is refused unless you also pass `--allow-remote`.
 
 Details: [`docs/viewer.md`](docs/viewer.md).
 
@@ -488,7 +489,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.36`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.37`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`

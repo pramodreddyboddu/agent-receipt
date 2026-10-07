@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.37] — 2026-10-07
+
+### Fixed
+
+- The local viewer no longer trips its own Content-Security-Policy. Chrome was logging `frame-ancestors` from the `<meta>` policy (browsers ignore that directive in a meta element) and requesting `/favicon.ico`, which `img-src 'none'` blocked. The empty favicon is `<link rel="icon" href="data:,">` with `img-src data:`. `frame-ancestors 'none'` stays on the HTML HTTP header only. The meta policy omits it. Inline script and style stay sha256-hashed. There is no `'unsafe-inline'`, `'unsafe-eval'`, wildcard, or remote origin. The static `file://` bundle uses the same meta policy with `connect-src 'none'`.
+
+### Added
+
+- Integration tests spawn `view` on port 0. `--host 0.0.0.0 --allow-remote` prints the warning, emits the JSON line, and `GET /api/receipts` on `127.0.0.1` returns 200. Without `--allow-remote` the process exits non-zero and does not listen. `localhost` and `::1` stay loopback. A forged `Host` on a remote bind is still rejected. A parser test checks that every inline script and style in the served page and the static bundle is covered by the CSP hash, with no `on*` attributes, no `style` attributes, and no remote resource URLs.
+
+### Notes
+
+- Package version bumped to `1.0.37`. Pin comments that track the current cut are `v1.0.37`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
+
 ## [1.0.36] — 2026-10-06
 
 ### Added

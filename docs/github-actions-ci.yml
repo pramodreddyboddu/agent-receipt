@@ -28,6 +28,9 @@
 # The smoke below lists and lints built-in policy packs. No network.
 # v1.0.36 left that live file unchanged for the same reason.
 # The smoke below writes a static viewer bundle and does not listen.
+# v1.0.37 left that live file unchanged for the same reason.
+# The static bundle may include one empty data: favicon link. No remote
+# asset, no unsafe-inline, and the smoke still does not listen.
 name: CI
 
 on:
@@ -326,4 +329,4 @@ jobs:
           node bin/agent-receipt.js policy lint builtin:strict
           # v1.0.36: static viewer bundle. No listen, no network.
           node bin/agent-receipt.js view --static "$tmp/viewer-static" --json --cwd "$tmp" > "$tmp/viewer.json"
-          node -e 'const fs=require("fs"); const path=require("path"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="view"||g.static!==true||typeof g.out!=="string"||typeof g.receiptCount!=="number"){console.error(g); process.exit(1)} const html=fs.readFileSync(path.join(g.out,"index.html"),"utf8"); const data=fs.readFileSync(path.join(g.out,"data.json"),"utf8"); if(html.indexOf("<script src")!==-1||html.indexOf("<link")!==-1||html.indexOf("@import")!==-1||html.indexOf("viewer-data")===-1){console.error("asset"); process.exit(1)} JSON.parse(data);' "$tmp/viewer.json"
+          node -e 'const fs=require("fs"); const path=require("path"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(g.ok!==true||g.command!=="view"||g.static!==true||typeof g.out!=="string"||typeof g.receiptCount!=="number"){console.error(g); process.exit(1)} const html=fs.readFileSync(path.join(g.out,"index.html"),"utf8"); const data=fs.readFileSync(path.join(g.out,"data.json"),"utf8"); const links=html.match(/<link\b[^>]*>/g)||[]; if(html.indexOf("<script src")!==-1||links.some(function(link){return link!=="<link rel=\"icon\" href=\"data:,\">"})||html.indexOf("@import")!==-1||html.indexOf("unsafe-inline")!==-1||html.indexOf("frame-ancestors")!==-1||html.indexOf("viewer-data")===-1){console.error("asset"); process.exit(1)} JSON.parse(data);' "$tmp/viewer.json"

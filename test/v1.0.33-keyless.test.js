@@ -363,7 +363,7 @@ function assertNoMarker(dir, result, markers) {
   assert.equal(blob.includes('BEGIN EC PRIVATE KEY'), false);
 }
 
-describe('v1.0.36 keyless signing', { concurrency: 1 }, () => {
+describe('v1.0.37 keyless signing', { concurrency: 1 }, () => {
   it('redacts dictionary passphrases and leaves prose alone', () => {
     const contents = redactArgsValue({
       contents: 'password: "correct horse battery staple"\n',
@@ -422,7 +422,7 @@ describe('v1.0.36 keyless signing', { concurrency: 1 }, () => {
       const report = JSON.parse(created.out);
       assert.equal(report.ok, true);
       assert.equal(report.command, 'attest');
-      assert.equal(report.version, '1.0.36');
+      assert.equal(report.version, '1.0.37');
       assert.equal(report.keyless, true);
       assert.equal(report.signed, true);
       assert.equal(report.certificateIdentity, FILE_SUB);
@@ -708,9 +708,9 @@ describe('v1.0.36 keyless signing', { concurrency: 1 }, () => {
     }
   });
 
-  it('documents 1.0.36 and keeps sign --keyless out of scope', async () => {
+  it('documents 1.0.37 and keeps sign --keyless out of scope', async () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.36');
+    assert.equal(pkg.version, '1.0.37');
     const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     assert.match(changelog, /## \[1\.0\.33\]/);
     assert.match(changelog, /attest --keyless/);

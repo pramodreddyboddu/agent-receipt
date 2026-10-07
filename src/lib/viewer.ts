@@ -333,18 +333,36 @@ function sha256Base64(value: string): string {
   return createHash('sha256').update(value).digest('base64');
 }
 
-export function viewerContentSecurityPolicy(connectSelf: boolean): string {
+/**
+ * Document policy shared by the `<meta>` tag and the HTML response header.
+ * `img-src data:` is the narrowest source that allows the empty favicon
+ * (`<link rel="icon" href="data:,">`). Without that icon, Chrome requests
+ * `/favicon.ico` and `img-src 'none'` logs a violation. No remote host,
+ * no `unsafe-inline`, no `unsafe-eval`.
+ * `frame-ancestors` is omitted here: browsers ignore it in a meta element and
+ * print a console error. The HTTP header adds it in `viewerDocumentHeaderPolicy`.
+ */
+function viewerDocumentDirectives(connectSelf: boolean): string[] {
   return [
     "default-src 'none'",
     `script-src 'sha256-${sha256Base64(CLIENT_JS)}'`,
     `style-src 'sha256-${sha256Base64(STYLE)}'`,
     connectSelf ? "connect-src 'self'" : "connect-src 'none'",
-    "img-src 'none'",
+    'img-src data:',
     "base-uri 'none'",
     "form-action 'none'",
     "object-src 'none'",
-    "frame-ancestors 'none'",
-  ].join('; ');
+  ];
+}
+
+/** Meta CSP. Safe to embed. Does not include `frame-ancestors`. */
+export function viewerContentSecurityPolicy(connectSelf: boolean): string {
+  return viewerDocumentDirectives(connectSelf).join('; ');
+}
+
+/** HTTP header for the HTML document. Adds `frame-ancestors`, which meta cannot enforce. */
+export function viewerDocumentHeaderPolicy(connectSelf: boolean): string {
+  return [...viewerDocumentDirectives(connectSelf), "frame-ancestors 'none'"].join('; ');
 }
 
 const API_CSP = [
@@ -368,6 +386,7 @@ export function renderViewerPage(snapshot: ViewerSnapshot | null, connectSelf: b
     '<meta charset="utf-8">',
     '<meta name="referrer" content="no-referrer">',
     `<meta http-equiv="Content-Security-Policy" content="${csp}">`,
+    '<link rel="icon" href="data:,">',
     '<title>agent-receipt</title>',
     `<style>${STYLE}</style>`,
     '</head>',
@@ -913,7 +932,7 @@ function jsonError(res: ServerResponse, status: number, error: string, extra: Re
 
 export function createViewerServer(catalog: ViewerCatalog, bound: { host: string; port: number }): Server {
   const page = renderViewerPage(null, true);
-  const pageCsp = viewerContentSecurityPolicy(true);
+  const pageCsp = viewerDocumentHeaderPolicy(true);
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     req.resume();
     const hostHeader = req.headers.host;
