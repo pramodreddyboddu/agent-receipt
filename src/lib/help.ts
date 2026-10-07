@@ -1917,8 +1917,8 @@ address. IPv6 is compared in compressed lowercase form, so
 \`:port\` the name matches the bound port only. Names are lowercased.
 IPv4 must be four decimal octets from 0 to 255 with no leading zeros
 (\`192.168.1.20\`). A last label that is all digits or \`0x\` hex is
-rejected (\`127.1\`, \`2130706433\`, \`0x7f000001\`, \`1234\`,
-\`010.0.0.1\`). Punycode labels (\`xn--\`) are accepted. Unicode
+rejected (\`127.1\`, \`2130706433\`, \`0x7f000001\`, \`0x\`, \`foo.0x\`,
+\`FOO.0X\`, \`1234\`, \`010.0.0.1\`). Punycode labels (\`xn--\`) are accepted. Unicode
 internationalized names are rejected; pass the \`xn--\` form. There is
 no DNS lookup, no interface list, and no wildcard. A comma-separated
 list is rejected. Repeat the flag: \`--allowed-host <name> --allowed-host <name>\`.

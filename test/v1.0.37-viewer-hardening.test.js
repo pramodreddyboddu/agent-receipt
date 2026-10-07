@@ -1,5 +1,5 @@
 /**
- * v1.0.38 viewer hardening.
+ * v1.0.39 viewer hardening.
  * Live --allow-remote binds use port 0 and always kill the child.
  * The CSP checks parse the served page and the static bundle.
  */
@@ -335,7 +335,7 @@ function metaPolicy(html) {
   return match[1];
 }
 
-describe('v1.0.38 viewer hardening', { concurrency: 1 }, () => {
+describe('v1.0.39 viewer hardening', { concurrency: 1 }, () => {
   after(async () => {
     await Promise.all(children.map((child) => stopChild(child)));
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true });

@@ -6,8 +6,10 @@
  * IPv6 is stored and compared in compressed lowercase form, so
  * `fd00:0::1` and `[fd00::1]` are one entry. A last label that is all
  * digits or `0x` hex is rejected unless the host is a canonical IPv4
- * dotted quad. Browsers parse the other forms (`127.1`, `2130706433`,
- * `0x7f000001`, `010.0.0.1`) as addresses, not as hostnames.
+ * dotted quad. A bare `0x` label (no digits) is included. The host is
+ * lowercased before that check, so `0X` is the same label. Browsers
+ * parse the other forms (`127.1`, `2130706433`, `0x7f000001`, `0x`,
+ * `foo.0x`, `010.0.0.1`) as addresses, not as hostnames.
  */
 import { isIP } from 'node:net';
 
@@ -23,7 +25,8 @@ export interface AllowedHost {
 
 const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const DECIMAL_LABEL = /^[0-9]+$/;
-const HEX_LABEL = /^0x[0-9a-f]+$/;
+/** Lowercase `0x` plus zero or more hex digits. Callers lowercase first, so `0X` matches too. */
+const HEX_LABEL = /^0x[0-9a-f]*$/;
 
 function reject(value: string, reason: string): never {
   throw new Error(`Invalid --allowed-host ${JSON.stringify(value)}. ${reason}`);
@@ -70,7 +73,7 @@ function isCanonicalDottedIPv4(host: string): boolean {
   return isIP(host) === 4;
 }
 
-/** Last label is all digits or `0x` hex, and the host is not a canonical IPv4. */
+/** Last label is all digits or `0x` hex (including bare `0x`), and the host is not a canonical IPv4. */
 function isNonCanonicalNumericHost(host: string): boolean {
   if (isCanonicalDottedIPv4(host)) return false;
   const dot = host.lastIndexOf('.');
@@ -265,7 +268,8 @@ function comparableHost(host: string): string | null {
  * An allowed entry without a port matches `boundPort` only.
  * An entry with a port matches that port only.
  * IPv6 is compared after compression. A last label that is all digits
- * or `0x` hex does not match unless it is a canonical dotted quad.
+ * or `0x` hex, including a bare `0x`, does not match unless it is a
+ * canonical dotted quad.
  * The header is not trimmed and is not taken from any forwarded-host field.
  */
 export function hostHeaderAllowed(

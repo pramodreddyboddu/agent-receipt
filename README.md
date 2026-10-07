@@ -42,7 +42,7 @@ npm install -D @pramodreddyboddu/agent-receipt
 ## GitHub Action
 
 Gate a pull request with one `uses:` line. The action runs a pinned
-`agent-receipt` (`1.0.38` by default, never `latest`) and posts a sticky
+`agent-receipt` (`1.0.39` by default, never `latest`) and posts a sticky
 summary comment.
 
 ```yaml
@@ -107,9 +107,9 @@ LAN browsers send their own Host, so also pass repeatable
 `--allowed-host` (an exact hostname or IP, optional `:port`). IPv4 must
 be a canonical dotted quad (`192.168.1.20`): four decimal octets 0–255
 with no leading zeros. Short, decimal, hex, and padded forms (`127.1`,
-`2130706433`, `0x7f000001`, `010.0.0.1`) are rejected. IPv6 is matched
-in compressed lowercase form, so `fd00:0::1` and `[fd00::1]` are the
-same entry. Punycode labels (`xn--`) are accepted. Unicode names are
+`2130706433`, `0x7f000001`, `0x`, `foo.0x`, `010.0.0.1`) are rejected.
+IPv6 is matched in compressed lowercase form, so `fd00:0::1` and
+`[fd00::1]` are the same entry. Punycode labels (`xn--`) are accepted. Unicode names are
 rejected; pass the `xn--` form. There is no auth: anyone who can reach
 the port and send an allowed Host can read redacted receipts.
 `X-Forwarded-Host` is ignored.
@@ -499,7 +499,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.38`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.39`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`

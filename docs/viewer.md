@@ -58,8 +58,10 @@ IPv4 must be a canonical dotted quad: four decimal octets from 0 to
 255, with no leading zeros (`192.168.1.20`). A value whose last label
 is all digits or `0x` hex is rejected unless it is that quad. That
 includes a short form (`127.1`), a decimal integer (`2130706433`), hex
-(`0x7f000001`), a bare number (`1234`), and leading zeros
-(`010.0.0.1`). Browsers parse those as IP addresses.
+(`0x7f000001`), a bare `0x` label (`0x`, `foo.0x`), a bare number
+(`1234`), and leading zeros (`010.0.0.1`). The name is lowercased
+before the check, so `0X` and `FOO.0X` are the same labels. Browsers
+parse those as IP addresses.
 
 Punycode labels (`xn--n3h.example`) are accepted. Unicode
 internationalized names (`bücher.example`) are rejected. Pass the
@@ -183,8 +185,9 @@ backslash, and an absolute path are rejected.
   `:port` matches the bound port only. An entry that includes `:port`
   matches that port only. Comparison is exact after lowercasing, IPv6
   compression, and bracket normalization. `fd00:0::1` and `[fd00::1]`
-  match. A Host whose last label is all digits or `0x` hex is 403
-  unless it is a canonical dotted quad (`192.168.1.20`). Anything else
+  match. A Host whose last label is all digits or `0x` hex, including
+  a bare `0x` label (`0x`, `foo.0x`), is 403 unless it is a canonical
+  dotted quad (`192.168.1.20`). Anything else
   is 403 with `{"error":"forbidden"}`. That blocks a DNS rebinding
   client that sends a public Host to the loopback port. Two `Host`
   headers are 400 `{"error":"bad request"}`.
