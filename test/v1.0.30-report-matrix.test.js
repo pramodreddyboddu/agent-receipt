@@ -401,7 +401,7 @@ function appendAuditLine(dir, fields) {
   const event = {
     ts: fields.ts,
     event: fields.event,
-    version: fields.version || '1.0.39',
+    version: fields.version || '1.0.40',
     experimental: true,
     path: fields.path,
     sha256: fields.sha256 ?? null,

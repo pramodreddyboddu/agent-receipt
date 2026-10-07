@@ -139,7 +139,7 @@ describe('v1.0.32 in-toto attest', () => {
 
   it('documents 1.0.32 and still mentions in-toto in the changelog history', () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.39');
+    assert.equal(pkg.version, '1.0.40');
     const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     assert.match(changelog, /## \[1\.0\.32\]/);
     assert.match(changelog, /in-toto\/SLSA/);
@@ -155,7 +155,7 @@ describe('v1.0.32 in-toto attest', () => {
     const { dir, report } = signedRepo();
     assert.equal(report.ok, true);
     assert.equal(report.command, 'attest');
-    assert.equal(report.version, '1.0.39');
+    assert.equal(report.version, '1.0.40');
     assert.equal(report.signed, true);
     assert.equal(report.redacted, true);
     assert.equal(report.predicateType, PREDICATE_RUN);
@@ -178,7 +178,7 @@ describe('v1.0.32 in-toto attest', () => {
     assert.equal(text.includes(privatePem), false);
     const predicate = statement.predicate;
     assert.equal(predicate.redacted, true);
-    assert.equal(predicate.cliVersion, '1.0.39');
+    assert.equal(predicate.cliVersion, '1.0.40');
     assert.equal(predicate.hashChainHead, receipt.sha256);
     assert.equal(predicate.receipt.sha256, receipt.sha256);
     assert.equal(predicate.receipt.name.endsWith('.md'), true);

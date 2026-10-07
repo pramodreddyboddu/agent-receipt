@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/otlp-trace.schema.json",
+  "title": "AgentReceiptOtlpTrace",
+  "description": "OTLP/JSON ExportTraceServiceRequest written by `agent-receipt export --format otlp` (alias otel). One file, no network. traceId is 32 lowercase hex (first 16 bytes of the trace-root receipt sha256). spanId is 16 lowercase hex. Timestamps are decimal unix-nano strings. Attribute values are OTLP AnyValue JSON. Narrative fields are redacted before they are copied. This file is not a signed receipt and it is not a CA.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["resourceSpans"],
+  "properties": {
+    "resourceSpans": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resource", "scopeSpans"],
+        "properties": {
+          "resource": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["attributes"],
+            "properties": {
+              "attributes": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/attribute" }
+              }
+            }
+          },
+          "scopeSpans": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["scope", "spans"],
+              "properties": {
+                "scope": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["name", "version"],
+                  "properties": {
+                    "name": { "const": "agent-receipt" },
+                    "version": { "type": "string", "minLength": 1 }
+                  }
+                },
+                "spans": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "$ref": "#/$defs/span" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "anyValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "stringValue": { "type": "string" },
+        "intValue": { "type": "string", "pattern": "^-?[0-9]+$" },
+        "boolValue": { "type": "boolean" }
+      }
+    },
+    "attribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value"],
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "value": { "$ref": "#/$defs/anyValue" }
+      }
+    },
+    "span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "traceId",
+        "spanId",
+        "parentSpanId",
+        "name",
+        "kind",
+        "startTimeUnixNano",
+        "endTimeUnixNano",
+        "attributes",
+        "status"
+      ],
+      "properties": {
+        "traceId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+        "spanId": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "parentSpanId": { "type": "string", "pattern": "^$|^[0-9a-f]{16}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["SPAN_KIND_INTERNAL", "SPAN_KIND_CLIENT"] },
+        "startTimeUnixNano": { "type": "string", "pattern": "^[0-9]+$" },
+        "endTimeUnixNano": { "type": "string", "pattern": "^[0-9]+$" },
+        "attributes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/attribute" }
+        },
+        "status": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code"],
+          "properties": {
+            "code": { "enum": ["STATUS_CODE_OK", "STATUS_CODE_ERROR"] },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

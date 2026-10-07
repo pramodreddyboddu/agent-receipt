@@ -1,5 +1,5 @@
 /**
- * v1.0.39 viewer --allowed-host.
+ * v1.0.40 viewer --allowed-host.
  * Live binds use port 0. Children are killed in finally and after.
  */
 import { describe, it, after } from 'node:test';
@@ -252,7 +252,7 @@ function otherPort(port) {
   return port === 65535 ? port - 1 : port + 1;
 }
 
-describe('v1.0.39 viewer allowed host', { concurrency: 1 }, () => {
+describe('v1.0.40 viewer allowed host', { concurrency: 1 }, () => {
   after(async () => {
     await Promise.all(children.map((child) => stopChild(child)));
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
@@ -693,7 +693,7 @@ describe('v1.0.39 viewer allowed host', { concurrency: 1 }, () => {
   });
 });
 
-describe('v1.0.39 allowed-host normalizer', () => {
+describe('v1.0.40 allowed-host normalizer', () => {
   it('normalizes case and IPv6 brackets', () => {
     const bracket = normalizeAllowedHost('[fd00::1]');
     const bare = normalizeAllowedHost('fd00::1');

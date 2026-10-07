@@ -29,6 +29,7 @@ import { cmdSessionExport } from './commands/session-export.js';
 import { cmdSessionImport } from './commands/session-import.js';
 import { resolveLink, type ResolvedLink } from './lib/link.js';
 import { cmdExport, cmdHtml } from './commands/export.js';
+import { cmdOtlpExport } from './commands/otlp.js';
 import { cmdShare } from './commands/share.js';
 import { cmdAudit } from './commands/audit.js';
 import { cmdPrune } from './commands/prune.js';
@@ -319,6 +320,7 @@ function attestWriteOptions(
 
 const KEYGEN_FLAGS = new Set(['cwd', 'json', 'force']);
 const SIGN_FLAGS = new Set(['cwd', 'json']);
+const OTLP_EXPORT_FLAGS = new Set(['cwd', 'out', 'o', 'format', 'session', 'redact']);
 
 function assertKnownKeygenFlags(flags: Record<string, string | boolean>): void {
   for (const key of Object.keys(flags)) {
@@ -683,6 +685,36 @@ export async function run(argv: string[] = process.argv): Promise<number> {
             throw new Error('--session does not take a path.');
           }
           return cmdAttest(cwd, positional[0], attestWriteOptions(flags, predicate));
+        }
+        if (fmt === 'otlp' || fmt === 'otel') {
+          if (flags['no-redact'] !== undefined) {
+            throw new Error(
+              'export --format otlp always redacts. There is no --no-redact. HTML and Markdown redact only when you pass --redact. --format intoto always redacts too.',
+            );
+          }
+          for (const key of Object.keys(flags)) {
+            if (!OTLP_EXPORT_FLAGS.has(key)) {
+              throw new Error(
+                `Unknown flag: --${key}. export --format otlp accepts --out, --session, and --redact. Redaction is already on. --include-host is not accepted.`,
+              );
+            }
+          }
+          if (flags.session === true || (typeof flags.session === 'string' && !flags.session.trim())) {
+            throw new Error('--session requires an id. Usage: agent-receipt export --format otlp --session <id>');
+          }
+          if (positional.length > 1) {
+            throw new Error('export --format otlp accepts one receipt, one session package, last, or --session <id>.');
+          }
+          if (flags.session !== undefined && positional.length) {
+            throw new Error('--session does not take a path. Usage: agent-receipt export --format otlp --session <id>');
+          }
+          return cmdOtlpExport(cwd, positional[0], {
+            out: flagString(flags, 'out', 'o'),
+            session: flagString(flags, 'session'),
+          });
+        }
+        if (fmt !== 'html' && fmt !== 'markdown' && fmt !== 'md') {
+          throw new Error(`Unknown export format "${fmt}". Use html, markdown, intoto, or otlp (alias otel).`);
         }
         cmdExport(cwd, positional[0], {
           out: flagString(flags, 'out', 'o'),
