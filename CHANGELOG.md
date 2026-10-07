@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.38] — 2026-10-07
+
+### Added
+
+- `agent-receipt view --allowed-host <name>` (repeatable) accepts a LAN browser on a remote bind. Each value is a hostname, an IPv4 address, or a bracketed or bare IPv6 address, optionally with `:port`. Without a port the name matches the bound port only. An entry with `:port` matches that port only. `[fd00::1]` and `fd00::1` normalize to the same entry. Names are lowercased. The match is exact. There is no DNS lookup, no interface scan, and no wildcard.
+- `--allowed-host` requires `--allow-remote` unless every value is loopback (`127.0.0.1`, `localhost`, or `::1`). It is rejected with `--static`. A comma-separated list is rejected. Repeat the flag. Empty values, wildcards, schemes, paths, whitespace, and userinfo are rejected before the server listens.
+- The Host check accepts the bound host:port and each allowed host. `X-Forwarded-Host` and similar headers are ignored. Anything else is still 403 `{"error":"forbidden"}`.
+- `--json` on a live bind adds `allowedHosts` (a normalized array, empty when the flag is omitted). The `--allow-remote` warning lists those hosts. The default bind stays `127.0.0.1`.
+
+### Notes
+
+- Package version bumped to `1.0.38`. Pin comments that track the current cut are `v1.0.38`. The action default pin is `1.0.38`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
+
 ## [1.0.37] — 2026-10-07
 
 ### Fixed

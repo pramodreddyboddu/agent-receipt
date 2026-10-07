@@ -31,6 +31,8 @@
 # v1.0.37 left that live file unchanged for the same reason.
 # The static bundle may include one empty data: favicon link. No remote
 # asset, no unsafe-inline, and the smoke still does not listen.
+# v1.0.38 left that live file unchanged for the same reason.
+# --allowed-host is a live-bind Host allowlist. This smoke still does not listen.
 name: CI
 
 on:

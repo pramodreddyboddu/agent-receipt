@@ -19,8 +19,11 @@ The default bind is `127.0.0.1` port `4173`. `--port 0` picks a free port and
 prints the URL. `--json` prints one line and keeps serving:
 
 ```json
-{"url":"http://127.0.0.1:4173/","port":4173,"receiptCount":2,"pid":12345}
+{"url":"http://127.0.0.1:4173/","port":4173,"receiptCount":2,"pid":12345,"allowedHosts":[]}
 ```
+
+`allowedHosts` is the normalized `--allowed-host` list. It is an empty
+array when you do not pass the flag.
 
 `--open` tries the default browser (`open` on macOS, `cmd /c start` on
 Windows, `xdg-open` elsewhere). If that program is missing, the command
@@ -29,6 +32,43 @@ still serves.
 A host other than `127.0.0.1`, `localhost`, or `::1` is refused unless you
 also pass `--allow-remote`. That flag prints a warning. The viewer is meant
 to stay on the loopback interface.
+
+## LAN access
+
+Binding every interface does not let another machine open the page.
+A browser on the LAN sends `Host: 192.168.x.y:PORT` or
+`Host: myhost.local:PORT`. The viewer rejects any Host other than the
+bound host:port unless that name is on `--allowed-host`.
+
+```bash
+agent-receipt view --host 0.0.0.0 --port 4173 --allow-remote \
+  --allowed-host 192.168.1.20 \
+  --allowed-host myhost.local
+```
+
+`--allowed-host` is repeatable. Each value is one hostname, one IPv4
+address, or one IPv6 address. IPv6 may be bracketed (`[fd00::1]`) or
+bare (`fd00::1`). Both normalize to `[fd00::1]`. Names are lowercased.
+Add `:port` only when the Host port is not the bound port
+(`[fd00::1]:4173`). Without `:port`, the name matches the bound port
+only. A comma-separated list is rejected. Repeat the flag.
+
+The check is exact. There is no DNS lookup, no scan of local
+interfaces, and no wildcard (`*` and `*.example` are rejected). Empty
+values, schemes (`http://`), paths, whitespace, and userinfo (`user@host`)
+are rejected before the process listens.
+
+`--allowed-host` without `--allow-remote` is accepted only when every
+value is `127.0.0.1`, `localhost`, or `::1`. It is rejected with
+`--static`.
+
+The `--allow-remote` warning lists the allowed hosts. `--json` includes
+them in `allowedHosts`.
+
+There is no login and no cookie. Anyone who can reach the port and send
+an allowed Host can read the redacted receipts. Do not bind a public
+interface on a network you do not trust. `X-Forwarded-Host`,
+`Forwarded`, and `X-Forwarded-Server` are ignored.
 
 `--trusted-key <fp>` and `--require-sig` use the same rules as `verify`.
 Hash failure is `FAILED`. With `--require-sig`, a missing, invalid, or
@@ -70,7 +110,7 @@ bytes.
 
 `--json` with `--static` prints one object (`command`, `ok`, `static`,
 `out`, `receiptCount`) and does not start a server. Do not pass `--port`,
-`--host`, `--open`, or `--allow-remote` with `--static`.
+`--host`, `--open`, `--allow-remote`, or `--allowed-host` with `--static`.
 
 ## HTTP API
 
@@ -124,8 +164,15 @@ backslash, and an absolute path are rejected.
 - `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` are
   set on every response. HTML responses also set `X-Frame-Options: DENY`.
 - The `Host` header must equal the bound host and port (`[::1]:port` when
-  the bind is IPv6). Anything else is 403. That blocks a DNS rebinding
-  client that sends a public Host to the loopback port.
+  the bind is IPv6), or one `--allowed-host` entry. A name without
+  `:port` matches the bound port only. An entry that includes `:port`
+  matches that port only. Comparison is exact after lowercasing and
+  IPv6 bracket normalization. Anything else is 403 with
+  `{"error":"forbidden"}`. That blocks a DNS rebinding client that
+  sends a public Host to the loopback port.
+- `X-Forwarded-Host`, `Forwarded`, and `X-Forwarded-Server` are not
+  read. A forwarded header cannot add a name the browser did not send
+  as `Host`. The allowlist is not authentication.
 - Receipt text is inserted with `textContent` (and `escapeHtml` for the
   embedded snapshot). The page does not use `eval` or `innerHTML`.
 

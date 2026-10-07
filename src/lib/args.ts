@@ -36,14 +36,15 @@ export function parseArgs(argv: string[]): ParsedArgs {
     'open',
     'allow-remote',
   ]);
-  // `--trusted-key` repeats join with commas. `--policy-pack` repeats join
-  // with a unit separator so a comma in one value stays visible and is rejected.
-  const repeatable = new Set(['trusted-key', 'policy-pack']);
-  const POLICY_PACK_SEP = '\u001f';
+  // `--trusted-key` repeats join with commas. `--policy-pack` and
+  // `--allowed-host` repeat with a unit separator so a comma in one value
+  // stays visible and is rejected.
+  const repeatable = new Set(['trusted-key', 'policy-pack', 'allowed-host']);
+  const UNIT_SEP = '\u001f';
 
   const assignFlag = (key: string, value: string | boolean): void => {
     if (typeof value === 'string' && repeatable.has(key) && typeof flags[key] === 'string') {
-      const sep = key === 'policy-pack' ? POLICY_PACK_SEP : ',';
+      const sep = key === 'policy-pack' || key === 'allowed-host' ? UNIT_SEP : ',';
       flags[key] = `${flags[key]}${sep}${value}`;
       return;
     }

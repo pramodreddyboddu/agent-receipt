@@ -24,6 +24,7 @@ import { parseRiskSummaryMarkdown } from './risk.js';
 import { inspectReceiptSignature, type SignatureStatus } from './sign.js';
 import { applyTrust, loadTrustedFingerprints } from './trust.js';
 import { reportVerify } from '../commands/verify.js';
+import { hostHeaderAllowed, type AllowedHost } from './viewer-host.js';
 
 const MAX_RECEIPT_BYTES = 8 * 1024 * 1024;
 const MAX_SIDE_BYTES = 2 * 1024 * 1024;
@@ -877,8 +878,11 @@ export function verifyPayload(receipt: ViewerReceipt): {
   };
 }
 
-function expectedHost(host: string, port: number): string {
-  return host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`;
+export interface ViewerBound {
+  host: string;
+  port: number;
+  /** Exact Host allowlist. Empty keeps the bound host:port check only. */
+  allowedHosts?: readonly AllowedHost[];
 }
 
 function forbiddenPath(rawPath: string): boolean {
@@ -930,14 +934,15 @@ function jsonError(res: ServerResponse, status: number, error: string, extra: Re
   }));
 }
 
-export function createViewerServer(catalog: ViewerCatalog, bound: { host: string; port: number }): Server {
+export function createViewerServer(catalog: ViewerCatalog, bound: ViewerBound): Server {
   const page = renderViewerPage(null, true);
   const pageCsp = viewerDocumentHeaderPolicy(true);
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     req.resume();
+    // Host is the only authority. X-Forwarded-Host, Forwarded, and similar
+    // headers are ignored so a proxy header cannot widen the allowlist.
     const hostHeader = req.headers.host;
-    const expected = expectedHost(bound.host, bound.port);
-    if (!hostHeader || hostHeader.toLowerCase() !== expected.toLowerCase()) {
+    if (!hostHeaderAllowed(hostHeader, bound.host, bound.port, bound.allowedHosts ?? [])) {
       jsonError(res, 403, 'forbidden');
       return;
     }

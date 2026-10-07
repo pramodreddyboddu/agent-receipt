@@ -278,6 +278,16 @@ function policyPackFlags(flags: Record<string, string | boolean>): string[] | un
   return parts;
 }
 
+/** Repeatable `--allowed-host`. A comma in one value is a usage error. */
+function flagAllowedHosts(flags: Record<string, string | boolean>): string[] | undefined {
+  const value = flags['allowed-host'];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error('--allowed-host requires a hostname, IPv4 address, or IPv6 address.');
+  }
+  return value.split('\u001f');
+}
+
 function flagOptionalString(
   flags: Record<string, string | boolean>,
   name: string,
@@ -1005,6 +1015,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           'receipts',
           'static',
           'allow-remote',
+          'allowed-host',
           'trusted-key',
           'require-sig',
           'require-signature',
@@ -1013,7 +1024,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
         for (const key of Object.keys(flags)) {
           if (!viewFlags.has(key)) {
             throw new Error(
-              `Unknown flag: --${key}. view accepts --port, --host, --open, --allow-remote, --receipts, --static, --json, --trusted-key, --require-sig, and --cwd.`,
+              `Unknown flag: --${key}. view accepts --port, --host, --open, --allow-remote, --allowed-host, --receipts, --static, --json, --trusted-key, --require-sig, and --cwd.`,
             );
           }
         }
@@ -1039,6 +1050,7 @@ export async function run(argv: string[] = process.argv): Promise<number> {
           json: flagBool(flags, 'json'),
           staticDir: typeof staticFlag === 'string' ? staticFlag : undefined,
           allowRemote: flagBool(flags, 'allow-remote'),
+          allowedHosts: flagAllowedHosts(flags),
           trustedKeys: flagTrustedKeys(flags),
           requireSig: flagBool(flags, 'require-sig', 'require-signature'),
           noRedact: flagBool(flags, 'no-redact'),
