@@ -4,7 +4,7 @@
 # This file is the published action. It is not a workflow. The copy-in
 # drop-in under examples/github/ is a different, older recipe.
 # Install is `npx --yes @pramodreddyboddu/agent-receipt@<exact version>`.
-# The default pin is 1.0.39. `latest` is rejected. The token is passed
+# The default pin is 1.0.40. `latest` is rejected. The token is passed
 # only as GITHUB_TOKEN and is never printed.
 name: Agent Receipt
 description: >-
@@ -19,7 +19,7 @@ inputs:
   version:
     description: Exact agent-receipt version to run via npx (x.y.z). Never latest.
     required: false
-    default: "1.0.39"
+    default: "1.0.40"
   command:
     description: gate (default), verify, or attest-verify.
     required: false

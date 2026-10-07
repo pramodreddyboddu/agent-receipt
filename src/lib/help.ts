@@ -500,43 +500,66 @@ Examples:
   agent-receipt export --format intoto
 `,
 
-  export: `agent-receipt export — write a shareable HTML (or Markdown) receipt
+  export: `agent-receipt export — write a shareable HTML, Markdown, or OTLP/JSON receipt
 
 Usage:
   agent-receipt export [path] [--out <file>] [--redact] [--format html|markdown]
+  agent-receipt export [path|last] --format otlp [--out <file>] [--session <id>]
   agent-receipt export [path] --format intoto
 
 If path is omitted, exports the newest receipt under outDir.
 Default format is self-contained HTML (no external CSS/JS) — open in a browser
-or share as a single file.
+or share as a single file. \`last\` is the newest receipt.
+
+\`--format otlp\` (alias \`otel\`) writes one OTLP/JSON trace file
+(ExportTraceServiceRequest: resourceSpans, scopeSpans, spans). The default
+path is the receipt with \`.otlp.json\` instead of \`.md\`. \`--session <id>\`
+or a \`*.session\` package writes one linked trace beside outDir. It checks
+the receipt hash first. Integrity failure exits 2 and writes nothing.
+Span \`kind\` and \`status.code\` are integers (1 internal, 3 client; 1 ok,
+2 error). \`--out\` will not replace the receipt or its companion \`.json\`.
+A session whose parent links form a cycle exits 1 and writes nothing.
+There is no network push and no audit line. See docs/otlp.md.
+
+OTLP and \`--format intoto\` always redact secrets in commands, args, host
+labels, and tool-call inputs. There is no \`--no-redact\` on those formats.
+HTML and Markdown redact only when you pass \`--redact\`. \`--redact\` on
+OTLP is accepted and already on. \`--include-host\` is HTML and Markdown
+only. A host label that is not a secret stays visible in the trace.
 
 \`--format intoto\` (aliases \`in-toto\`, \`dsse\`) writes the same
 \`.intoto.jsonl\` DSSE envelope as \`attest\`. It always redacts the
 predicate and does not append the audit log. See \`help attest\`.
 
 Options:
-  --out <path>           Output path (default: sibling .html next to the receipt)
-  --redact               Mask high/secret findings before writing
+  --out <path>           Output path (default: sibling .html, or .otlp.json)
+  --session <id>         OTLP only. One trace for that linked session.
+  --redact               HTML and Markdown: mask high/secret findings.
+                         OTLP and intoto already redact.
   --include-host         With --redact, keep the Host label (default: mask it).
-                         Not accepted with \`--format intoto\` (Host is omitted).
-  --format <html|markdown|md|intoto>
-                         Output format (default: html)
+                         Not accepted with \`--format otlp\` or \`--format intoto\`.
+  --format <html|markdown|md|otlp|otel|intoto>
+                         Output format (default: html). Unknown names error.
   --cwd <path>           Run as if started in this directory
 
 Markdown output uses the same sidecar rule as \`share\`: copy a valid source
 sidecar when the sha256 is unchanged, or re-sign the published file when
 local keys exist and the body was rewritten. HTML stays unsigned. Peers
-verify and sign the Markdown.
+verify and sign the Markdown. OTLP is a trace file, not a signed receipt.
 
 HTML and Markdown append \`.agent-receipt/audit.jsonl\` (event \`export\`).
-\`--format intoto\` does not. \`share\` records \`share\` instead, so an
-export made by share is not a second line. The line stores the output path
-and the markdown body's sha256 — not the HTML bytes and not a diff.
+\`--format otlp\` and \`--format intoto\` do not. \`share\` records \`share\`
+instead, so an export made by share is not a second line. The line stores
+the output path and the markdown body's sha256 — not the HTML bytes and
+not a diff.
 
 Examples:
   agent-receipt export
   agent-receipt export --out share.html --redact
   agent-receipt export receipt.md --format markdown --redact --out safe.md
+  agent-receipt export --format otlp
+  agent-receipt export --format otel last
+  agent-receipt export --format otlp --session my-session
   agent-receipt export --format intoto
 `,
 
@@ -2010,7 +2033,7 @@ Commands:
   capture                Capture a git snapshot receipt (Markdown; --transcript records tool calls)
   wrap                   End-of-session: capture + TL;DR + verify
   share [path]           Redact + HTML (+ optional md, or --package handoff dir) + verify + TL;DR
-  export [path]          Write self-contained HTML, Markdown, or --format intoto
+  export [path]          Write HTML, Markdown, OTLP/JSON (--format otlp), or --format intoto
   html [path]            Alias for export as HTML
   show [path]            Pretty-print last / given receipt (full body)
   last                   Path + glance of the most recent receipt (--json for scripts)
@@ -2093,6 +2116,7 @@ Examples:
   agent-receipt sign
   agent-receipt attest
   agent-receipt attest --verify .agent-receipt/receipts/receipt.intoto.jsonl
+  agent-receipt export --format otlp
   agent-receipt export --format intoto
   agent-receipt verify
   agent-receipt verify --package foo.share
@@ -2133,7 +2157,7 @@ Examples:
 Docs: https://github.com/pramodreddyboddu/agent-receipt
 Agent tips: docs/agents.md · docs/grok-cli.md · examples/ (Cursor, Grok, Claude Code, Aider)
 Prod / CI: docs/business.md · examples/org-policy.yml · examples/github/
-Schema: docs/receipt.schema.json · docs/gate.schema.json · docs/signature.schema.json · docs/report-payload.schema.json · docs/intoto-statement.schema.json · Release: docs/RELEASE.md
+Schema: docs/receipt.schema.json · docs/gate.schema.json · docs/signature.schema.json · docs/report-payload.schema.json · docs/intoto-statement.schema.json · docs/otlp-trace.schema.json · Release: docs/RELEASE.md
 `;
 }
 

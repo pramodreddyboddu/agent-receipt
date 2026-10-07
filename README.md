@@ -42,7 +42,7 @@ npm install -D @pramodreddyboddu/agent-receipt
 ## GitHub Action
 
 Gate a pull request with one `uses:` line. The action runs a pinned
-`agent-receipt` (`1.0.39` by default, never `latest`) and posts a sticky
+`agent-receipt` (`1.0.40` by default, never `latest`) and posts a sticky
 summary comment.
 
 ```yaml
@@ -202,7 +202,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON). `--transcript` records tool calls, including MCP, inside the hashed body. `--sign` writes `*.sig.json` when local keys exist |
 | `wrap` | End of session: capture (+ `--uncommitted` if dirty) → TL;DR + path → verify. `--transcript` is the same as capture. `--sign` is opt-in |
 | `share [path]` | One shot: redact → HTML (+ optional Markdown) → verify → paths + TL;DR. `--package` writes `foo.share/` with HTML, Markdown, optional `receipt.sig.json`, and `manifest.json`. Markdown sidecar is copied or re-signed; HTML stays unsigned |
-| `export` / `html` | Self-contained HTML receipt (or Markdown); `--out`, `--redact`. Markdown uses the same sidecar handoff. HTML stays unsigned |
+| `export` / `html` | Self-contained HTML receipt (or Markdown); `--out`, `--redact`. `--format otlp` (alias `otel`) writes one OTLP/JSON trace file (`.otlp.json`) for Jaeger, Tempo, Honeycomb, or Datadog via your collector. Markdown uses the same sidecar handoff. HTML stays unsigned. OTLP always redacts and does not push |
 | `show [path]` | Pretty-print last / given receipt (full body) |
 | `last` | Path + glance of the most recent receipt. `--json` prints one object (`path`, `sha256`, agent, `failedOn`, `uncommitted`, TL;DR). `--json` wins over `--path` |
 | `history` / `ls` | List recent receipts (`--agent`, `--uncommitted`, `--failed`, `--json`, `--limit`; `[uncommitted]` and `[failed]` badges; index at `.agent-receipt/index.json` stores `failedOn`) |
@@ -364,7 +364,11 @@ agent-receipt export                         # → sibling .html next to last re
 agent-receipt html --out session.html
 agent-receipt export --redact --out share.html
 agent-receipt export receipt.md --format markdown --redact --out safe.md
+agent-receipt export --format otlp           # → sibling .otlp.json, no network
+agent-receipt export --format otlp --session my-session
 ```
+
+`--format otlp` (alias `otel`) writes one [OpenTelemetry](docs/otlp.md) trace file. Load it with a collector `otlpjsonfile` receiver and export to Jaeger, Grafana Tempo, Honeycomb, or Datadog. agent-receipt does not push. OTLP and `--format intoto` always redact secrets in commands, arguments, host labels, and tool-call inputs. There is no `--no-redact` on those formats. HTML and Markdown redact only when you pass `--redact`. A tampered receipt exits 2 and writes nothing. The trace does not append the audit log.
 
 ### `--base` vs last N commits
 
@@ -499,7 +503,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.39`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.40`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -664,6 +668,12 @@ key is never included. `attest --verify` checks the signature, the subject
 digests on disk, and the hash-chain head. An empty trust store accepts any
 cryptographically valid signature. This is not a CA.
 `export --format intoto` is the same writer and does not append the audit log.
+`export --format otlp` (v1.0.40, alias `otel`) writes one OTLP/JSON trace
+beside the receipt. A session id or a `*.session` package is one linked
+trace. Span kind and status are integer enums. A parent cycle is refused
+and nothing is written. Point a collector `otlpjsonfile` receiver at the
+file. There is no network push. OTLP always redacts and does not append
+the audit log. See [`docs/otlp.md`](docs/otlp.md).
 
 `attest --keyless` (v1.0.33) signs one statement with an ephemeral P-256 key
 and an OIDC token (a file, `SIGSTORE_ID_TOKEN`, or GitHub Actions
@@ -693,7 +703,8 @@ adapters for Claude Code, Cursor, Grok CLI, and Codex, plus MCP tool-call
 capture, landed in v1.0.31 (`adapters`, `capture --transcript`). in-toto
 Statement v1 and SLSA Provenance v1 export landed in v1.0.32 (`attest`,
 `export --format intoto`, DSSE). Sigstore keyless signing landed in v1.0.33
-(`attest --keyless`, a Sigstore bundle, offline identity verify). Full PKI/CA, minisign,
+(`attest --keyless`, a Sigstore bundle, offline identity verify). OpenTelemetry
+OTLP/JSON trace export landed in v1.0.40 (`export --format otlp`). Full PKI/CA, minisign,
 GPG, default auto-sign on capture without that config, and a long-running
 prune daemon are still deferred.
 

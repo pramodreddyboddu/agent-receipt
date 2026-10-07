@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.40] — 2026-10-07
+
+### Added
+
+- `agent-receipt export --format otlp` (alias `--format otel`) writes one OTLP/JSON trace file (`ExportTraceServiceRequest`: `resourceSpans`, `scopeSpans`, `spans`). The default path is the receipt with a `.otlp.json` suffix. `--out` names the file. `--session <id>` or a `*.session` package writes one linked trace: the root receipt is the root span, child receipts are child spans, and host is an attribute. Load the file with a collector `otlpjsonfile` receiver (Jaeger, Grafana Tempo, Honeycomb, Datadog). There is no network push.
+- Resource attributes are `service.name` `agent-receipt`, `service.version`, and host and repository when the trace-root receipt has them. Scope name is `agent-receipt`. `traceId` is the first 16 bytes of that receipt sha256. Span ids are derived from the receipt sha256 and the span index. Commands and tool calls, including MCP, are child spans. A non-zero exit or a policy deny sets span status code `2` (`STATUS_CODE_ERROR`). Times are unix-nano strings. The same inputs write the same bytes.
+- OTLP always redacts secrets in commands, arguments, host labels, and tool-call inputs. There is no `--no-redact`. HTML and Markdown still redact only with `--redact`. The receipt hash is checked before the write. Integrity failure exits 2 and writes nothing. The command does not append the audit log.
+- [`docs/otlp.md`](docs/otlp.md) and [`docs/otlp-trace.schema.json`](docs/otlp-trace.schema.json).
+
+### Fixed
+
+- OTLP/JSON writes span `kind` and `status.code` as integers. `agent.run` is kind `1` (`SPAN_KIND_INTERNAL`). A command or tool call is kind `3` (`SPAN_KIND_CLIENT`). Status `1` is `STATUS_CODE_OK` and `2` is `STATUS_CODE_ERROR`. Name strings are not emitted. The schema accepts those integers and rejects the name strings.
+- `export --format otlp --out` refuses the receipt's companion `.json` (`foo.md` → `foo.json`) as well as the receipt file. The companion bytes stay in place and no trace is written.
+- A session whose parent links form a cycle exits 1 with a cycle error and writes no trace. `export --format otlp --session <id>` does this with no further flags. A normal parent/child tree still exports.
+
+### Notes
+
+- Package version bumped to `1.0.40`. Pin comments that track the current cut are `v1.0.40`. The action default pin is `1.0.40`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
+
 ## [1.0.39] — 2026-10-07
 
 ### Fixed

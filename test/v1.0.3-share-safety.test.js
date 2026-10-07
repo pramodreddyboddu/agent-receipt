@@ -198,7 +198,7 @@ describe('index: out-of-outDir --out does not become newest', () => {
 
   it('version is 1.0.30', () => {
     const out = cli(dir, ['version']);
-    assert.match(out, /1\.0\.39/);
+    assert.match(out, /1\.0\.40/);
   });
 
   it('isInsideOutDir distinguishes --out paths', () => {
