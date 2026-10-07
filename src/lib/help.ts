@@ -516,6 +516,9 @@ or share as a single file. \`last\` is the newest receipt.
 path is the receipt with \`.otlp.json\` instead of \`.md\`. \`--session <id>\`
 or a \`*.session\` package writes one linked trace beside outDir. It checks
 the receipt hash first. Integrity failure exits 2 and writes nothing.
+Span \`kind\` and \`status.code\` are integers (1 internal, 3 client; 1 ok,
+2 error). \`--out\` will not replace the receipt or its companion \`.json\`.
+A session whose parent links form a cycle exits 1 and writes nothing.
 There is no network push and no audit line. See docs/otlp.md.
 
 OTLP and \`--format intoto\` always redact secrets in commands, args, host

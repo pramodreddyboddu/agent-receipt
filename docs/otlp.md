@@ -11,7 +11,7 @@ agent-receipt export --format otlp --session my-session
 agent-receipt export --format otlp .agent-receipt/my-session.session
 ```
 
-A receipt becomes `receipt.otlp.json` beside the `.md` file. `--session <id>` writes `<id>.otlp.json` beside `outDir` (`.agent-receipt/<id>.otlp.json` by default). A `*.session` directory, or its `session-manifest.json`, uses the same tree and writes beside the package. `--out` names the file. A trailing slash, or an existing directory, receives the default file name inside it.
+A receipt becomes `receipt.otlp.json` beside the `.md` file. `--session <id>` writes `<id>.otlp.json` beside `outDir` (`.agent-receipt/<id>.otlp.json` by default). A `*.session` directory, or its `session-manifest.json`, uses the same tree and writes beside the package. `--out` names the file. A trailing slash, or an existing directory, receives the default file name inside it. `--out` will not replace the receipt or the companion `.json` beside that receipt (`foo.md` → `foo.json`).
 
 ## What is in the file
 
@@ -24,9 +24,11 @@ A receipt becomes `receipt.otlp.json` beside the `.md` file. `--session <id>` wr
 | Scope | name `agent-receipt`, same version |
 | `traceId` | First 16 bytes of the trace-root receipt sha256 (32 lowercase hex) |
 | Root span | `agent.run`. Agent, adapter, risk, max severity, failed-on, gate exit, signed, receipt sha256, and hash-chain position when the audit log has that hash |
-| Child spans | Commands and tool calls, including MCP, in recorded order. Name, exit code, and `STATUS_CODE_ERROR` when the exit is non-zero or a policy pack denied that call |
+| Span `kind` | Integer. `agent.run` is `1` (`SPAN_KIND_INTERNAL`). A command or tool call is `3` (`SPAN_KIND_CLIENT`) |
+| Span `status.code` | Integer. `1` is `STATUS_CODE_OK`. `2` is `STATUS_CODE_ERROR` when the exit is non-zero or a policy pack denied that call. `0` (`STATUS_CODE_UNSET`) is not written |
+| Child spans | Commands and tool calls, including MCP, in recorded order. Name, exit code, and status `2` when the exit is non-zero or a policy pack denied that call |
 | `spanId` | First 8 bytes of sha256(`receiptSha:index`) (16 lowercase hex). Index 0 is the receipt |
-| Session | One trace. The root receipt is the root span. Each child receipt is an `agent.run` span with `parentSpanId` set. Host is an attribute on that span |
+| Session | One trace. The root receipt is the root span. Each child receipt is an `agent.run` span with `parentSpanId` set. Host is an attribute on that span. A parent cycle (links that loop) is refused: exit 1, a cycle error, and no file |
 | Time | `startTimeUnixNano` and `endTimeUnixNano` are decimal strings. A child with no recorded time uses the parent start. `agent_receipt.index` keeps order |
 
 Attribute values use the OTLP JSON `AnyValue` shape: `stringValue`, `intValue` as a decimal string, or `boolValue`. Keys follow OpenTelemetry semantic conventions where one fits (`service.name`, `host.name`, `gen_ai.agent.name`, `gen_ai.tool.name`, `process.command_line`). Fields that are ours use the `agent_receipt.` prefix.
@@ -34,6 +36,8 @@ Attribute values use the OTLP JSON `AnyValue` shape: `stringValue`, `intValue` a
 The same inputs write the same bytes. Key order is fixed. The file does not contain a wall-clock timestamp of the export.
 
 `traceId` and `spanId` are lowercase hex, which is what the OTLP/JSON mapping uses. They are not base64. An empty `parentSpanId` means a root span.
+
+OTLP/JSON requires enum fields as integers. This file stores span `kind` and `status.code` as JSON numbers (`1` / `3` and `1` / `2`). The names `SPAN_KIND_INTERNAL`, `SPAN_KIND_CLIENT`, `STATUS_CODE_OK`, and `STATUS_CODE_ERROR` are not written. [`otlp-trace.schema.json`](otlp-trace.schema.json) accepts the integers and rejects those strings.
 
 ## Redaction
 
@@ -43,7 +47,7 @@ OTLP masks secrets in commands, arguments, host labels, and tool-call inputs (AW
 
 ## Integrity
 
-The receipt hash is checked before the file is opened for writing. A tampered receipt exits 2 and leaves no `.otlp.json` and no temporary file. Usage errors (unknown format, `--no-redact`, a missing receipt) exit 1 and also write nothing. This command does not append `.agent-receipt/audit.jsonl`.
+The receipt hash is checked before the file is opened for writing. A tampered receipt exits 2 and leaves no `.otlp.json` and no temporary file. Usage errors (unknown format, `--no-redact`, a missing receipt) exit 1 and also write nothing. A session whose parent links form a cycle exits 1, names the cycle, and writes nothing. `export --format otlp --session <id>` does that with no further flags. This command does not append `.agent-receipt/audit.jsonl`.
 
 ## Load the file
 
@@ -66,6 +70,8 @@ service:
       receivers: [otlpjsonfile]
       exporters: [otlp/jaeger]
 ```
+
+The `otlpjsonfile` receiver fingerprints a file from its first bytes (`fingerprint_size`, default 1000, about 1KB). Two files that share that prefix are treated as the same file, and the receiver ingests only one of them. Traces from the same service often open the same way. Keep one trace path per export, and raise `fingerprint_size` if the collector skips a file whose first 1KB matches another.
 
 Swap the exporter for Grafana Tempo, Honeycomb, or Datadog. Those products take OTLP from the collector. agent-receipt does not push to them.
 

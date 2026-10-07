@@ -8,6 +8,7 @@
  * Index 0 is that receipt. Later indexes are its commands and tool calls.
  * A session tree shares one traceId. Each receipt still uses its own sha
  * for its span ids. Times are decimal unix-nano strings.
+ * Span kind and status.code are OTLP enum integers, not names.
  */
 import { DEFAULT_MAX_TOOL_ARG_CHARS } from './byte-limit.js';
 import { redactTranscriptText } from './adapters/redact-transcript.js';
@@ -62,8 +63,18 @@ interface Attribute {
   value: AnyValue;
 }
 
+/**
+ * OTLP/JSON encodes enums as integers.
+ * SpanKind: 1 INTERNAL, 3 CLIENT. StatusCode: 1 OK, 2 ERROR.
+ * 0 is STATUS_CODE_UNSET and is not emitted.
+ */
+const SPAN_KIND_INTERNAL = 1;
+const SPAN_KIND_CLIENT = 3;
+const STATUS_CODE_OK = 1;
+const STATUS_CODE_ERROR = 2;
+
 interface SpanStatus {
-  code: 'STATUS_CODE_OK' | 'STATUS_CODE_ERROR';
+  code: typeof STATUS_CODE_OK | typeof STATUS_CODE_ERROR;
   message?: string;
 }
 
@@ -72,7 +83,7 @@ interface Span {
   spanId: string;
   parentSpanId: string;
   name: string;
-  kind: 'SPAN_KIND_INTERNAL' | 'SPAN_KIND_CLIENT';
+  kind: typeof SPAN_KIND_INTERNAL | typeof SPAN_KIND_CLIENT;
   startTimeUnixNano: string;
   endTimeUnixNano: string;
   attributes: Attribute[];
@@ -347,8 +358,8 @@ function assertId(id: string, width: number, what: string): void {
 }
 
 function statusFor(error: boolean, policy: boolean): SpanStatus {
-  if (!error) return { code: 'STATUS_CODE_OK' };
-  return { code: 'STATUS_CODE_ERROR', message: policy ? 'policy deny' : 'non-zero exit' };
+  if (!error) return { code: STATUS_CODE_OK };
+  return { code: STATUS_CODE_ERROR, message: policy ? 'policy deny' : 'non-zero exit' };
 }
 
 function receiptSpan(receipt: OtlpReceipt, traceId: string, parentSpanId: string, start: string): Span {
@@ -361,7 +372,7 @@ function receiptSpan(receipt: OtlpReceipt, traceId: string, parentSpanId: string
     spanId,
     parentSpanId,
     name: 'agent.run',
-    kind: 'SPAN_KIND_INTERNAL',
+    kind: SPAN_KIND_INTERNAL,
     startTimeUnixNano: start,
     endTimeUnixNano: start,
     attributes: attributes([
@@ -401,7 +412,7 @@ function activitySpan(
     spanId,
     parentSpanId,
     name: activity.name,
-    kind: 'SPAN_KIND_CLIENT',
+    kind: SPAN_KIND_CLIENT,
     startTimeUnixNano: start,
     endTimeUnixNano: start,
     attributes: attributes([
@@ -434,7 +445,8 @@ function walk(receipt: OtlpReceipt, traceId: string, parentSpanId: string, spans
 
 /**
  * One ExportTraceServiceRequest. `roots[0]` is the trace source.
- * Later roots are orphans or cycles and stay parentless in the same trace.
+ * Later roots are orphans and stay parentless in the same trace.
+ * The caller rejects a parent cycle before this runs.
  */
 export function renderOtlp(roots: OtlpReceipt[], version: string): string {
   if (!roots.length) throw new Error('otlp export has no receipts');

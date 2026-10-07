@@ -238,6 +238,48 @@ function oneSource(cwd: string, pathArg: string | undefined): Source {
   };
 }
 
+/**
+ * Ids whose parent links loop, in load order.
+ * A flagged cycle counts even when the parent id does not resolve.
+ * An unflagged loop counts too, so the export error is never "no receipts".
+ */
+function parentCycleIds(source: Source): string[] {
+  const byId = new Map(source.loaded.map((row) => [row.id, row]));
+  const cyclic = new Set<string>();
+  for (const row of source.loaded) {
+    if (row.cycle) cyclic.add(row.id);
+  }
+  const parentIdOf = (row: Loaded): string | null => {
+    if (!row.parent) return null;
+    const id = source.aliasToId.get(row.parent);
+    if (!id || !byId.has(id)) return null;
+    return id;
+  };
+  const state = new Map<string, 0 | 1 | 2>();
+  const stack: string[] = [];
+  const dfs = (id: string): void => {
+    state.set(id, 1);
+    stack.push(id);
+    const row = byId.get(id);
+    const parent = row ? parentIdOf(row) : null;
+    if (parent) {
+      const seen = state.get(parent) ?? 0;
+      if (seen === 1) {
+        const at = stack.indexOf(parent);
+        for (const node of stack.slice(at)) cyclic.add(node);
+      } else if (seen === 0) {
+        dfs(parent);
+      }
+    }
+    stack.pop();
+    state.set(id, 2);
+  };
+  for (const row of source.loaded) {
+    if ((state.get(row.id) ?? 0) === 0) dfs(row.id);
+  }
+  return source.loaded.filter((row) => cyclic.has(row.id)).map((row) => row.id);
+}
+
 function forest(source: Source): OtlpReceipt[] {
   const byId = new Map(source.loaded.map((row) => [row.id, row]));
   const children = new Map<string, Loaded[]>();
@@ -304,6 +346,23 @@ function defaultName(label: string): string {
   return `${safeStem(label)}.otlp.json`;
 }
 
+/** Companion receipt JSON (`foo.md` → `foo.json`), not the `.sig.json` sidecar. */
+function companionJsonPath(mdPath: string): string | null {
+  if (!/\.md$/i.test(mdPath)) return null;
+  return mdPath.replace(/\.md$/i, '.json');
+}
+
+function assertSafeOutput(cwd: string, dest: string, source: Source): void {
+  for (const row of source.loaded) {
+    const receipt = resolve(cwd, row.path);
+    if (dest === receipt) fail('refusing to write the trace over the receipt');
+    const jsonPath = companionJsonPath(row.path);
+    if (jsonPath && dest === resolve(cwd, jsonPath)) {
+      fail('refusing to write the trace over the receipt companion .json');
+    }
+  }
+}
+
 /**
  * Write one OTLP/JSON file for a receipt, `last`, a session id, or a
  * `*.session` package. Exit 2 when integrity fails. Nothing is written
@@ -316,16 +375,26 @@ export function cmdOtlpExport(cwd: string, pathArg: string | undefined, opts: Ot
       : pathArg && pathArg !== 'last' && looksLikeSessionPackage(cwd, pathArg)
         ? sessionPackageSource(cwd, pathArg)
         : oneSource(cwd, pathArg);
+    const cyclic = parentCycleIds(source);
+    if (cyclic.length) {
+      fail(`refusing to export: parent links form a cycle (${cyclic.join(' → ')})`);
+    }
     const roots = forest(source);
+    if (!roots.length) {
+      const ids = source.loaded.map((row) => row.id).join(' → ');
+      fail(
+        ids
+          ? `refusing to export: parent links form a cycle (${ids})`
+          : 'otlp export has no receipts',
+      );
+    }
     const body = renderOtlp(roots, VERSION);
     const fallbackName = source.besideReceipt
       ? `${basename(source.loaded[0].path).replace(/\.md$/i, '')}.otlp.json`
       : defaultName(source.label);
     const out = outputPath(cwd, opts.out, fallbackName, source.fallbackDir);
     const dest = resolve(cwd, out);
-    for (const row of source.loaded) {
-      if (dest === resolve(cwd, row.path)) fail('refusing to write the trace over the receipt');
-    }
+    assertSafeOutput(cwd, dest, source);
     writeTrace(cwd, out, body);
     const traceId = traceIdFor(roots[0].sha256);
     let spans = 0;

@@ -670,9 +670,10 @@ cryptographically valid signature. This is not a CA.
 `export --format intoto` is the same writer and does not append the audit log.
 `export --format otlp` (v1.0.40, alias `otel`) writes one OTLP/JSON trace
 beside the receipt. A session id or a `*.session` package is one linked
-trace. Point a collector `otlpjsonfile` receiver at the file. There is no
-network push. OTLP always redacts and does not append the audit log. See
-[`docs/otlp.md`](docs/otlp.md).
+trace. Span kind and status are integer enums. A parent cycle is refused
+and nothing is written. Point a collector `otlpjsonfile` receiver at the
+file. There is no network push. OTLP always redacts and does not append
+the audit log. See [`docs/otlp.md`](docs/otlp.md).
 
 `attest --keyless` (v1.0.33) signs one statement with an ephemeral P-256 key
 and an OIDC token (a file, `SIGSTORE_ID_TOKEN`, or GitHub Actions
