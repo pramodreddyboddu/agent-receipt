@@ -10,11 +10,13 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { ByteLimitError, assertReadableSize } from './byte-limit.js';
+import { isSessionPackageDirName } from './receipt.js';
 import { receiptsDir } from './receipt-index.js';
 import { publishRedactedReceipt } from './redact.js';
 import {
   createSignatureDocument,
   loadKeys,
+  signaturePathFor,
   verifySignature,
   writeSignatureDocument,
 } from './sign.js';
@@ -295,6 +297,94 @@ export function isRegularFile(filePath: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Package directory that contains `filePath`, when a parent is named
+ * `*.session` and holds `session-manifest.json`. The file itself is not
+ * treated as that directory.
+ */
+export function findSessionPackageDir(filePath: string): string | null {
+  let dir = dirname(resolve(filePath));
+  for (let hop = 0; hop < 8; hop += 1) {
+    if (isSessionPackageDirName(basename(dir))) {
+      const manifestPath = join(dir, SESSION_MANIFEST_NAME);
+      if (existsSync(manifestPath) && isRegularFile(manifestPath)) return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+  return null;
+}
+
+/**
+ * Files a session package export or import treats as source of truth:
+ * the manifest, its signature when present, each packaged receipt, and
+ * each sidecar the manifest marks signed (or that is already on disk).
+ */
+export function sessionPackageTruthPaths(packageDir: string, manifest: SessionManifest): string[] {
+  const paths = [join(packageDir, SESSION_MANIFEST_NAME)];
+  const sigPath = join(packageDir, SESSION_MANIFEST_SIG_NAME);
+  if (existsSync(sigPath)) paths.push(sigPath);
+  for (const entry of manifest.receipts) {
+    if (!isSafeReceiptRel(entry.path)) continue;
+    const receiptAbs = resolve(packageDir, entry.path);
+    paths.push(receiptAbs);
+    const side = signaturePathFor(receiptAbs);
+    if (entry.signed || existsSync(side)) paths.push(side);
+  }
+  return paths;
+}
+
+function addUnique(out: string[], seen: Set<string>, target: string | null | undefined): void {
+  if (!target) return;
+  const abs = resolve(target);
+  if (seen.has(abs)) return;
+  seen.add(abs);
+  out.push(abs);
+}
+
+/**
+ * Receipts, companion `.json` files, and session-package source files that
+ * `--out` must not replace. Companion JSON is included for export formats
+ * even when the file is not on disk yet (`foo.md` → `foo.json`).
+ */
+export function exportProtectedPaths(
+  cwd: string,
+  inputs: string[],
+  opts: { companionJson?: boolean } = {},
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const addPackage = (packageDir: string) => {
+    const manifestPath = join(packageDir, SESSION_MANIFEST_NAME);
+    addUnique(out, seen, manifestPath);
+    const sigPath = join(packageDir, SESSION_MANIFEST_SIG_NAME);
+    if (existsSync(sigPath)) addUnique(out, seen, sigPath);
+    try {
+      const manifest = loadSessionManifest(manifestPath);
+      for (const target of sessionPackageTruthPaths(packageDir, manifest)) {
+        addUnique(out, seen, target);
+      }
+    } catch {
+      // The manifest path is already protected.
+    }
+  };
+  for (const input of inputs) {
+    const abs = resolve(cwd, input);
+    addUnique(out, seen, abs);
+    if (opts.companionJson && /\.md$/i.test(abs)) {
+      addUnique(out, seen, abs.replace(/\.md$/i, '.json'));
+    }
+    const located = locateSessionPackage(cwd, input);
+    if (located.manifestExists) addPackage(located.packageDir);
+    else {
+      const nested = findSessionPackageDir(abs);
+      if (nested) addPackage(nested);
+    }
+  }
+  return out;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

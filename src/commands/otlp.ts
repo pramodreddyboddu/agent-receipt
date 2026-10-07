@@ -24,13 +24,16 @@ import {
   traceIdFor,
   type OtlpReceipt,
 } from '../lib/otlp.js';
+import { assertProtectedOut, assertWritableOutFile, OutGuardError, resolveDirOrFileOut } from '../lib/out-guard.js';
 import { receiptsDir } from '../lib/receipt-index.js';
 import {
+  exportProtectedPaths,
   isRegularFile,
   locateSessionPackage,
   parseSessionManifest,
   SessionPackageUsageError,
 } from '../lib/session-package.js';
+import { sessionPackageIntegrityReasons } from './session-import.js';
 import { inspectReceiptSignature } from '../lib/sign.js';
 import { VERSION } from '../lib/version.js';
 import { collectSession } from './session.js';
@@ -180,6 +183,8 @@ function sessionPackageSource(cwd: string, pathArg: string): Source {
     const detail = err instanceof Error ? err.message : String(err);
     fail(`session package manifest is unreadable (${detail})`);
   }
+  const mismatch = sessionPackageIntegrityReasons(cwd, located.packageDir, manifest);
+  if (mismatch.length) throw new OtlpIntegrityError(mismatch.join('; '));
   const loaded: Loaded[] = [];
   for (const entry of manifest.receipts) {
     const abs = resolveInside(located.packageDir, entry.path);
@@ -256,26 +261,31 @@ function parentCycleIds(source: Source): string[] {
     return id;
   };
   const state = new Map<string, 0 | 1 | 2>();
-  const stack: string[] = [];
-  const dfs = (id: string): void => {
-    state.set(id, 1);
-    stack.push(id);
-    const row = byId.get(id);
-    const parent = row ? parentIdOf(row) : null;
-    if (parent) {
+  // Iterative. A parent chain of ~12k receipts overflows a recursive walk.
+  for (const start of source.loaded) {
+    if ((state.get(start.id) ?? 0) !== 0) continue;
+    const path: string[] = [];
+    const index = new Map<string, number>();
+    let id: string | null = start.id;
+    while (id && (state.get(id) ?? 0) === 0) {
+      state.set(id, 1);
+      index.set(id, path.length);
+      path.push(id);
+      const row = byId.get(id);
+      const parent = row ? parentIdOf(row) : null;
+      if (!parent) break;
       const seen = state.get(parent) ?? 0;
       if (seen === 1) {
-        const at = stack.indexOf(parent);
-        for (const node of stack.slice(at)) cyclic.add(node);
-      } else if (seen === 0) {
-        dfs(parent);
+        const at = index.get(parent);
+        if (at !== undefined) {
+          for (const node of path.slice(at)) cyclic.add(node);
+        }
+        break;
       }
+      if (seen === 2) break;
+      id = parent;
     }
-    stack.pop();
-    state.set(id, 2);
-  };
-  for (const row of source.loaded) {
-    if ((state.get(row.id) ?? 0) === 0) dfs(row.id);
+    for (const node of path) state.set(node, 2);
   }
   return source.loaded.filter((row) => cyclic.has(row.id)).map((row) => row.id);
 }
@@ -295,11 +305,34 @@ function forest(source: Source): OtlpReceipt[] {
       roots.push(row);
     }
   }
-  const build = (row: Loaded): OtlpReceipt => ({
-    ...row.receipt,
-    children: (children.get(row.id) ?? []).map(build),
-  });
-  return roots.map(build);
+  const built = new Map<string, OtlpReceipt>();
+  const buildOne = (root: Loaded): OtlpReceipt => {
+    const stack: Array<{ row: Loaded; childIndex: number }> = [{ row: root, childIndex: 0 }];
+    const visiting = new Set<string>();
+    while (stack.length) {
+      const frame = stack[stack.length - 1];
+      const kids = children.get(frame.row.id) ?? [];
+      if (frame.childIndex === 0) visiting.add(frame.row.id);
+      if (frame.childIndex < kids.length) {
+        const kid = kids[frame.childIndex];
+        frame.childIndex += 1;
+        if (built.has(kid.id)) continue;
+        if (visiting.has(kid.id)) {
+          throw new Error('refusing a trace with a parent cycle');
+        }
+        stack.push({ row: kid, childIndex: 0 });
+        continue;
+      }
+      visiting.delete(frame.row.id);
+      built.set(frame.row.id, {
+        ...frame.row.receipt,
+        children: kids.map((kid) => built.get(kid.id) as OtlpReceipt),
+      });
+      stack.pop();
+    }
+    return built.get(root.id) as OtlpReceipt;
+  };
+  return roots.map((root) => built.get(root.id) ?? buildOne(root));
 }
 
 function safeStem(name: string): string {
@@ -307,17 +340,22 @@ function safeStem(name: string): string {
   return cleaned || 'trace';
 }
 
-function outputPath(cwd: string, out: string | undefined, fallbackName: string, fallbackDir: string): string {
-  if (!out) return join(fallbackDir, fallbackName);
-  const wantsDir = /[/\\]$/.test(out);
-  const resolved = resolve(cwd, out);
-  if (wantsDir) return join(resolved, fallbackName);
-  if (existsSync(resolved)) {
-    const st = lstatSync(resolved);
-    if (st.isSymbolicLink()) fail(`refusing to write through a symlink: ${resolved}`);
-    if (st.isDirectory()) return join(resolved, fallbackName);
+function guardTraceFile(abs: string): void {
+  try {
+    assertWritableOutFile(abs);
+  } catch (err) {
+    if (err instanceof OutGuardError) fail(err.message);
+    throw err;
   }
-  return resolved;
+}
+
+function outputPath(cwd: string, out: string | undefined, fallbackName: string, fallbackDir: string): string {
+  try {
+    return resolveDirOrFileOut(cwd, out, fallbackName, fallbackDir);
+  } catch (err) {
+    if (err instanceof OutGuardError) fail(err.message);
+    throw err;
+  }
 }
 
 function writeTrace(cwd: string, outPath: string, body: string): void {
@@ -353,13 +391,20 @@ function companionJsonPath(mdPath: string): string | null {
 }
 
 function assertSafeOutput(cwd: string, dest: string, source: Source): void {
-  for (const row of source.loaded) {
-    const receipt = resolve(cwd, row.path);
-    if (dest === receipt) fail('refusing to write the trace over the receipt');
-    const jsonPath = companionJsonPath(row.path);
-    if (jsonPath && dest === resolve(cwd, jsonPath)) {
-      fail('refusing to write the trace over the receipt companion .json');
-    }
+  guardTraceFile(dest);
+  try {
+    assertProtectedOut(
+      dest,
+      exportProtectedPaths(
+        cwd,
+        source.loaded.map((row) => row.path),
+        { companionJson: true },
+      ),
+      'trace',
+    );
+  } catch (err) {
+    if (err instanceof OutGuardError) fail(err.message);
+    throw err;
   }
 }
 
@@ -398,11 +443,12 @@ export function cmdOtlpExport(cwd: string, pathArg: string | undefined, opts: Ot
     writeTrace(cwd, out, body);
     const traceId = traceIdFor(roots[0].sha256);
     let spans = 0;
-    const count = (receipt: OtlpReceipt): void => {
+    const pending = [...roots];
+    while (pending.length) {
+      const receipt = pending.pop() as OtlpReceipt;
       spans += 1 + receipt.activities.length;
-      for (const child of receipt.children) count(child);
-    };
-    for (const root of roots) count(root);
+      for (const child of receipt.children) pending.push(child);
+    }
     console.log(color.green('wrote') + ` ${dest}`);
     console.log(color.dim(`spans ${spans}`));
     console.log(color.dim(`trace ${traceId}`));

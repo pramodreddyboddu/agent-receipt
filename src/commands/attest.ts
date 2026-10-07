@@ -69,11 +69,14 @@ import { receiptsDir } from '../lib/receipt-index.js';
 import { sha256FileBytes } from '../lib/share-package.js';
 import { loadKeys, type LoadedKeys } from '../lib/sign.js';
 import {
+  exportProtectedPaths,
   isRegularFile,
   locateSessionPackage,
   parseSessionManifest,
   SessionPackageUsageError,
 } from '../lib/session-package.js';
+import { assertProtectedOut, assertWritableOutFile, OutGuardError, resolveDirOrFileOut } from '../lib/out-guard.js';
+import { sessionPackageIntegrityReasons } from './session-import.js';
 import {
   isFingerprintTrusted,
   loadTrustedFingerprints,
@@ -408,16 +411,25 @@ function safeStem(name: string): string {
 }
 
 function outputPath(cwd: string, out: string | undefined, fallbackName: string, fallbackDir: string): string {
-  if (!out) return join(fallbackDir, fallbackName);
-  const wantsDir = /[/\\]$/.test(out);
-  const resolved = resolve(cwd, out);
-  if (wantsDir) return join(resolved, fallbackName);
-  if (existsSync(resolved)) {
-    const st = lstatSync(resolved);
-    if (st.isSymbolicLink()) fail(`refusing to write through a symlink: ${resolved}`);
-    if (st.isDirectory()) return join(resolved, fallbackName);
+  try {
+    return resolveDirOrFileOut(cwd, out, fallbackName, fallbackDir);
+  } catch (err) {
+    if (err instanceof OutGuardError) fail(err.message);
+    throw err;
   }
-  return resolved;
+}
+
+function guardAttestFiles(cwd: string, dests: string[], receiptPaths: string[]): void {
+  const protectedPaths = exportProtectedPaths(cwd, receiptPaths, { companionJson: true });
+  for (const dest of dests) {
+    try {
+      assertWritableOutFile(dest);
+      assertProtectedOut(dest, protectedPaths, 'attestation');
+    } catch (err) {
+      if (err instanceof OutGuardError) fail(err.message);
+      throw err;
+    }
+  }
 }
 
 function writeLines(cwd: string, outPath: string, lines: string[]): void {
@@ -479,6 +491,8 @@ function receiptSource(cwd: string, pathArg: string | undefined, session: string
         const detail = err instanceof Error ? err.message : String(err);
         fail(`session package manifest is unreadable (${detail})`);
       }
+      const mismatch = sessionPackageIntegrityReasons(cwd, located.packageDir, manifest);
+      if (mismatch.length) throw new AttestFailError(mismatch.join('; '));
       const paths: string[] = [];
       for (const entry of manifest.receipts) {
         const abs = resolveInside(located.packageDir, entry.path);
@@ -597,11 +611,7 @@ export async function cmdAttest(
       lines.push(envelopeJson(envelope));
     }
     const out = outputPath(cwd, opts.out, `${safeStem(source.label)}.intoto.jsonl`, source.fallbackDir);
-    for (const receiptPath of source.paths) {
-      if (resolve(cwd, out) === resolve(cwd, receiptPath)) {
-        fail('refusing to write the attestation over the receipt');
-      }
-    }
+    guardAttestFiles(cwd, [resolve(cwd, out)], source.paths);
     writeLines(cwd, out, lines);
     if (warning) console.error(color.yellow(warning));
     printCreate(
@@ -668,10 +678,7 @@ async function attestKeyless(
   const bundleOut = sigstoreBundlePath(out);
   const intotoAbs = resolve(cwd, out);
   const bundleAbs = resolve(cwd, bundleOut);
-  const receiptAbs = resolve(cwd, source.paths[0]);
-  if (intotoAbs === receiptAbs || bundleAbs === receiptAbs) {
-    fail('refusing to write the attestation over the receipt');
-  }
+  guardAttestFiles(cwd, [intotoAbs, bundleAbs], source.paths);
   let wrote: string | null = null;
   try {
     writeLines(cwd, out, [envelopeJson(signed.envelope)]);

@@ -1,11 +1,13 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, join, resolve, basename } from 'node:path';
+import { dirname, basename } from 'node:path';
 import { resolveReceiptPath } from './show.js';
 import { markdownToHtml } from '../lib/html.js';
 import { publishRedactedReceipt } from '../lib/redact.js';
 import { verifyMarkdown } from '../lib/hash.js';
 import { recordAuditEvent } from '../lib/audit.js';
 import { color } from '../lib/color.js';
+import { assertProtectedOut, resolveFileOut } from '../lib/out-guard.js';
+import { exportProtectedPaths } from '../lib/session-package.js';
 import { handoffMarkdownSignature } from '../lib/sign.js';
 
 export interface ExportOptions {
@@ -82,14 +84,20 @@ export function cmdExport(
 
   let outPath: string;
   if (opts.out) {
-    outPath = resolve(cwd, opts.out);
+    outPath = resolveFileOut(cwd, opts.out);
   } else {
     outPath = defaultOutPath(source, format);
     // If redacting to markdown without --out and source would collide, add suffix
     if (format === 'markdown' && !opts.redact) {
       outPath = source.replace(/\.md$/i, '') + '.export.md';
     }
+    outPath = resolveFileOut(cwd, outPath);
   }
+  assertProtectedOut(
+    outPath,
+    exportProtectedPaths(cwd, [source], { companionJson: true }),
+    'export',
+  );
   mkdirSync(dirname(outPath), { recursive: true });
 
   const log = (line: string) => {

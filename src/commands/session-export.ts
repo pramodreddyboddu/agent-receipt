@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { ByteLimitError, assertReadableSize, resolveByteLimits } from '../lib/byte-limit.js';
 import { color } from '../lib/color.js';
@@ -32,6 +32,7 @@ import {
 } from '../lib/sign.js';
 import { VERSION } from '../lib/version.js';
 import { collectSession } from './session.js';
+import { sessionPackageIntegrityReasons } from './session-import.js';
 
 export interface SessionExportOptions {
   json?: boolean;
@@ -176,6 +177,29 @@ export function cmdSessionExport(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return finish(emptyReport(session, 1, message));
+  }
+  try {
+    const st = lstatSync(packagePath);
+    if (st.isSymbolicLink()) {
+      let dangling = false;
+      try {
+        statSync(packagePath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') throw err;
+        dangling = true;
+      }
+      const why = dangling
+        ? `refusing to write through a dangling symlink: ${packagePath}`
+        : `refusing to write through a symlink: ${packagePath}`;
+      return finish(emptyReport(session, 1, why));
+    }
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') {
+      const message = err instanceof Error ? err.message : String(err);
+      return finish(emptyReport(session, 1, message));
+    }
   }
   if (existsSync(packagePath)) {
     return finish({
@@ -372,6 +396,10 @@ export function cmdSessionExport(
     };
     const manifestPath = writeSessionManifest(tmp, manifest);
     const signedManifest = signSessionManifest(cwd, manifestPath);
+    const mismatch = sessionPackageIntegrityReasons(cwd, tmp, manifest);
+    if (mismatch.length) {
+      throw new Error(mismatch.join('; '));
+    }
     renameSync(tmp, packagePath);
 
     const report = finish({

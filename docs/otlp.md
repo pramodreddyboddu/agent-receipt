@@ -11,7 +11,7 @@ agent-receipt export --format otlp --session my-session
 agent-receipt export --format otlp .agent-receipt/my-session.session
 ```
 
-A receipt becomes `receipt.otlp.json` beside the `.md` file. `--session <id>` writes `<id>.otlp.json` beside `outDir` (`.agent-receipt/<id>.otlp.json` by default). A `*.session` directory, or its `session-manifest.json`, uses the same tree and writes beside the package. `--out` names the file. A trailing slash, or an existing directory, receives the default file name inside it. `--out` will not replace the receipt or the companion `.json` beside that receipt (`foo.md` → `foo.json`).
+A receipt becomes `receipt.otlp.json` beside the `.md` file. `--session <id>` writes `<id>.otlp.json` beside `outDir` (`.agent-receipt/<id>.otlp.json` by default). A `*.session` directory, or its `session-manifest.json`, uses the same tree and writes beside the package. `--out` names the file. A trailing slash, or an existing directory, receives the default file name inside it. `--out` is compared by file identity (`realpath` of the parent plus the file name, and `dev`+`ino` when the target already exists). It will not replace the receipt, the companion `.json` beside that receipt (`foo.md` → `foo.json`), or a session package source file (`session-manifest.json`, its signature, a packaged receipt, or a sidecar). A symlinked parent that still names one of those files is refused. A symlink `--out`, including a dangling one, is not followed. A session package is verified first: each manifest `sha256` and raw `bytes` hash must match the file on disk, the same check `session import` runs. A mismatch exits 2 and writes nothing. A parent cycle still exits 1 and writes nothing.
 
 ## What is in the file
 

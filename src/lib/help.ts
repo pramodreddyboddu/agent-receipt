@@ -465,7 +465,12 @@ signature inside \`.intoto.jsonl\` is not a substitute for the bundle.
 One receipt writes \`<stem>.intoto.jsonl\` beside that receipt. A session
 package writes \`<id>.intoto.jsonl\` beside the package. \`--session <id>\`
 writes \`<id>.intoto.jsonl\` beside \`outDir\`. \`--out\` is a file, or a
-directory when it exists or the path ends with \`/\`. The command does not
+directory when it exists or the path ends with \`/\`. The path is compared
+by file identity, so a symlinked parent that names the source receipt is
+refused. A symlink \`--out\`, including a dangling one, is not followed.
+\`session-manifest.json\` and the other package source files are refused
+too. A session package is checked (manifest sha256 and raw file hash)
+before anything is written; a mismatch exits 2. The command does not
 append the audit log.
 
 Options:
@@ -516,9 +521,18 @@ or share as a single file. \`last\` is the newest receipt.
 path is the receipt with \`.otlp.json\` instead of \`.md\`. \`--session <id>\`
 or a \`*.session\` package writes one linked trace beside outDir. It checks
 the receipt hash first. Integrity failure exits 2 and writes nothing.
+A session package is checked the same way \`session import\` checks it
+(each entry \`sha256\` and raw \`bytes\` hash) before the trace is written.
+A mismatch exits 2 and writes nothing.
 Span \`kind\` and \`status.code\` are integers (1 internal, 3 client; 1 ok,
-2 error). \`--out\` will not replace the receipt or its companion \`.json\`.
-A session whose parent links form a cycle exits 1 and writes nothing.
+2 error). \`--out\` is compared by file identity. It will not replace the
+receipt, its companion \`.json\`, or a session package file such as
+\`session-manifest.json\`. A symlinked directory that still names that
+receipt is refused. A symlink \`--out\`, including a dangling one, is not
+followed. HTML and Markdown require a file path (a trailing slash or an
+existing directory is an error). OTLP and intoto still place the default
+file inside a trailing-slash or existing directory. A session whose
+parent links form a cycle exits 1 and writes nothing.
 There is no network push and no audit line. See docs/otlp.md.
 
 OTLP and \`--format intoto\` always redact secrets in commands, args, host

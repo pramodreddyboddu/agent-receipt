@@ -37,6 +37,8 @@
 # A bare 0x host label is rejected by --allowed-host. This smoke still does not listen.
 # v1.0.40 left that live file unchanged for the same reason.
 # OTLP export is a local JSON file. This smoke still does not listen and does not push.
+# v1.0.41 left that live file unchanged for the same reason.
+# The --out guard is local path identity. This smoke still does not listen and does not push.
 name: CI
 
 on:

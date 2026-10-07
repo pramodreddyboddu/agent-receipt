@@ -429,18 +429,26 @@ function activitySpan(
 }
 
 function walk(receipt: OtlpReceipt, traceId: string, parentSpanId: string, spans: Span[], seen: Set<string>): void {
-  const start = unixNano(receipt.timestamp) ?? '0';
-  const span = receiptSpan(receipt, traceId, parentSpanId, start);
-  if (seen.has(span.spanId)) throw new Error('refusing a trace with a duplicate spanId');
-  seen.add(span.spanId);
-  spans.push(span);
-  receipt.activities.forEach((activity, index) => {
-    const child = activitySpan(receipt, activity, index + 1, traceId, span.spanId, start);
-    if (seen.has(child.spanId)) throw new Error('refusing a trace with a duplicate spanId');
-    seen.add(child.spanId);
-    spans.push(child);
-  });
-  for (const child of receipt.children) walk(child, traceId, span.spanId, spans, seen);
+  // Iterative preorder. A parent chain of ~12k receipts overflows a recursive walk.
+  const stack: Array<{ receipt: OtlpReceipt; parentSpanId: string }> = [{ receipt, parentSpanId }];
+  while (stack.length) {
+    const frame = stack.pop() as { receipt: OtlpReceipt; parentSpanId: string };
+    const start = unixNano(frame.receipt.timestamp) ?? '0';
+    const span = receiptSpan(frame.receipt, traceId, frame.parentSpanId, start);
+    if (seen.has(span.spanId)) throw new Error('refusing a trace with a duplicate spanId');
+    seen.add(span.spanId);
+    spans.push(span);
+    frame.receipt.activities.forEach((activity, index) => {
+      const child = activitySpan(frame.receipt, activity, index + 1, traceId, span.spanId, start);
+      if (seen.has(child.spanId)) throw new Error('refusing a trace with a duplicate spanId');
+      seen.add(child.spanId);
+      spans.push(child);
+    });
+    const kids = frame.receipt.children;
+    for (let i = kids.length - 1; i >= 0; i -= 1) {
+      stack.push({ receipt: kids[i] as OtlpReceipt, parentSpanId: span.spanId });
+    }
+  }
 }
 
 /**

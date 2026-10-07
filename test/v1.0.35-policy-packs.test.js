@@ -131,7 +131,7 @@ describe('v1.0.40 policy packs', { concurrency: 1 }, () => {
     assert.equal(body.command, 'policy');
     assert.equal(body.action, 'list');
     assert.equal(body.exitCode, 0);
-    assert.equal(body.version, '1.0.40');
+    assert.equal(body.version, '1.0.41');
     const names = body.packs.map((pack) => pack.name);
     assert.deepEqual(names, ['baseline', 'supply-chain', 'ci-protect', 'strict']);
     for (const pack of body.packs) {
@@ -707,7 +707,7 @@ rules:
 
   it('documents the action input, schema, and package pins', () => {
     const action = readFileSync(join(root, 'action.yml'), 'utf8');
-    assert.match(action, /default: "1\.0\.40"/);
+    assert.match(action, /default: "1\.0\.41"/);
     assert.match(action, /^ {2}policy-pack:/m);
     assert.match(action, /AR_POLICY_PACK/);
     assert.match(action, /--policy-pack/);
@@ -766,10 +766,10 @@ rules:
     assert.match(docs, /policyExceptions/);
     assert.match(docs, /fails closed/i);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.40');
+    assert.equal(pkg.version, '1.0.41');
     assert.equal(pkg.dependencies, undefined);
     assert.ok(pkg.files.includes('policies'));
-    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.40/);
+    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.41/);
     assert.match(readFileSync(join(root, 'CHANGELOG.md'), 'utf8'), /## \[1\.0\.40\]/);
     assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /Policy packs/);
     const help = cli(root, ['help', 'policy']);

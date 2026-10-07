@@ -506,6 +506,32 @@ function checkReceipt(
   return reasons;
 }
 
+/**
+ * The same per-entry checks `session import` runs before it copies:
+ * raw `bytes` hash, canonical sha256, path, sidecar, and link fields.
+ * Empty when every manifest entry matches the files on disk.
+ * Export of a session package must refuse (exit 2, write nothing) when
+ * this list is non-empty.
+ */
+export function sessionPackageIntegrityReasons(
+  cwd: string,
+  packageDir: string,
+  manifest: SessionManifest,
+  limits?: ByteLimits,
+): string[] {
+  const resolved = limits ?? resolveByteLimits({});
+  const reasons: string[] = [];
+  for (const entry of manifest.receipts) {
+    try {
+      reasons.push(...checkReceipt(cwd, packageDir, manifest, entry, {}, null, resolved));
+    } catch (err) {
+      if (err instanceof ByteLimitError) reasons.push(err.message);
+      else reasons.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  return reasons;
+}
+
 interface LocalFile {
   path: string;
   name: string;

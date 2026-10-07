@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.41] — 2026-10-07
+
+### Fixed
+
+- `--out` is compared by file identity. `realpath` of the parent directory plus the file name is compared with the source, and `dev`+`ino` is compared when the target already exists. A symlinked parent that still names the source receipt no longer overwrites it. The same check covers macOS `/tmp` versus `/private/tmp` and a case-insensitive volume (parent `dev`+`ino` plus a case-folded basename when the file is not there yet; darwin and win32 always fold). The command refuses with the existing non-zero exit and writes nothing.
+- That guard also covers `session-manifest.json`, `session-manifest.sig.json`, packaged receipts, and signature sidecars when the export reads a session package. HTML, Markdown, OTLP, intoto, share, prove, and report use it.
+- Exporting a session package (`export --format otlp`, `export --format intoto`, and `session export` before it publishes) runs the same per-entry check as `session import`: canonical `sha256` and raw `bytes` hash. A mismatch exits 2 and writes nothing.
+- A dangling symlink `--out` is refused and is not followed. A symlink to a file is refused. HTML and Markdown `--out` that ends with a slash, or names an existing directory, gets a clear error instead of a raw `ENOENT` or `EISDIR`. OTLP, intoto, prove, report, `share --package`, and `session export` still accept a directory or a trailing slash as the folder for the default file.
+- Parent-link walks for `session` and OTLP are iterative, so a chain of about 12k receipts does not overflow the stack.
+
+### Notes
+
+- Package version bumped to `1.0.41`. Pin comments that track the current cut are `v1.0.41`. The action default pin is `1.0.41`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
+
 ## [1.0.40] — 2026-10-07
 
 ### Added
