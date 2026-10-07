@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.39] — 2026-10-07
+
+### Fixed
+
+- `--allowed-host` and the live Host check reject a last label that is exactly `0x` (no hex digits). `foo.0x`, `0x`, `FOO.0X`, and `foo.0x:8080` are non-canonical. The host is lowercased before the check, so `0X` is the same label. Browsers parse a bare `0x` label as hex zero, which is an IPv4 address. `0x7f.example`, `foo.0xg`, and `foo.0x-a` are unchanged. The error still says non-canonical.
+
+### Notes
+
+- Package version bumped to `1.0.39`. Pin comments that track the current cut are `v1.0.39`. The action default pin is `1.0.39`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
+
 ## [1.0.38] — 2026-10-07
 
 ### Added

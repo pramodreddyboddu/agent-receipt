@@ -227,13 +227,13 @@ describe('v1.0.29 cross-host session merge', () => {
     assert.match(changelog, /npm Trusted Publishing/);
     assert.match(changelog, /does not publish to npm/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.38');
+    assert.equal(pkg.version, '1.0.39');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.38');
-    assert.equal(lock.packages[''].version, '1.0.38');
+    assert.equal(lock.version, '1.0.39');
+    assert.equal(lock.packages[''].version, '1.0.39');
     assert.equal(lock.packages[''].dependencies, undefined);
-    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.38/);
+    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.39/);
     const schema = JSON.parse(readFileSync(join(root, 'docs', 'session-package.schema.json'), 'utf8'));
     assert.equal(schema.properties.kind.const, 'agent-receipt-session');
     assert.equal(schema.properties.version.const, 1);
@@ -340,7 +340,7 @@ describe('v1.0.29 cross-host session merge', () => {
 
     const report = exportSession(dir, session, ['--out', 'again-mask']);
     assert.equal(report.command, 'session-export');
-    assert.equal(report.version, '1.0.38');
+    assert.equal(report.version, '1.0.39');
     assert.equal(report.ok, true);
     assert.equal(report.exitCode, 0);
     assert.equal(report.session, session);
@@ -352,7 +352,7 @@ describe('v1.0.29 cross-host session merge', () => {
     const manifest = JSON.parse(readFileSync(report.manifestPath, 'utf8'));
     assert.equal(manifest.kind, 'agent-receipt-session');
     assert.equal(manifest.version, 1);
-    assert.equal(manifest.cliVersion, '1.0.38');
+    assert.equal(manifest.cliVersion, '1.0.39');
     assert.equal(manifest.session, session);
     assert.equal(manifest.receiptCount, 2);
     assert.equal(manifest.includeHost, false);
@@ -443,7 +443,7 @@ describe('v1.0.29 cross-host session merge', () => {
     assert.equal(manifestSig.fingerprint, keys.fingerprint);
     assert.doesNotMatch(readFileSync(report.manifestSigPath, 'utf8'), /PRIVATE KEY/);
     const manifest = JSON.parse(readFileSync(report.manifestPath, 'utf8'));
-    assert.equal(manifest.cliVersion, '1.0.38');
+    assert.equal(manifest.cliVersion, '1.0.39');
     for (const entry of manifest.receipts) {
       assert.equal(entry.signed, true);
       assert.equal(entry.fingerprint, keys.fingerprint);
@@ -551,7 +551,7 @@ describe('v1.0.29 cross-host session merge', () => {
     assert.equal(imported.code, 0, imported.out + imported.err);
     const body = parseJson(imported.out);
     assert.equal(body.ok, true);
-    assert.equal(body.version, '1.0.38');
+    assert.equal(body.version, '1.0.39');
     assert.equal(body.copied, 2);
     assert.equal(body.skipped, 0);
     assert.equal(body.conflicts, 0);

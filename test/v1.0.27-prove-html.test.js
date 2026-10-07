@@ -115,13 +115,13 @@ describe('v1.0.27 prove --html offline verification report', () => {
     assert.match(changelog, /htmlPath/);
     assert.match(changelog, /not itself signed/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.38');
+    assert.equal(pkg.version, '1.0.39');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.38');
-    assert.equal(lock.packages[''].version, '1.0.38');
+    assert.equal(lock.version, '1.0.39');
+    assert.equal(lock.packages[''].version, '1.0.39');
     assert.equal(lock.packages[''].dependencies, undefined);
-    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.38/);
+    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.39/);
 
     const help = cli(root, ['help', 'prove']);
     assert.match(help, /--html/);
@@ -147,7 +147,7 @@ describe('v1.0.27 prove --html offline verification report', () => {
     assert.match(mirror, /prove --json --html/);
     assert.match(mirror, /htmlPath/);
     for (const rel of ['examples/github/action.yml', 'examples/github/pr-gate.yml', 'examples/org-policy.yml']) {
-      assert.match(readFileSync(join(root, rel), 'utf8'), /v1\.0\.38/, rel);
+      assert.match(readFileSync(join(root, rel), 'utf8'), /v1\.0\.39/, rel);
     }
     // Live workflows are untouched by this cut.
     for (const name of readdirSync(join(root, '.github', 'workflows'))) {
@@ -164,7 +164,7 @@ describe('v1.0.27 prove --html offline verification report', () => {
 
     const plain = parseJson(cli(dir, ['prove', '--json']));
     assert.equal(plain.ok, true);
-    assert.equal(plain.version, '1.0.38');
+    assert.equal(plain.version, '1.0.39');
     assert.equal('htmlPath' in plain, false);
     assert.deepEqual(findFiles(dir, '.prove.html'), []);
 
@@ -187,7 +187,7 @@ describe('v1.0.27 prove --html offline verification report', () => {
     assert.match(html, /hash chain intact/);
     assert.match(html, /UNSIGNED/);
     assert.match(html, /Redaction/);
-    assert.match(html, /agent-receipt 1\.0\.38/);
+    assert.match(html, /agent-receipt 1\.0\.39/);
     assert.match(html, /not a certificate authority/);
     assert.match(html, /not itself signed/);
     assert.match(html, /Files changed/);

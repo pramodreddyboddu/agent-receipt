@@ -67,7 +67,7 @@
 # Gate JSON schema: docs/gate.schema.json (next to docs/receipt.schema.json)
 # Signature sidecar: docs/signature.schema.json
 # Drop-in CI: examples/github/action.yml and examples/github/pr-gate.yml
-#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.38
+#   install pin: github:pramodreddyboddu/agent-receipt#v1.0.39
 #   local allowlist (since v1.0.20): agent-receipt keygen && agent-receipt trust add --self
 #   status (v1.0.23, read-only): agent-receipt trust show
 #   handoff (v1.0.24): agent-receipt share --package   # HTML + Markdown; HTML unsigned
@@ -87,7 +87,7 @@ redact: true
 # Plain `verify` stays integrity-only unless you pass --fail-on explicitly.
 failOn: high
 
-# Policy packs (v1.0.38). Refs are builtin:<name> or a file path.
+# Policy packs (v1.0.39). Refs are builtin:<name> or a file path.
 # Deny hits fail the gate (exit 2). Warn hits are reported only.
 # A missing or invalid pack fails closed. Docs: docs/policy-packs.md
 # policyPacks:

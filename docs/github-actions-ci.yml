@@ -33,6 +33,8 @@
 # asset, no unsafe-inline, and the smoke still does not listen.
 # v1.0.38 left that live file unchanged for the same reason.
 # --allowed-host is a live-bind Host allowlist. This smoke still does not listen.
+# v1.0.39 left that live file unchanged for the same reason.
+# A bare 0x host label is rejected by --allowed-host. This smoke still does not listen.
 name: CI
 
 on:
