@@ -14,16 +14,9 @@
  * file on disk, and the hash-chain head against the receipt canonical sha256.
  * A Sigstore bundle also requires the certificate identity and OIDC issuer.
  */
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { writeExclusiveFile } from '../lib/exclusive-write.js';
 import { DEFAULT_MAX_RECEIPT_BYTES } from '../lib/byte-limit.js';
 import { color } from '../lib/color.js';
 import {
@@ -442,16 +435,9 @@ function writeLines(cwd: string, outPath: string, lines: string[]): void {
   if (existsSync(abs) && lstatSync(abs).isSymbolicLink()) {
     fail(`refusing to replace a symlink: ${abs}`);
   }
-  const tmp = join(parent, `.${basename(abs)}.${process.pid}.tmp`);
-  writeFileSync(tmp, `${lines.join('\n')}\n`, { mode: 0o644 });
   try {
-    renameSync(tmp, abs);
+    writeExclusiveFile(abs, `${lines.join('\n')}\n`);
   } catch (err) {
-    try {
-      unlinkSync(tmp);
-    } catch {
-      /* the failed rename already reports the destination */
-    }
     const detail = err instanceof Error ? err.message : String(err);
     fail(`could not write ${abs} (${detail})`);
   }

@@ -526,9 +526,9 @@ A session package is checked the same way \`session import\` checks it
 A mismatch exits 2 and writes nothing.
 Span \`kind\` and \`status.code\` are integers (1 internal, 3 client; 1 ok,
 2 error). \`--out\` is compared by file identity. It will not replace the
-receipt, its companion \`.json\`, or a session package file such as
-\`session-manifest.json\`. A symlinked directory that still names that
-receipt is refused. A symlink \`--out\`, including a dangling one, is not
+receipt, its companion \`.json\`, its \`.sig.json\` sidecar, or a session
+package file such as \`session-manifest.json\`. A symlinked directory that
+still names that receipt is refused. A symlink \`--out\`, including a dangling one, is not
 followed. HTML and Markdown require a file path (a trailing slash or an
 existing directory is an error). OTLP and intoto still place the default
 file inside a trailing-slash or existing directory. A session whose

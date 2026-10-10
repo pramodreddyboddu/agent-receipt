@@ -4,16 +4,9 @@
  * exits 2 and leaves no file. There is no network and no audit line.
  * Secrets in commands, args, host labels, and tool inputs are redacted.
  */
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { writeExclusiveFile } from '../lib/exclusive-write.js';
 import { ByteLimitError, DEFAULT_MAX_RECEIPT_BYTES } from '../lib/byte-limit.js';
 import { color } from '../lib/color.js';
 import { auditLogPath, readAuditRawLines } from '../lib/audit.js';
@@ -365,16 +358,9 @@ function writeTrace(cwd: string, outPath: string, body: string): void {
   if (existsSync(abs) && lstatSync(abs).isSymbolicLink()) {
     fail(`refusing to replace a symlink: ${abs}`);
   }
-  const tmp = join(parent, `.${basename(abs)}.${process.pid}.tmp`);
   try {
-    writeFileSync(tmp, body, { encoding: 'utf8', mode: 0o644 });
-    renameSync(tmp, abs);
+    writeExclusiveFile(abs, body);
   } catch (err) {
-    try {
-      unlinkSync(tmp);
-    } catch {
-      // The rename error is the one to report.
-    }
     const detail = err instanceof Error ? err.message : String(err);
     fail(`could not write ${abs} (${detail})`);
   }

@@ -123,7 +123,14 @@ function guardShareFile(cwd: string, source: string, abs: string, ownMessage: st
   );
   if (!hit) return;
   if (sameFileTarget(abs, sourceAbs)) throw new Error(ownMessage);
-  throw new Error(`share must not overwrite a session package file: ${basename(hit)}`);
+  const base = basename(hit);
+  if (base === 'session-manifest.json' || base === 'session-manifest.sig.json') {
+    throw new Error(`share must not overwrite a session package file: ${base}`);
+  }
+  if (base.endsWith('.sig.json')) {
+    throw new Error('share must not overwrite the receipt signature sidecar');
+  }
+  throw new Error(`share must not overwrite a session package file: ${base}`);
 }
 
 function peerPackageTip(packageDir: string, markdownPath: string): string[] {

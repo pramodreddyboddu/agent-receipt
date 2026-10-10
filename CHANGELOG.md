@@ -7,9 +7,13 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - `--out` is compared by file identity. `realpath` of the parent directory plus the file name is compared with the source, and `dev`+`ino` is compared when the target already exists. A symlinked parent that still names the source receipt no longer overwrites it. The same check covers macOS `/tmp` versus `/private/tmp` and a case-insensitive volume (parent `dev`+`ino` plus a case-folded basename when the file is not there yet; darwin and win32 always fold). The command refuses with the existing non-zero exit and writes nothing.
-- That guard also covers `session-manifest.json`, `session-manifest.sig.json`, packaged receipts, and signature sidecars when the export reads a session package. HTML, Markdown, OTLP, intoto, share, prove, and report use it.
+- That guard also covers `session-manifest.json`, `session-manifest.sig.json`, packaged receipts, and signature sidecars. A local receipt's `.sig.json` sidecar (`foo.md` → `foo.sig.json`) is protected the same way, including when the export is not reading a session package. HTML, Markdown, OTLP, intoto, share, prove, and report use it.
+- `export --format otlp last --out <other>.json` will not replace another receipt's companion `.json` in the same directory.
+- `--out` will not replace a share package `manifest.json` or `manifest.sig.json`.
+- Exporting a session package reads that package's `session-manifest.json` once per export. A package with thousands of receipts no longer re-reads the manifest once per member.
+- OTLP and intoto files are created with flag `wx` (exclusive create; an existing path is not opened or followed) and a `crypto.randomBytes` suffix. A pre-existing file or symlink at a temp-like path is left untouched. The temp file is removed if the write fails.
 - Exporting a session package (`export --format otlp`, `export --format intoto`, and `session export` before it publishes) runs the same per-entry check as `session import`: canonical `sha256` and raw `bytes` hash. A mismatch exits 2 and writes nothing.
-- A dangling symlink `--out` is refused and is not followed. A symlink to a file is refused. HTML and Markdown `--out` that ends with a slash, or names an existing directory, gets a clear error instead of a raw `ENOENT` or `EISDIR`. OTLP, intoto, prove, report, `share --package`, and `session export` still accept a directory or a trailing slash as the folder for the default file.
+- A dangling symlink `--out` is refused and is not followed. A symlink to a file is refused. HTML and Markdown `--out` that ends with a slash, or names an existing directory, gets a clear error. `--out newdir/` used to write a file named `newdir` and now errors. OTLP, intoto, prove, report, `share --package`, and `session export` still accept a directory or a trailing slash as the folder for the default file.
 - Parent-link walks for `session` and OTLP are iterative, so a chain of about 12k receipts does not overflow the stack.
 
 ### Notes

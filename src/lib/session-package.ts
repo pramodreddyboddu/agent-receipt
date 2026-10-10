@@ -3,14 +3,15 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { ByteLimitError, assertReadableSize } from './byte-limit.js';
-import { isSessionPackageDirName } from './receipt.js';
+import { isInsideSessionPackage, isProveOnePagerName, isSessionPackageDirName } from './receipt.js';
 import { receiptsDir } from './receipt-index.js';
 import { publishRedactedReceipt } from './redact.js';
 import {
@@ -346,9 +347,14 @@ function addUnique(out: string[], seen: Set<string>, target: string | null | und
 }
 
 /**
- * Receipts, companion `.json` files, and session-package source files that
- * `--out` must not replace. Companion JSON is included for export formats
- * even when the file is not on disk yet (`foo.md` → `foo.json`).
+ * Receipts, companion `.json` files, local `.sig.json` sidecars, and
+ * session-package source files that `--out` must not replace.
+ * Companion JSON and the signature sidecar are included for a `.md`
+ * input even when that file is not on disk yet
+ * (`foo.md` → `foo.json`, `foo.md` → `foo.sig.json`).
+ *
+ * Each session package manifest is loaded once per call. Walking every
+ * member and reading the manifest again is O(N²) on a large package.
  */
 export function exportProtectedPaths(
   cwd: string,
@@ -357,26 +363,75 @@ export function exportProtectedPaths(
 ): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
+  /** Package directories whose manifest was loaded in this call. */
+  const loadedPackages = new Set<string>();
+  /** Absolute paths added from a package manifest. Later inputs skip lookup. */
+  const coveredByPackage = new Set<string>();
+  const companionDirs = new Set<string>();
+
+  const markCovered = (target: string) => {
+    const absTarget = resolve(target);
+    addUnique(out, seen, absTarget);
+    coveredByPackage.add(absTarget);
+  };
+
   const addPackage = (packageDir: string) => {
-    const manifestPath = join(packageDir, SESSION_MANIFEST_NAME);
-    addUnique(out, seen, manifestPath);
-    const sigPath = join(packageDir, SESSION_MANIFEST_SIG_NAME);
-    if (existsSync(sigPath)) addUnique(out, seen, sigPath);
+    const key = resolve(packageDir);
+    if (loadedPackages.has(key)) return;
+    loadedPackages.add(key);
+    const manifestPath = join(key, SESSION_MANIFEST_NAME);
+    markCovered(manifestPath);
+    const sigPath = join(key, SESSION_MANIFEST_SIG_NAME);
+    if (existsSync(sigPath)) markCovered(sigPath);
     try {
       const manifest = loadSessionManifest(manifestPath);
-      for (const target of sessionPackageTruthPaths(packageDir, manifest)) {
-        addUnique(out, seen, target);
+      for (const target of sessionPackageTruthPaths(key, manifest)) {
+        markCovered(target);
       }
     } catch {
-      // The manifest path is already protected.
+      // The manifest path is already protected. Do not read it again.
     }
   };
+
+  const underLoadedPackage = (abs: string): boolean => {
+    for (const dir of loadedPackages) {
+      if (abs === dir) return true;
+      const prefix = dir.endsWith(sep) ? dir : `${dir}${sep}`;
+      if (abs.startsWith(prefix)) return true;
+    }
+    return false;
+  };
+
+  // One directory listing per folder. Protects `last --out <other>.json`
+  // from replacing a different receipt's companion in the same directory.
+  const addSiblingCompanionJson = (dir: string) => {
+    const key = resolve(dir);
+    if (companionDirs.has(key)) return;
+    companionDirs.add(key);
+    let names: string[];
+    try {
+      names = readdirSync(key);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (!/\.md$/i.test(name) || isProveOnePagerName(name)) continue;
+      addUnique(out, seen, join(key, name.replace(/\.md$/i, '.json')));
+    }
+  };
+
   for (const input of inputs) {
     const abs = resolve(cwd, input);
+    const covered = coveredByPackage.has(abs) || underLoadedPackage(abs);
     addUnique(out, seen, abs);
+    if (/\.md$/i.test(abs)) {
+      addUnique(out, seen, signaturePathFor(abs));
+    }
     if (opts.companionJson && /\.md$/i.test(abs)) {
       addUnique(out, seen, abs.replace(/\.md$/i, '.json'));
+      if (!covered && !isInsideSessionPackage(abs)) addSiblingCompanionJson(dirname(abs));
     }
+    if (covered) continue;
     const located = locateSessionPackage(cwd, input);
     if (located.manifestExists) addPackage(located.packageDir);
     else {

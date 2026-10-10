@@ -52,6 +52,7 @@ function isDangling(abs: string): boolean {
  * Refuse a symlink at `abs`, including a dangling one. Do not follow it.
  * A directory is refused unless the caller is about to place a file inside it.
  * A missing path is allowed: the caller creates the file.
+ * A share package `manifest.json` (and `manifest.sig.json`) is refused.
  */
 export function assertWritableOutFile(abs: string): void {
   let st: Stats;
@@ -59,7 +60,10 @@ export function assertWritableOutFile(abs: string): void {
     st = lstatSync(abs);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return;
+    if (code === 'ENOENT') {
+      refuseSharePackageManifest(abs);
+      return;
+    }
     const detail = err instanceof Error ? err.message : String(err);
     throw new OutGuardError(`could not use --out ${abs} (${detail})`);
   }
@@ -74,6 +78,21 @@ export function assertWritableOutFile(abs: string): void {
   if (st.isDirectory()) {
     throw new OutGuardError(`--out is a directory (${abs}). Pass a file path.`);
   }
+  refuseSharePackageManifest(abs);
+}
+
+/** `foo.share/manifest.json` and its signature sidecar. The path string counts, and so does a resolved parent. */
+function isSharePackageManifest(abs: string): boolean {
+  const base = basename(abs);
+  if (base !== 'manifest.json' && base !== 'manifest.sig.json') return false;
+  if (/\.share$/i.test(basename(dirname(abs)))) return true;
+  const realParent = safeRealpath(dirname(abs));
+  return Boolean(realParent && /\.share$/i.test(basename(realParent)));
+}
+
+function refuseSharePackageManifest(abs: string): void {
+  if (!isSharePackageManifest(abs)) return;
+  throw new OutGuardError(`refusing to write over a share package file: ${basename(abs)}`);
 }
 
 function safeRealpath(target: string): string | null {
@@ -191,12 +210,11 @@ export function conflictingProtectedPath(outAbs: string, protectedPaths: string[
 /** Message for an export-style overwrite. Keeps the historical receipt wording. */
 export function protectedOverwriteMessage(hit: string, noun: string): string {
   const base = basename(hit);
-  if (
-    base === 'session-manifest.json' ||
-    base === 'session-manifest.sig.json' ||
-    base.endsWith('.sig.json')
-  ) {
+  if (base === 'session-manifest.json' || base === 'session-manifest.sig.json') {
     return `refusing to write the ${noun} over a session package file: ${base}`;
+  }
+  if (base.endsWith('.sig.json')) {
+    return `refusing to write the ${noun} over the receipt signature sidecar`;
   }
   if (base.endsWith('.json')) {
     return `refusing to write the ${noun} over the receipt companion .json`;

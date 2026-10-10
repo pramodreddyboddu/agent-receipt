@@ -11,15 +11,21 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cmdAttest } from '../dist/commands/attest.js';
+import { cmdOtlpExport } from '../dist/commands/otlp.js';
+import { writeExclusiveFile, writeExclusiveTemp } from '../dist/lib/exclusive-write.js';
 import { appendHashFooter } from '../dist/lib/hash.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -332,5 +338,198 @@ describe('v1.0.41 --out identity guard', () => {
     assert.equal(body.receipts[0].parent, null);
     assert.equal(body.receipts[count - 1].parent, `r-${(count - 2).toString(16).padStart(16, '0')}`);
     assert.equal(body.receipts.some((row) => row.cycle), false);
+  });
+
+  it('exports a 2000-member package in under 10 seconds', { timeout: 180000 }, () => {
+    const dir = gitRepo();
+    const outDir = join(dir, '.agent-receipt', 'receipts');
+    mkdirSync(outDir, { recursive: true });
+    const count = 2000;
+    const origin = Date.UTC(2026, 0, 1);
+    for (let i = 0; i < count; i += 1) {
+      const fields = {
+        Id: `r-${i.toString(16).padStart(16, '0')}`,
+        Timestamp: new Date(origin + i * 1000).toISOString(),
+        Agent: 'bulk',
+        Session: 'sess-fast',
+      };
+      writeFileSync(join(outDir, `fast-${String(i).padStart(5, '0')}.md`), sealReceipt(linkEraBody(fields)));
+    }
+    const packed = parseJson(
+      cli(dir, ['session', 'export', 'sess-fast', '--include-host', '--json'], 64 * 1024 * 1024),
+    );
+    assert.equal(packed.receiptCount, count);
+    const out = join(dir, 'fast.otlp.json');
+    const started = Date.now();
+    const result = cli(dir, ['export', '--format', 'otlp', packed.packagePath, '--out', out], 64 * 1024 * 1024);
+    const elapsed = Date.now() - started;
+    assert.equal(result.code, 0, result.err.slice(0, 800));
+    assert.ok(elapsed < 10000, `otlp export took ${elapsed}ms`);
+    const trace = JSON.parse(readFileSync(out, 'utf8'));
+    assert.equal(trace.resourceSpans.length, 1);
+    assert.equal(result.out.includes('wrote'), true);
+  });
+
+  it('refuses --out that would overwrite a local receipt .sig.json sidecar', () => {
+    const dir = gitRepo();
+    const captured = capture(dir);
+    const sig = captured.path.replace(/\.md$/i, '.sig.json');
+    const beforeMd = readFileSync(captured.path);
+    const missing = cli(dir, ['export', '--format', 'otlp', captured.path, '--out', sig]);
+    assert.equal(missing.code, 1, missing.err);
+    assert.match(missing.err, /signature sidecar/);
+    assert.equal(existsSync(sig), false);
+    assert.deepEqual(readFileSync(captured.path), beforeMd);
+    const body = '{"keep":"sidecar"}\n';
+    writeFileSync(sig, body);
+    for (const format of ['html', 'markdown', 'otlp', 'intoto']) {
+      const result = cli(dir, exportArgs(format, captured.path, sig));
+      assert.equal(result.code, 1, `${format}\n${result.err}`);
+      assert.match(result.err, /signature sidecar/, format);
+      assert.equal(readFileSync(sig, 'utf8'), body, format);
+      assert.deepEqual(readFileSync(captured.path), beforeMd, format);
+      assert.equal(result.out.includes('wrote') || result.out.includes('Wrote'), false, format);
+    }
+    const linkdir = join(dir, 'sig-link');
+    symlinkSync(dirname(sig), linkdir);
+    const via = join(linkdir, basename(sig));
+    const linked = cli(dir, ['export', '--format', 'otlp', captured.path, '--out', via]);
+    assert.equal(linked.code, 1, linked.err);
+    assert.match(linked.err, /signature sidecar/);
+    assert.equal(readFileSync(sig, 'utf8'), body);
+    assert.equal(lstatSync(sig).isSymbolicLink(), false);
+  });
+
+  it('does not follow a pre-existing temp file or symlink', async () => {
+    const dir = gitRepo();
+    const captured = capture(dir);
+    const canary = join(dir, 'canary-secret');
+    writeFileSync(canary, 'do-not-follow');
+
+    const otlpOut = join(dir, 'trace.otlp.json');
+    const otlpLink = join(dirname(otlpOut), `.${basename(otlpOut)}.${process.pid}.tmp`);
+    symlinkSync(canary, otlpLink);
+    const otlpFile = join(dirname(otlpOut), `.${basename(otlpOut)}.tmp`);
+    writeFileSync(otlpFile, 'keep-file');
+    assert.equal(cmdOtlpExport(dir, captured.path, { out: otlpOut }), 0);
+    assert.equal(readFileSync(canary, 'utf8'), 'do-not-follow');
+    assert.equal(readFileSync(otlpFile, 'utf8'), 'keep-file');
+    assert.equal(lstatSync(otlpLink).isSymbolicLink(), true);
+    assert.equal(readlinkSync(otlpLink), canary);
+    assert.equal(lstatSync(otlpOut).isSymbolicLink(), false);
+    assert.match(readFileSync(otlpOut, 'utf8'), /resourceSpans/);
+
+    const intotoOut = join(dir, 'trace.intoto.jsonl');
+    const intotoLink = join(dirname(intotoOut), `.${basename(intotoOut)}.${process.pid}.tmp`);
+    symlinkSync(canary, intotoLink);
+    const intotoFile = join(dirname(intotoOut), `.${basename(intotoOut)}.tmp`);
+    writeFileSync(intotoFile, 'keep-intoto');
+    assert.equal(await cmdAttest(dir, captured.path, { out: intotoOut }), 0);
+    assert.equal(readFileSync(canary, 'utf8'), 'do-not-follow');
+    assert.equal(readFileSync(intotoFile, 'utf8'), 'keep-intoto');
+    assert.equal(lstatSync(intotoLink).isSymbolicLink(), true);
+    assert.equal(readlinkSync(intotoLink), canary);
+    assert.equal(lstatSync(intotoOut).isSymbolicLink(), false);
+    assert.match(readFileSync(intotoOut, 'utf8'), /payload/);
+
+    const names = readdirSync(dir);
+    assert.equal(
+      names.some((name) => name.endsWith('.tmp') && name !== basename(otlpLink) && name !== basename(otlpFile) && name !== basename(intotoLink) && name !== basename(intotoFile)),
+      false,
+    );
+
+    assert.throws(() => writeExclusiveTemp(otlpLink, join(dir, 'should-not-write.json'), 'pwned'));
+    assert.equal(readFileSync(canary, 'utf8'), 'do-not-follow');
+    assert.equal(lstatSync(otlpLink).isSymbolicLink(), true);
+    assert.equal(existsSync(join(dir, 'should-not-write.json')), false);
+    assert.throws(() => writeExclusiveTemp(otlpFile, join(dir, 'should-not-write.json'), 'pwned'));
+    assert.equal(readFileSync(otlpFile, 'utf8'), 'keep-file');
+    assert.equal(existsSync(join(dir, 'should-not-write.json')), false);
+
+    const blocked = join(dir, 'blocked-dir');
+    mkdirSync(blocked);
+    assert.throws(() => writeExclusiveFile(blocked, 'hello'));
+    assert.equal(lstatSync(blocked).isDirectory(), true);
+    assert.equal(
+      readdirSync(dir).some((name) => name.startsWith('.blocked-dir.') && name.endsWith('.tmp')),
+      false,
+    );
+  });
+
+  it('refuses HTML and Markdown --out newdir/ instead of writing a file', () => {
+    const dir = gitRepo();
+    const captured = capture(dir);
+    const before = readFileSync(captured.path);
+    for (const format of ['html', 'markdown']) {
+      const dest = join(dir, `newdir-${format}`);
+      const result = cli(dir, exportArgs(format, captured.path, `${dest}/`));
+      assert.equal(result.code, 1, `${format}\n${result.err}`);
+      assert.match(result.err, /not a directory/, format);
+      assert.equal(existsSync(dest), false, format);
+      assert.deepEqual(readFileSync(captured.path), before, format);
+    }
+  });
+
+  it('refuses --out that would overwrite a share package manifest.json', () => {
+    const dir = gitRepo();
+    const captured = capture(dir);
+    assert.equal(cli(dir, ['keygen']).code, 0);
+    const shared = parseJson(cli(dir, ['share', captured.path, '--package', '--json']));
+    const manifestPath = join(shared.packagePath, 'manifest.json');
+    const before = readFileSync(manifestPath);
+    const fromLocal = cli(dir, ['export', '--format', 'otlp', 'last', '--out', manifestPath]);
+    assert.equal(fromLocal.code, 1, fromLocal.err + fromLocal.out);
+    assert.match(fromLocal.err, /share package file: manifest\.json/);
+    assert.deepEqual(readFileSync(manifestPath), before);
+    assert.equal(fromLocal.out.includes('wrote'), false);
+    const fromPacked = cli(dir, [
+      'export',
+      join(shared.packagePath, 'receipt.md'),
+      '--out',
+      manifestPath,
+    ]);
+    assert.equal(fromPacked.code, 1, fromPacked.err + fromPacked.out);
+    assert.match(fromPacked.err, /share package file: manifest\.json/);
+    assert.deepEqual(readFileSync(manifestPath), before);
+    const sigPath = join(shared.packagePath, 'manifest.sig.json');
+    assert.equal(existsSync(sigPath), true);
+    const sigBefore = readFileSync(sigPath);
+    const overSig = cli(dir, ['export', '--format', 'otlp', 'last', '--out', sigPath]);
+    assert.equal(overSig.code, 1, overSig.err + overSig.out);
+    assert.match(overSig.err, /share package file: manifest\.sig\.json/);
+    assert.deepEqual(readFileSync(sigPath), sigBefore);
+    const linkdir = join(dir, 'share-link');
+    symlinkSync(shared.packagePath, linkdir);
+    const via = join(linkdir, 'manifest.json');
+    const linked = cli(dir, ['export', '--format', 'otlp', captured.path, '--out', via]);
+    assert.equal(linked.code, 1, linked.err + linked.out);
+    assert.match(linked.err, /share package file: manifest\.json/);
+    assert.deepEqual(readFileSync(manifestPath), before);
+  });
+
+  it('refuses last --out that names another receipt companion .json', () => {
+    const dir = gitRepo();
+    const first = capture(dir);
+    const second = capture(dir, ['--message', 'second']);
+    const past = new Date(Date.now() - 120_000);
+    utimesSync(first.path, past, past);
+    utimesSync(second.path, new Date(), new Date());
+    const latest = cli(dir, ['last', '--path']);
+    assert.equal(latest.code, 0, latest.err);
+    assert.equal(latest.out.trim(), second.path);
+    const otherJson = first.path.replace(/\.md$/i, '.json');
+    assert.equal(existsSync(otherJson), true);
+    const before = readFileSync(otherJson);
+    const result = cli(dir, ['export', '--format', 'otlp', 'last', '--out', otherJson]);
+    assert.equal(result.code, 1, result.err + result.out);
+    assert.match(result.err, /companion \.json/);
+    assert.deepEqual(readFileSync(otherJson), before);
+    assert.equal(result.out.includes('wrote'), false);
+    const own = second.path.replace(/\.md$/i, '.json');
+    const ownBefore = readFileSync(own);
+    const overOwn = cli(dir, ['export', '--format', 'otlp', 'last', '--out', own]);
+    assert.equal(overOwn.code, 1, overOwn.err + overOwn.out);
+    assert.match(overOwn.err, /companion \.json/);
+    assert.deepEqual(readFileSync(own), ownBefore);
   });
 });
