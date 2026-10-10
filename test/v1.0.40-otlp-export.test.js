@@ -279,9 +279,9 @@ describe('v1.0.40 OTLP export', () => {
     assert.equal(doc.resourceSpans.length, 1);
     assert.equal(doc.resourceSpans[0].scopeSpans.length, 1);
     assert.equal(doc.resourceSpans[0].scopeSpans[0].scope.name, 'agent-receipt');
-    assert.equal(doc.resourceSpans[0].scopeSpans[0].scope.version, '1.0.40');
+    assert.equal(doc.resourceSpans[0].scopeSpans[0].scope.version, '1.0.41');
     assert.equal(resourceAttr(doc, 'service.name').value.stringValue, 'agent-receipt');
-    assert.equal(resourceAttr(doc, 'service.version').value.stringValue, '1.0.40');
+    assert.equal(resourceAttr(doc, 'service.version').value.stringValue, '1.0.41');
     assert.equal(resourceAttr(doc, 'host.name').value.stringValue, 'AKIA[REDACTED]');
     assert.equal(resourceAttr(doc, 'vcs.repository.url.full').value.stringValue, 'https://github.com/example/repo.git');
     assert.equal(text.includes(AKIA), false);

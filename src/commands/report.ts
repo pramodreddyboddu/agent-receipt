@@ -65,10 +65,12 @@ import {
 } from '../lib/report-html.js';
 import {
   SESSION_MANIFEST_NAME,
+  exportProtectedPaths,
   loadSessionManifest,
   locateSessionPackage,
   type SessionManifestReceipt,
 } from '../lib/session-package.js';
+import { assertProtectedOut, OutGuardError, resolveDirOrFileOut } from '../lib/out-guard.js';
 import { sha256FileBytes } from '../lib/share-package.js';
 import {
   createSignatureDocument,
@@ -412,14 +414,7 @@ function sessionFileName(sessionId: string): string {
 }
 
 function resolveReportOut(cwd: string, fileName: string, out?: string): string {
-  if (!out) return join(dirname(receiptsDir(cwd)), fileName);
-  const abs = resolve(cwd, out);
-  const asDir =
-    out.endsWith('/') ||
-    out.endsWith('\\') ||
-    (existsSync(abs) && statSync(abs).isDirectory());
-  if (asDir) return join(abs, fileName);
-  return abs;
+  return resolveDirOrFileOut(cwd, out, fileName, dirname(receiptsDir(cwd)));
 }
 
 function verifyCommandsFor(
@@ -559,11 +554,20 @@ function writeReport(
 ): ReportCommandResult {
   if (!built.length) return emptyResult(1, 'report has no receipts');
   built.sort((a, b) => (a.payload.id < b.payload.id ? -1 : a.payload.id > b.payload.id ? 1 : 0));
-  const htmlPath = resolveReportOut(cwd, fileName, opts.out);
-  for (const source of sourcePaths) {
-    if (resolve(source) === resolve(htmlPath)) {
-      return emptyResult(1, `refusing to overwrite the source receipt: ${htmlPath}`);
+  let htmlPath = '';
+  try {
+    htmlPath = resolveReportOut(cwd, fileName, opts.out);
+    const inputs = sourcePaths.length ? sourcePaths : built.map((item) => item.node.path);
+    assertProtectedOut(htmlPath, exportProtectedPaths(cwd, inputs, { companionJson: false }), 'export');
+  } catch (err) {
+    if (err instanceof OutGuardError) {
+      if (err.message === 'refusing to write the export over the receipt') {
+        return emptyResult(1, `refusing to overwrite the source receipt: ${htmlPath}`);
+      }
+      return emptyResult(1, err.message);
     }
+    const message = err instanceof Error ? err.message : String(err);
+    return emptyResult(1, message);
   }
   const exposure = exposureOf(opts);
   const store = loadTrustedFingerprints(cwd, { extra: opts.trustedKeys });

@@ -42,7 +42,7 @@ npm install -D @pramodreddyboddu/agent-receipt
 ## GitHub Action
 
 Gate a pull request with one `uses:` line. The action runs a pinned
-`agent-receipt` (`1.0.40` by default, never `latest`) and posts a sticky
+`agent-receipt` (`1.0.41` by default, never `latest`) and posts a sticky
 summary comment.
 
 ```yaml
@@ -370,6 +370,8 @@ agent-receipt export --format otlp --session my-session
 
 `--format otlp` (alias `otel`) writes one [OpenTelemetry](docs/otlp.md) trace file. Load it with a collector `otlpjsonfile` receiver and export to Jaeger, Grafana Tempo, Honeycomb, or Datadog. agent-receipt does not push. OTLP and `--format intoto` always redact secrets in commands, arguments, host labels, and tool-call inputs. There is no `--no-redact` on those formats. HTML and Markdown redact only when you pass `--redact`. A tampered receipt exits 2 and writes nothing. The trace does not append the audit log.
 
+`--out` is matched by file identity, not by the path string. A symlinked parent that still names the source receipt, its `.sig.json` sidecar (`foo.md` → `foo.sig.json`), `session-manifest.json`, a packaged receipt, or a packaged signature sidecar is refused, the source bytes stay put, and the exit code is the same non-zero code as the old string guard. A symlink `--out`, including a dangling one, is not followed. HTML and Markdown require a file: a trailing slash or an existing directory is an error. OTLP, intoto, prove, report, and `share --package` still write the default name inside a trailing-slash path or an existing directory. Exporting a session package checks each manifest `sha256` and raw `bytes` hash before it writes. A mismatch exits 2 and leaves no output file.
+
 ### `--base` vs last N commits
 
 On a feature branch, summarize everything since `main` (commits ahead + files):
@@ -503,7 +505,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.40`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.41`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`

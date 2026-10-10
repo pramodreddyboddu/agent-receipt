@@ -207,13 +207,13 @@ describe('v1.0.30 signed one-page report', () => {
 
   it('documents 1.0.30, the report payload, and no new runtime dependencies', () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.40');
+    assert.equal(pkg.version, '1.0.41');
     assert.equal(pkg.dependencies, undefined);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    assert.equal(lock.version, '1.0.40');
-    assert.equal(lock.packages[''].version, '1.0.40');
+    assert.equal(lock.version, '1.0.41');
+    assert.equal(lock.packages[''].version, '1.0.41');
     assert.equal(lock.packages[''].dependencies, undefined);
-    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.40/);
+    assert.match(readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8'), /1\.0\.41/);
     const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     assert.match(changelog, /## \[1\.0\.30\]/);
     assert.match(changelog, /agent-receipt report/);
@@ -297,7 +297,7 @@ describe('v1.0.30 signed one-page report', () => {
     assert.equal(made.code, 0, made.err);
     const body = parseJson(made.out);
     assert.equal(body.command, 'report');
-    assert.equal(body.version, '1.0.40');
+    assert.equal(body.version, '1.0.41');
     assert.equal(body.exitCode, 0);
     assert.equal(body.verdict, 'UNSIGNED');
     assert.equal(body.signed, false);
@@ -319,7 +319,7 @@ describe('v1.0.30 signed one-page report', () => {
     assert.equal(payload.kind, 'agent-receipt-report');
     assert.equal(payload.version, 1);
     assert.equal(payload.renderVersion, 2);
-    assert.equal(payload.cliVersion, '1.0.40');
+    assert.equal(payload.cliVersion, '1.0.41');
     assert.equal(payload.subject, 'receipt');
     assert.equal(payload.session, 's-unsigned');
     assert.equal(payload.manifestSha256, null);

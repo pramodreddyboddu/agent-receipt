@@ -868,24 +868,31 @@ export function buildSessionNodes(
 
   const cycle = new Set<string>();
   const state = new Map<string, 0 | 1 | 2>();
-  const dfs = (id: string, stack: string[]): void => {
-    state.set(id, 1);
-    stack.push(id);
-    const parent = parentOf(id);
-    if (parent && byId.has(parent)) {
+  // Iterative. A parent chain of ~12k receipts overflows a recursive walk.
+  // Each receipt has one parent, so the walk is a path, not a branching DFS.
+  for (const start of sorted) {
+    if ((state.get(start.id) ?? 0) !== 0) continue;
+    const path: string[] = [];
+    const index = new Map<string, number>();
+    let id: string | null = start.id;
+    while (id && (state.get(id) ?? 0) === 0) {
+      state.set(id, 1);
+      index.set(id, path.length);
+      path.push(id);
+      const parent = parentOf(id);
+      if (!parent || !byId.has(parent)) break;
       const seen = state.get(parent) ?? 0;
       if (seen === 1) {
-        const at = stack.indexOf(parent);
-        for (const node of stack.slice(at)) cycle.add(node);
-      } else if (seen === 0) {
-        dfs(parent, stack);
+        const at = index.get(parent);
+        if (at !== undefined) {
+          for (const node of path.slice(at)) cycle.add(node);
+        }
+        break;
       }
+      if (seen === 2) break;
+      id = parent;
     }
-    stack.pop();
-    state.set(id, 2);
-  };
-  for (const row of sorted) {
-    if ((state.get(row.id) ?? 0) === 0) dfs(row.id, []);
+    for (const node of path) state.set(node, 2);
   }
 
   return sorted.map((row) => {
@@ -955,7 +962,15 @@ export function formatSessionTree(
     `${nodes.length} receipt(s)`,
     '',
   ];
-  const walk = (node: SessionNode, indent: string): void => {
+  const stack: Array<{ node: SessionNode; indent: string }> = [];
+  for (let i = roots.length - 1; i >= 0; i -= 1) {
+    const root = roots[i];
+    if (root) stack.push({ node: root, indent: '' });
+  }
+  while (stack.length) {
+    const frame = stack.pop() as { node: SessionNode; indent: string };
+    const node = frame.node;
+    const indent = frame.indent;
     const bits = [
       node.id,
       node.status,
@@ -976,8 +991,11 @@ export function formatSessionTree(
     const tools = toolCallCount(node.path);
     if (tools !== null) bits.push(`tools=${tools}`);
     lines.push(`${indent}- ${bits.join('  ')}`);
-    for (const child of children.get(node.id) ?? []) walk(child, `${indent}  `);
-  };
-  for (const root of roots) walk(root, '');
+    const kids = children.get(node.id) ?? [];
+    for (let i = kids.length - 1; i >= 0; i -= 1) {
+      const child = kids[i];
+      if (child) stack.push({ node: child, indent: `${indent}  ` });
+    }
+  }
   return lines.join('\n');
 }

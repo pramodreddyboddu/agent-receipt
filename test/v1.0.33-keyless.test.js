@@ -422,7 +422,7 @@ describe('v1.0.40 keyless signing', { concurrency: 1 }, () => {
       const report = JSON.parse(created.out);
       assert.equal(report.ok, true);
       assert.equal(report.command, 'attest');
-      assert.equal(report.version, '1.0.40');
+      assert.equal(report.version, '1.0.41');
       assert.equal(report.keyless, true);
       assert.equal(report.signed, true);
       assert.equal(report.certificateIdentity, FILE_SUB);
@@ -708,9 +708,9 @@ describe('v1.0.40 keyless signing', { concurrency: 1 }, () => {
     }
   });
 
-  it('documents 1.0.40 and keeps sign --keyless out of scope', async () => {
+  it('documents 1.0.41 and keeps sign --keyless out of scope', async () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.40');
+    assert.equal(pkg.version, '1.0.41');
     const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     assert.match(changelog, /## \[1\.0\.33\]/);
     assert.match(changelog, /attest --keyless/);

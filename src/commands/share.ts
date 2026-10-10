@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { lstatSync, readFileSync, statSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import { cmdExport } from './export.js';
 import { cmdVerify, reportVerify } from './verify.js';
 import { resolveReceiptPath } from './show.js';
@@ -19,6 +19,13 @@ import {
   riskToGate,
 } from '../lib/gate.js';
 import { recordAuditEvent } from '../lib/audit.js';
+import {
+  assertNotDirectoryPath,
+  assertWritableOutFile,
+  conflictingProtectedPath,
+  sameFileTarget,
+} from '../lib/out-guard.js';
+import { exportProtectedPaths } from '../lib/session-package.js';
 import {
   RECEIPT_HTML_NAME,
   RECEIPT_MD_NAME,
@@ -84,6 +91,46 @@ export interface ShareResult {
 
 function sibling(source: string, suffix: string): string {
   return source.replace(/\.md$/i, '') + suffix;
+}
+
+/** A symlink `--out` is not followed. A directory symlink is left for the caller. */
+function refuseShareSymlink(abs: string): void {
+  let st;
+  try {
+    st = lstatSync(abs);
+  } catch {
+    return;
+  }
+  if (!st.isSymbolicLink()) return;
+  try {
+    if (statSync(abs).isDirectory()) return;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') {
+      throw new Error(`refusing to write through a dangling symlink: ${abs}`);
+    }
+    throw err;
+  }
+  throw new Error(`refusing to write through a symlink: ${abs}`);
+}
+
+function guardShareFile(cwd: string, source: string, abs: string, ownMessage: string): void {
+  assertWritableOutFile(abs);
+  const sourceAbs = resolve(source);
+  const hit = conflictingProtectedPath(
+    abs,
+    exportProtectedPaths(cwd, [sourceAbs], { companionJson: false }),
+  );
+  if (!hit) return;
+  if (sameFileTarget(abs, sourceAbs)) throw new Error(ownMessage);
+  const base = basename(hit);
+  if (base === 'session-manifest.json' || base === 'session-manifest.sig.json') {
+    throw new Error(`share must not overwrite a session package file: ${base}`);
+  }
+  if (base.endsWith('.sig.json')) {
+    throw new Error('share must not overwrite the receipt signature sidecar');
+  }
+  throw new Error(`share must not overwrite a session package file: ${base}`);
 }
 
 function peerPackageTip(packageDir: string, markdownPath: string): string[] {
@@ -240,27 +287,29 @@ export function cmdShare(
   let htmlOut: string;
   let mdOut: string | undefined;
   if (packaging) {
+    if (opts.out) refuseShareSymlink(resolve(cwd, opts.out));
     packageDir = resolveSharePackageDir(cwd, source, opts.out);
     htmlOut = join(packageDir, RECEIPT_HTML_NAME);
     mdOut = join(packageDir, RECEIPT_MD_NAME);
-    if (resolve(htmlOut) === resolve(source) || resolve(mdOut) === resolve(source)) {
+    if (sameFileTarget(htmlOut, source) || sameFileTarget(mdOut, source)) {
       throw new Error('share --package must not overwrite the source receipt.');
     }
   } else {
+    if (opts.out) assertNotDirectoryPath(opts.out);
+    if (typeof opts.md === 'string') assertNotDirectoryPath(opts.md);
     htmlOut = opts.out ? resolve(cwd, opts.out) : sibling(source, '.html');
-    if (resolve(htmlOut) === resolve(source)) {
-      throw new Error('share --out must not overwrite the source receipt.');
-    }
+    guardShareFile(cwd, source, htmlOut, 'share --out must not overwrite the source receipt.');
     if (opts.md) {
       mdOut =
         opts.md === true
           ? sibling(source, redact ? '.redacted.md' : '.export.md')
           : resolve(cwd, opts.md);
-      if (resolve(mdOut) === resolve(source)) {
-        throw new Error(
-          'share --md must not overwrite the source receipt. Pick a different path.',
-        );
-      }
+      guardShareFile(
+        cwd,
+        source,
+        mdOut,
+        'share --md must not overwrite the source receipt. Pick a different path.',
+      );
     }
   }
 

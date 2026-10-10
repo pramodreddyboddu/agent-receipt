@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { color } from '../lib/color.js';
 import { VERSION } from '../lib/version.js';
@@ -23,6 +23,8 @@ import { applyTrust, loadTrustedFingerprints } from '../lib/trust.js';
 import type { FailOnThreshold } from '../lib/risk.js';
 import { renderProveHtml, type ProveHtmlSummary } from '../lib/prove-html.js';
 import { indexLocalReceipts, parseLinkMeta, receiptIntegrity } from '../lib/link.js';
+import { assertProtectedOut, assertWritableOutFile, OutGuardError, resolveDirOrFileOut } from '../lib/out-guard.js';
+import { exportProtectedPaths } from '../lib/session-package.js';
 
 export interface ProveOptions {
   /** One JSON object on stdout. Human banner stays off. */
@@ -265,18 +267,28 @@ function provePageFileName(receiptPath: string, ext: 'md' | 'html' = 'md'): stri
   return `${base}.prove.${ext}`;
 }
 
-function defaultProvePagePath(receiptPath: string, ext: 'md' | 'html' = 'md'): string {
-  return join(dirname(receiptPath), provePageFileName(receiptPath, ext));
-}
-
 /** True when `--out` names a directory (trailing slash or an existing dir). */
 function outIsDirectory(cwd: string, out: string): boolean {
   if (/[/\\]$/.test(out)) return true;
+  const resolved = resolve(cwd, out);
+  let st;
   try {
-    return statSync(resolve(cwd, out)).isDirectory();
+    st = lstatSync(resolved);
   } catch {
     return false;
   }
+  if (st.isSymbolicLink()) {
+    try {
+      return statSync(resolved).isDirectory();
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') {
+        throw new Error(`refusing to write through a dangling symlink: ${resolved}`);
+      }
+      return false;
+    }
+  }
+  return st.isDirectory();
 }
 
 /**
@@ -289,16 +301,26 @@ function resolveProvePageOut(
   out?: string,
   ext: 'md' | 'html' = 'md',
 ): string {
-  if (!out) return defaultProvePagePath(receiptPath, ext);
-  const wantsDir = /[/\\]$/.test(out);
-  const resolved = resolve(cwd, out);
-  if (wantsDir) return join(resolved, provePageFileName(receiptPath, ext));
+  return resolveDirOrFileOut(cwd, out, provePageFileName(receiptPath, ext), dirname(receiptPath));
+}
+
+function guardProveDest(cwd: string, receiptPath: string, dest: string, which: 'page' | 'html'): void {
   try {
-    if (statSync(resolved).isDirectory()) return join(resolved, provePageFileName(receiptPath, ext));
-  } catch {
-    // Missing path is a file. Parent directories are created at write time.
+    assertWritableOutFile(dest);
+    assertProtectedOut(dest, exportProtectedPaths(cwd, [receiptPath], { companionJson: false }), 'export');
+  } catch (err) {
+    if (err instanceof OutGuardError) {
+      if (err.message === 'refusing to write the export over the receipt') {
+        throw new Error(
+          which === 'page'
+            ? 'prove --page must not overwrite the source receipt. Pass a different --out.'
+            : 'prove --html must not overwrite the source receipt. Pass a different --out.',
+        );
+      }
+      throw new Error(err.message);
+    }
+    throw err;
   }
-  return resolved;
 }
 
 function formatSignaturePage(signature: SignatureStatus): string {
@@ -360,11 +382,7 @@ function writeProvePage(cwd: string, report: ProveReport, out?: string): string 
     throw new Error('prove --page needs a receipt path.');
   }
   const dest = resolveProvePageOut(cwd, report.path, out);
-  if (resolve(dest) === resolve(report.path)) {
-    throw new Error(
-      'prove --page must not overwrite the source receipt. Pass a different --out.',
-    );
-  }
+  guardProveDest(cwd, report.path, dest, 'page');
   mkdirSync(dirname(dest), { recursive: true });
   const toolCalls = parseReceiptGlance(report.path).toolCalls;
   writeFileSync(dest, renderProvePage(report, toolCalls), 'utf8');
@@ -395,11 +413,7 @@ function writeProveHtml(cwd: string, report: ProveReport, out?: string): string 
     throw new Error('prove --html needs a receipt path.');
   }
   const dest = resolveProvePageOut(cwd, report.path, out, 'html');
-  if (resolve(dest) === resolve(report.path)) {
-    throw new Error(
-      'prove --html must not overwrite the source receipt. Pass a different --out.',
-    );
-  }
+  guardProveDest(cwd, report.path, dest, 'html');
   mkdirSync(dirname(dest), { recursive: true });
   writeFileSync(dest, renderProveHtml(report, htmlSummary(cwd, report.path)), 'utf8');
   return dest;
