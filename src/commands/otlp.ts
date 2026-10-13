@@ -22,8 +22,8 @@ import { receiptsDir } from '../lib/receipt-index.js';
 import {
   exportProtectedPaths,
   isRegularFile,
+  loadSessionManifest,
   locateSessionPackage,
-  parseSessionManifest,
   SessionPackageUsageError,
 } from '../lib/session-package.js';
 import { sessionPackageIntegrityReasons } from './session-import.js';
@@ -170,7 +170,7 @@ function sessionPackageSource(cwd: string, pathArg: string): Source {
   if (!located.manifestExists) fail(`session package not found: ${pathArg}`);
   let manifest;
   try {
-    manifest = parseSessionManifest(JSON.parse(readFileSync(located.manifestPath, 'utf8')));
+    manifest = loadSessionManifest(located.manifestPath);
   } catch (err) {
     if (err instanceof SessionPackageUsageError) fail(err.message);
     const detail = err instanceof Error ? err.message : String(err);

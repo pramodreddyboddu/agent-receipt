@@ -320,6 +320,7 @@ export function cmdShare(
     format: 'html',
     quiet: true,
     audit: false,
+    allowShareReceipt: packaging,
   });
 
   let markdownPath: string | null = null;
@@ -333,6 +334,7 @@ export function cmdShare(
       format: 'markdown',
       quiet: true,
       audit: false,
+      allowShareReceipt: packaging,
     });
     markdownPath = md.path;
     sigPath = md.sigPath;

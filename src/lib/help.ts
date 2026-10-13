@@ -527,7 +527,14 @@ A mismatch exits 2 and writes nothing.
 Span \`kind\` and \`status.code\` are integers (1 internal, 3 client; 1 ok,
 2 error). \`--out\` is compared by file identity. It will not replace the
 receipt, its companion \`.json\`, its \`.sig.json\` sidecar, or a session
-package file such as \`session-manifest.json\`. A symlinked directory that
+package file such as \`session-manifest.json\`. It also refuses another
+receipt's \`.md\` or \`.sig.json\`, and a share package's \`receipt.md\`,
+\`receipt.sig.json\`, \`manifest.json\`, and \`manifest.sig.json\` (including
+\`MANIFEST.JSON\` on a case-folding volume). A companion \`.json\` is protected
+only when the sibling is a receipt, so \`README.json\` next to a plain
+\`README.md\` is allowed. The match is \`realpath\` of the parent plus the
+file name, \`dev\`+\`ino\` when the file exists, and parent \`dev\`+\`ino\`
+plus the file name when it does not. A symlinked directory that
 still names that receipt is refused. A symlink \`--out\`, including a dangling one, is not
 followed. HTML and Markdown require a file path (a trailing slash or an
 existing directory is an error). OTLP and intoto still place the default

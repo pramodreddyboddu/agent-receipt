@@ -64,8 +64,8 @@ import { loadKeys, type LoadedKeys } from '../lib/sign.js';
 import {
   exportProtectedPaths,
   isRegularFile,
+  loadSessionManifest,
   locateSessionPackage,
-  parseSessionManifest,
   SessionPackageUsageError,
 } from '../lib/session-package.js';
 import { assertProtectedOut, assertWritableOutFile, OutGuardError, resolveDirOrFileOut } from '../lib/out-guard.js';
@@ -471,7 +471,7 @@ function receiptSource(cwd: string, pathArg: string | undefined, session: string
     if (located.manifestExists && (located.inputKind === 'directory' || located.inputKind === 'manifest')) {
       let manifest;
       try {
-        manifest = parseSessionManifest(JSON.parse(readFileSync(located.manifestPath, 'utf8')));
+        manifest = loadSessionManifest(located.manifestPath);
       } catch (err) {
         if (err instanceof SessionPackageUsageError) fail(err.message);
         const detail = err instanceof Error ? err.message : String(err);

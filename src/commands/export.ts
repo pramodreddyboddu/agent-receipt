@@ -29,6 +29,11 @@ export interface ExportOptions {
    * Share passes false — it records one `share` event for the handoff.
    */
   audit?: boolean;
+  /**
+   * `share --package` refreshes `receipt.md` inside the package it owns.
+   * Not a CLI flag.
+   */
+  allowShareReceipt?: boolean;
 }
 
 export interface ExportResult {
@@ -82,16 +87,17 @@ export function cmdExport(
   const format: 'html' | 'markdown' =
     fmtRaw === 'md' || fmtRaw === 'markdown' ? 'markdown' : 'html';
 
+  const guardOpts = opts.allowShareReceipt ? { allowShareReceipt: true as const } : undefined;
   let outPath: string;
   if (opts.out) {
-    outPath = resolveFileOut(cwd, opts.out);
+    outPath = resolveFileOut(cwd, opts.out, guardOpts);
   } else {
     outPath = defaultOutPath(source, format);
     // If redacting to markdown without --out and source would collide, add suffix
     if (format === 'markdown' && !opts.redact) {
       outPath = source.replace(/\.md$/i, '') + '.export.md';
     }
-    outPath = resolveFileOut(cwd, outPath);
+    outPath = resolveFileOut(cwd, outPath, guardOpts);
   }
   assertProtectedOut(
     outPath,
