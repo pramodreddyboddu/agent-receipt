@@ -25,6 +25,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cmdAttest } from '../dist/commands/attest.js';
 import { cmdOtlpExport } from '../dist/commands/otlp.js';
+import { resetSessionManifestReads, sessionManifestReadCount } from '../dist/lib/session-package.js';
 import { writeExclusiveFile, writeExclusiveTemp } from '../dist/lib/exclusive-write.js';
 import { appendHashFooter } from '../dist/lib/hash.js';
 
@@ -340,7 +341,7 @@ describe('v1.0.41 --out identity guard', () => {
     assert.equal(body.receipts.some((row) => row.cycle), false);
   });
 
-  it('exports a 2000-member package in under 10 seconds', { timeout: 180000 }, () => {
+  it('reads a 2000-member session manifest once per export', { timeout: 180000 }, () => {
     const dir = gitRepo();
     const outDir = join(dir, '.agent-receipt', 'receipts');
     mkdirSync(outDir, { recursive: true });
@@ -360,14 +361,13 @@ describe('v1.0.41 --out identity guard', () => {
     );
     assert.equal(packed.receiptCount, count);
     const out = join(dir, 'fast.otlp.json');
-    const started = Date.now();
-    const result = cli(dir, ['export', '--format', 'otlp', packed.packagePath, '--out', out], 64 * 1024 * 1024);
-    const elapsed = Date.now() - started;
-    assert.equal(result.code, 0, result.err.slice(0, 800));
-    assert.ok(elapsed < 10000, `otlp export took ${elapsed}ms`);
+    resetSessionManifestReads();
+    const code = cmdOtlpExport(dir, packed.packagePath, { out });
+    assert.equal(code, 0);
+    assert.equal(sessionManifestReadCount(), 1);
     const trace = JSON.parse(readFileSync(out, 'utf8'));
     assert.equal(trace.resourceSpans.length, 1);
-    assert.equal(result.out.includes('wrote'), true);
+    assert.equal(trace.resourceSpans[0].scopeSpans[0].spans.length > 0, true);
   });
 
   it('refuses --out that would overwrite a local receipt .sig.json sidecar', () => {

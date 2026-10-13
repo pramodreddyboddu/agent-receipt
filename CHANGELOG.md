@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.42] — 2026-10-13
+
+### Fixed
+
+- `--out` refuses a share package `manifest.json` or `manifest.sig.json` when the name differs only by case (`MANIFEST.JSON`, `MANIFEST.SIG.JSON`). The check case-folds the basename and uses the same identity test as v1.0.41: `realpath` of the parent, and `dev`+`ino` when the target already exists. A case-sensitive volume still allows a distinct name. The command refuses with the existing message and exit code and writes nothing.
+- `--out` refuses another receipt's `.md` and `.sig.json`, and a share package's `receipt.md` and `receipt.sig.json`, with that same identity check. The bytes stay put.
+- A Markdown file protects the matching `.json` name only when that sibling is a receipt: the Markdown has the receipt marker, the `.json` parses as a receipt companion (`integrity` sha256), or the path is a share `receipt.md`. `README.json` next to a plain `README.md` is written.
+- The identity check compares parent `dev`+`ino` and the file name when the destination file is not on disk yet, so a bind-mounted parent that names a missing companion is refused.
+- Exporting a session package still reads `session-manifest.json` once per package. The package-export check counts that read instead of bounding wall-clock time.
+
+### Notes
+
+- Package version bumped to `1.0.42`. Pin comments that track the current cut are `v1.0.42`. The action default pin is `1.0.42`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Deferred: a text `session` view of a ~50k-event tree still builds one string and can throw `Invalid string length`. Chunked output is left for a later cut.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
+
 ## [1.0.41] — 2026-10-07
 
 ### Fixed

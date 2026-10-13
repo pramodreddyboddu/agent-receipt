@@ -5,13 +5,16 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
-import { ByteLimitError, assertReadableSize } from './byte-limit.js';
-import { isInsideSessionPackage, isProveOnePagerName, isSessionPackageDirName } from './receipt.js';
+import { ByteLimitError, assertReadableSize, DEFAULT_MAX_RECEIPT_BYTES } from './byte-limit.js';
+import { isReceiptDocument } from './link.js';
+import { isInsideSessionPackage, isInsideSharePackage, isProveOnePagerName, isSessionPackageDirName } from './receipt.js';
 import { receiptsDir } from './receipt-index.js';
 import { publishRedactedReceipt } from './redact.js';
 import {
@@ -346,6 +349,68 @@ function addUnique(out: string[], seen: Set<string>, target: string | null | und
   out.push(abs);
 }
 
+/** Companion JSON larger than this is not inspected to decide a refusal. */
+const COMPANION_JSON_CAP = 2 * 1024 * 1024;
+
+function readRegularText(abs: string, maxBytes: number): string | null {
+  let st: ReturnType<typeof lstatSync>;
+  try {
+    st = lstatSync(abs);
+  } catch {
+    return null;
+  }
+  if (st.isSymbolicLink() || !st.isFile() || st.size > maxBytes) return null;
+  try {
+    return readFileSync(abs, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/** Markdown with the receipt marker (`## Session`, Version, title or hash). */
+function fileIsReceiptMarkdown(abs: string): boolean {
+  const text = readRegularText(abs, DEFAULT_MAX_RECEIPT_BYTES);
+  if (text === null) return false;
+  return isReceiptDocument(text);
+}
+
+/**
+ * Capture companion JSON: a `version` string and `integrity.algorithm`
+ * `sha256` with a 64-hex digest. Anything else (a plain README sidecar)
+ * is not a receipt.
+ */
+function fileIsReceiptCompanionJson(abs: string): boolean {
+  const text = readRegularText(abs, COMPANION_JSON_CAP);
+  if (text === null) return false;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    const doc = parsed as Record<string, unknown>;
+    if (typeof doc.version !== 'string' || doc.version.trim() === '') return false;
+    const integrity = doc.integrity;
+    if (!integrity || typeof integrity !== 'object' || Array.isArray(integrity)) return false;
+    const integ = integrity as Record<string, unknown>;
+    return (
+      integ.algorithm === 'sha256' &&
+      typeof integ.sha256 === 'string' &&
+      /^[0-9a-fA-F]{64}$/.test(integ.sha256)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when `mdAbs` is a receipt sibling worth protecting: the Markdown
+ * has the receipt marker, the matching `.json` is a receipt companion, or
+ * the path is a share package `receipt.md`.
+ */
+function countsAsReceiptCompanion(mdAbs: string, name: string): boolean {
+  if (name.toLowerCase() === 'receipt.md' && isInsideSharePackage(mdAbs)) return true;
+  if (fileIsReceiptMarkdown(mdAbs)) return true;
+  return fileIsReceiptCompanionJson(mdAbs.replace(/\.md$/i, '.json'));
+}
+
 /**
  * Receipts, companion `.json` files, local `.sig.json` sidecars, and
  * session-package source files that `--out` must not replace.
@@ -353,8 +418,15 @@ function addUnique(out: string[], seen: Set<string>, target: string | null | und
  * input even when that file is not on disk yet
  * (`foo.md` → `foo.json`, `foo.md` → `foo.sig.json`).
  *
- * Each session package manifest is loaded once per call. Walking every
- * member and reading the manifest again is O(N²) on a large package.
+ * Another Markdown file in that directory protects its `.md` and `.sig.json`
+ * (and its `.json`, when companion JSON is in scope) only when that sibling
+ * is a receipt. A plain `README.md` does not protect `README.json`. Prove
+ * one-pagers are skipped. Files inside a session package are not scanned
+ * here; the manifest lists them.
+ *
+ * Each session package manifest is loaded once per call. The loader caches
+ * one stat-keyed copy so a second load in the same command does not read
+ * the file again.
  */
 export function exportProtectedPaths(
   cwd: string,
@@ -402,9 +474,10 @@ export function exportProtectedPaths(
     return false;
   };
 
-  // One directory listing per folder. Protects `last --out <other>.json`
-  // from replacing a different receipt's companion in the same directory.
-  const addSiblingCompanionJson = (dir: string) => {
+  // One directory listing per folder. A real receipt protects its `.md`
+  // and `.sig.json`. Its `.json` is protected only when the caller asked
+  // for companion JSON. A plain Markdown file does not protect a name.
+  const addSiblingReceiptCompanions = (dir: string, companionJson: boolean) => {
     const key = resolve(dir);
     if (companionDirs.has(key)) return;
     companionDirs.add(key);
@@ -416,7 +489,11 @@ export function exportProtectedPaths(
     }
     for (const name of names) {
       if (!/\.md$/i.test(name) || isProveOnePagerName(name)) continue;
-      addUnique(out, seen, join(key, name.replace(/\.md$/i, '.json')));
+      const mdAbs = join(key, name);
+      if (!countsAsReceiptCompanion(mdAbs, name)) continue;
+      addUnique(out, seen, mdAbs);
+      addUnique(out, seen, signaturePathFor(mdAbs));
+      if (companionJson) addUnique(out, seen, mdAbs.replace(/\.md$/i, '.json'));
     }
   };
 
@@ -429,7 +506,9 @@ export function exportProtectedPaths(
     }
     if (opts.companionJson && /\.md$/i.test(abs)) {
       addUnique(out, seen, abs.replace(/\.md$/i, '.json'));
-      if (!covered && !isInsideSessionPackage(abs)) addSiblingCompanionJson(dirname(abs));
+    }
+    if (/\.md$/i.test(abs) && !covered && !isInsideSessionPackage(abs)) {
+      addSiblingReceiptCompanions(dirname(abs), Boolean(opts.companionJson));
     }
     if (covered) continue;
     const located = locateSessionPackage(cwd, input);
@@ -736,6 +815,42 @@ export function isSafeReceiptRel(rel: string): boolean {
   return isSafeReceiptBasename(base);
 }
 
+/**
+ * Disk reads of `session-manifest.json` performed by `loadSessionManifest`.
+ * A cache hit does not increment. Tests reset this and assert one read per
+ * package export. The cache key is realpath plus dev, ino, mtime, and size,
+ * so a rewritten manifest is read again.
+ */
+let sessionManifestReads = 0;
+const manifestCache: { token: string; manifest: SessionManifest }[] = [];
+const MANIFEST_CACHE_CAP = 4;
+
+export function resetSessionManifestReads(): void {
+  sessionManifestReads = 0;
+}
+
+export function sessionManifestReadCount(): number {
+  return sessionManifestReads;
+}
+
+function manifestStatToken(manifestPath: string): string | null {
+  try {
+    const st = statSync(manifestPath);
+    if (!st.isFile()) return null;
+    let real: string;
+    try {
+      real = realpathSync(manifestPath);
+    } catch {
+      real = resolve(manifestPath);
+    }
+    const stamped = st as { mtimeNs?: bigint; mtimeMs: number };
+    const mtime = typeof stamped.mtimeNs === 'bigint' ? stamped.mtimeNs.toString() : String(stamped.mtimeMs);
+    return `${real}|${st.dev}|${st.ino}|${mtime}|${st.size}`;
+  } catch {
+    return null;
+  }
+}
+
 export function loadSessionManifest(
   manifestPath: string,
   maxBytes?: number,
@@ -743,8 +858,14 @@ export function loadSessionManifest(
   if (maxBytes !== undefined) {
     assertReadableSize(manifestPath, maxBytes, 'session-manifest.json', '--max-manifest-bytes');
   }
+  const token = manifestStatToken(manifestPath);
+  if (token) {
+    const hit = manifestCache.find((entry) => entry.token === token);
+    if (hit) return hit.manifest;
+  }
   let text: string;
   try {
+    sessionManifestReads += 1;
     text = readFileSync(manifestPath, 'utf8');
   } catch (err) {
     if (err instanceof ByteLimitError) throw err;
@@ -757,7 +878,12 @@ export function loadSessionManifest(
   } catch {
     throw new SessionPackageUsageError('session-manifest.json is malformed JSON');
   }
-  return parseSessionManifest(parsed);
+  const manifest = parseSessionManifest(parsed);
+  if (token) {
+    manifestCache.push({ token, manifest });
+    if (manifestCache.length > MANIFEST_CACHE_CAP) manifestCache.shift();
+  }
+  return manifest;
 }
 
 /**

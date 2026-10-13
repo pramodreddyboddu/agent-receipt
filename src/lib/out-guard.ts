@@ -8,9 +8,11 @@
  *
  * Compare `realpath(dirname(out)) + basename(out)` with the source.
  * When the destination already exists, also compare `stat` dev+ino.
- * When it does not, and the parent volume folds case, compare the parent
- * dev+ino plus a case-folded basename. Darwin and win32 always fold.
- * Other platforms probe one existing name in the parent directory.
+ * When both parents are the same directory (parent `dev`+`ino`), an exact
+ * basename matches even if `realpath` did not collapse a bind mount and the
+ * file is not on disk yet. A case-folded basename matches only when that
+ * volume folds case. Darwin and win32 always fold. Other platforms probe
+ * one existing name in the parent directory.
  */
 import { lstatSync, readdirSync, realpathSync, statSync, type Stats } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -49,19 +51,48 @@ function isDangling(abs: string): boolean {
 }
 
 /**
+ * Optional test hook. Production callers omit it and probe the volume.
+ * `foldsCase: true` treats the parent as case-insensitive without a probe.
+ * `foldsCase: false` treats it as case-sensitive even on darwin and win32.
+ */
+export interface OutGuardOptions {
+  foldsCase?: boolean;
+  /**
+   * `share --package` creates and refreshes `receipt.md` and
+   * `receipt.sig.json`. Other commands still refuse those names.
+   * Manifest files stay refused.
+   */
+  allowShareReceipt?: boolean;
+}
+
+/**
+ * Share package files `--out` must not replace. Compared case-folded.
+ * `receipt.html` is not in this list: the HTML body is unsigned.
+ * Manifest names are refused even when the file is not on disk yet.
+ * `receipt.md` and `receipt.sig.json` are refused once that file exists
+ * (`share --package` creates them). A case variant is refused either way
+ * on a volume that folds case, because that name is the same file.
+ */
+const SHARE_MANIFEST_FILES = ['manifest.json', 'manifest.sig.json'];
+const SHARE_RECEIPT_FILES = ['receipt.md', 'receipt.sig.json'];
+const SHARE_PACKAGE_FILES = [...SHARE_MANIFEST_FILES, ...SHARE_RECEIPT_FILES];
+
+/**
  * Refuse a symlink at `abs`, including a dangling one. Do not follow it.
  * A directory is refused unless the caller is about to place a file inside it.
  * A missing path is allowed: the caller creates the file.
- * A share package `manifest.json` (and `manifest.sig.json`) is refused.
+ * A share package manifest, its signature, `receipt.md`, and `receipt.sig.json`
+ * are refused, including a basename that differs only by case on a volume
+ * that folds case.
  */
-export function assertWritableOutFile(abs: string): void {
+export function assertWritableOutFile(abs: string, opts?: OutGuardOptions): void {
   let st: Stats;
   try {
     st = lstatSync(abs);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') {
-      refuseSharePackageManifest(abs);
+      refuseSharePackageFile(abs, opts);
       return;
     }
     const detail = err instanceof Error ? err.message : String(err);
@@ -78,21 +109,55 @@ export function assertWritableOutFile(abs: string): void {
   if (st.isDirectory()) {
     throw new OutGuardError(`--out is a directory (${abs}). Pass a file path.`);
   }
-  refuseSharePackageManifest(abs);
+  refuseSharePackageFile(abs, opts);
 }
 
-/** `foo.share/manifest.json` and its signature sidecar. The path string counts, and so does a resolved parent. */
-function isSharePackageManifest(abs: string): boolean {
+function pathExists(abs: string): boolean {
+  try {
+    lstatSync(abs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `foo.share/manifest.json`, `manifest.sig.json`, `receipt.md`, and
+ * `receipt.sig.json`. The path string counts, and so does a resolved parent.
+ * An exact manifest name is refused even when the parent directory does not
+ * exist yet. An exact `receipt.md` or `receipt.sig.json` that is not on disk
+ * yet is allowed so `share --package` can create it. A later `share --package`
+ * may refresh that file. Every other command refuses it. A case variant is
+ * refused when the identity check matches (same inode, or a case-folding parent).
+ */
+function refuseSharePackageFile(abs: string, opts?: OutGuardOptions): void {
+  const foldsCase = opts?.foldsCase;
   const base = basename(abs);
-  if (base !== 'manifest.json' && base !== 'manifest.sig.json') return false;
-  if (/\.share$/i.test(basename(dirname(abs)))) return true;
-  const realParent = safeRealpath(dirname(abs));
-  return Boolean(realParent && /\.share$/i.test(basename(realParent)));
-}
-
-function refuseSharePackageManifest(abs: string): void {
-  if (!isSharePackageManifest(abs)) return;
-  throw new OutGuardError(`refusing to write over a share package file: ${basename(abs)}`);
+  const parent = dirname(abs);
+  const parentLooksShare = /\.share$/i.test(basename(parent));
+  const realParent = safeRealpath(parent);
+  const realLooksShare = Boolean(realParent && /\.share$/i.test(basename(realParent)));
+  if (!parentLooksShare && !realLooksShare) return;
+  const canonical = SHARE_PACKAGE_FILES.find((name) => name === base.toLowerCase());
+  if (!canonical) return;
+  if (opts?.allowShareReceipt && SHARE_RECEIPT_FILES.includes(canonical)) return;
+  if (SHARE_MANIFEST_FILES.includes(canonical) && base === canonical) {
+    throw new OutGuardError(`refusing to write over a share package file: ${base}`);
+  }
+  const dirs = new Set<string>();
+  if (realParent && realLooksShare) dirs.add(realParent);
+  if (parentLooksShare) dirs.add(parent);
+  for (const dir of dirs) {
+    const canonicalPath = join(dir, canonical);
+    if (!sameFileTarget(abs, canonicalPath, foldsCase)) continue;
+    const creatingReceipt =
+      SHARE_RECEIPT_FILES.includes(canonical) &&
+      base === canonical &&
+      !pathExists(canonicalPath) &&
+      !pathExists(abs);
+    if (creatingReceipt) continue;
+    throw new OutGuardError(`refusing to write over a share package file: ${base}`);
+  }
 }
 
 function safeRealpath(target: string): string | null {
@@ -169,8 +234,9 @@ function sameInode(a: string, b: string): boolean {
  * True when writing `outAbs` would replace `sourceAbs`.
  * `sourceAbs` may be missing (a companion path that is not on disk yet).
  * The check still matches that path once both parents resolve.
+ * `foldsCase`, when passed, skips the volume probe.
  */
-export function sameFileTarget(outAbs: string, sourceAbs: string): boolean {
+export function sameFileTarget(outAbs: string, sourceAbs: string, foldsCase?: boolean): boolean {
   const outResolved = resolvedFile(outAbs);
   const sourceResolved = resolvedFile(sourceAbs);
   const sourceReal = safeRealpath(sourceAbs);
@@ -187,7 +253,6 @@ export function sameFileTarget(outAbs: string, sourceAbs: string): boolean {
       ? dirname(sourceResolved)
       : null;
   if (!parentReal || !sourceParent) return false;
-  if (!directoryFoldsCase(parentReal)) return false;
   try {
     const parentOut = statSync(parentReal);
     const parentSrc = statSync(sourceParent);
@@ -197,6 +262,9 @@ export function sameFileTarget(outAbs: string, sourceAbs: string): boolean {
   }
   const outBase = basename(outResolved ?? outAbs);
   const sourceBase = basename(sourceReal ?? sourceResolved ?? sourceAbs);
+  if (outBase === sourceBase) return true;
+  const folds = foldsCase !== undefined ? foldsCase : directoryFoldsCase(parentReal);
+  if (!folds) return false;
   return outBase.toLowerCase() === sourceBase.toLowerCase();
 }
 
@@ -231,10 +299,10 @@ export function assertProtectedOut(outAbs: string, protectedPaths: string[], nou
  * Resolve a `--out` that must be a file. A trailing separator or an
  * existing directory is an error. A symlink, dangling or not, is an error.
  */
-export function resolveFileOut(cwd: string, out: string): string {
+export function resolveFileOut(cwd: string, out: string, opts?: OutGuardOptions): string {
   assertNotDirectoryPath(out);
   const abs = resolve(cwd, out);
-  assertWritableOutFile(abs);
+  assertWritableOutFile(abs, opts);
   return abs;
 }
 
