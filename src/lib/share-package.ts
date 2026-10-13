@@ -72,8 +72,20 @@ export function resolveSharePackageDir(
   return defaultSharePackageDir(sourcePath);
 }
 
+/**
+ * A raw read of `session-manifest.json` that did not go through the session
+ * manifest cache. `session-package` registers this so the read counter sees
+ * every byte load. Share `manifest.json` is not counted.
+ */
+let sessionManifestByteRead: ((filePath: string) => void) | null = null;
+
+export function noteSessionManifestByteRead(hook: ((filePath: string) => void) | null): void {
+  sessionManifestByteRead = hook;
+}
+
 /** SHA-256 of raw file bytes (not the receipt canonical body). */
 export function sha256FileBytes(filePath: string): string {
+  if (basename(filePath) === 'session-manifest.json') sessionManifestByteRead?.(filePath);
   return createHash('sha256').update(readFileSync(filePath)).digest('hex');
 }
 

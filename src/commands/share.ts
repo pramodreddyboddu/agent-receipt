@@ -24,6 +24,7 @@ import {
   assertWritableOutFile,
   conflictingProtectedPath,
   sameFileTarget,
+  sharePackageOverwriteMessage,
 } from '../lib/out-guard.js';
 import { exportProtectedPaths } from '../lib/session-package.js';
 import {
@@ -123,6 +124,8 @@ function guardShareFile(cwd: string, source: string, abs: string, ownMessage: st
   );
   if (!hit) return;
   if (sameFileTarget(abs, sourceAbs)) throw new Error(ownMessage);
+  const shareMessage = sharePackageOverwriteMessage(hit);
+  if (shareMessage) throw new Error(shareMessage);
   const base = basename(hit);
   if (base === 'session-manifest.json' || base === 'session-manifest.sig.json') {
     throw new Error(`share must not overwrite a session package file: ${base}`);

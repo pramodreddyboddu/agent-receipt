@@ -530,9 +530,19 @@ receipt, its companion \`.json\`, its \`.sig.json\` sidecar, or a session
 package file such as \`session-manifest.json\`. It also refuses another
 receipt's \`.md\` or \`.sig.json\`, and a share package's \`receipt.md\`,
 \`receipt.sig.json\`, \`manifest.json\`, and \`manifest.sig.json\` (including
-\`MANIFEST.JSON\` on a case-folding volume). A companion \`.json\` is protected
+\`MANIFEST.JSON\` on a case-folding volume). On a case-folding volume the
+fold also maps long s (U+017F) and dotless i (U+0131), so \`manifeſt.json\`
+and \`receıpt.md\` are those names. A hardlink or bind-mount of one of those
+share files is refused when the \`*.share\` directory is next to an input,
+or the input is that directory. Share files in other directories are not
+scanned. The name check still refuses those names inside the \`*.share\`
+directory, including a \`manifest.json\` that is not on disk yet.
+\`share --package\` may still create and refresh \`receipt.md\` and
+\`receipt.sig.json\` in that package. An alias at another path is refused.
+A companion \`.json\` is protected
 only when the sibling is a receipt, so \`README.json\` next to a plain
-\`README.md\` is allowed. The match is \`realpath\` of the parent plus the
+\`README.md\` is allowed. A README that only quotes a receipt inside a
+fence does not protect \`README.json\`. The match is \`realpath\` of the parent plus the
 file name, \`dev\`+\`ino\` when the file exists, and parent \`dev\`+\`ino\`
 plus the file name when it does not. A symlinked directory that
 still names that receipt is refused. A symlink \`--out\`, including a dangling one, is not

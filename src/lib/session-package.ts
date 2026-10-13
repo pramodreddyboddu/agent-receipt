@@ -14,7 +14,7 @@ import {
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { ByteLimitError, assertReadableSize, DEFAULT_MAX_RECEIPT_BYTES } from './byte-limit.js';
 import { isReceiptDocument } from './link.js';
-import { isInsideSessionPackage, isInsideSharePackage, isProveOnePagerName, isSessionPackageDirName } from './receipt.js';
+import { isInsideSessionPackage, isInsideSharePackage, isProveOnePagerName, isSessionPackageDirName, isSharePackageDirName } from './receipt.js';
 import { receiptsDir } from './receipt-index.js';
 import { publishRedactedReceipt } from './redact.js';
 import {
@@ -24,7 +24,8 @@ import {
   verifySignature,
   writeSignatureDocument,
 } from './sign.js';
-import { sha256FileBytes } from './share-package.js';
+import { noteSessionManifestByteRead } from './share-package.js';
+import { directoryFoldsCase, foldCaseName, SHARE_PACKAGE_FILE_NAMES } from './out-guard.js';
 import { VERSION } from './version.js';
 
 /** Manifest `kind`. Peers reject anything else. */
@@ -223,7 +224,7 @@ export function signSessionManifest(
     if (existsSync(sigPath)) unlinkSync(sigPath);
     return { sigPath: null };
   }
-  const hex = sha256FileBytes(manifestPath);
+  const hex = sessionManifestSha256(manifestPath);
   const doc = createSignatureDocument(hex, keys);
   writeSignatureDocument(sigPath, doc);
   return { sigPath };
@@ -367,11 +368,42 @@ function readRegularText(abs: string, maxBytes: number): string | null {
   }
 }
 
+/**
+ * Blank a column-0 (or up to three spaces) fenced region so a README that
+ * only quotes a receipt does not count as one. The fence lines themselves
+ * become blank. A receipt's own headings sit outside the fences.
+ */
+function withoutColumnZeroFences(text: string): string {
+  const lines = text.split('\n');
+  const out: string[] = [];
+  let fence: { ch: string; len: number } | null = null;
+  for (const raw of lines) {
+    const line = raw.replace(/\r$/, '');
+    const match = /^ {0,3}(```+|~~~+)(.*)$/.exec(line);
+    if (match) {
+      const ch = match[1][0];
+      const len = match[1].length;
+      if (!fence) {
+        fence = { ch, len };
+        out.push('');
+        continue;
+      }
+      if (fence.ch === ch && len >= fence.len && match[2].trim() === '') {
+        fence = null;
+        out.push('');
+        continue;
+      }
+    }
+    out.push(fence ? '' : raw);
+  }
+  return out.join('\n');
+}
+
 /** Markdown with the receipt marker (`## Session`, Version, title or hash). */
 function fileIsReceiptMarkdown(abs: string): boolean {
   const text = readRegularText(abs, DEFAULT_MAX_RECEIPT_BYTES);
   if (text === null) return false;
-  return isReceiptDocument(text);
+  return isReceiptDocument(withoutColumnZeroFences(text));
 }
 
 /**
@@ -406,7 +438,9 @@ function fileIsReceiptCompanionJson(abs: string): boolean {
  * the path is a share package `receipt.md`.
  */
 function countsAsReceiptCompanion(mdAbs: string, name: string): boolean {
-  if (name.toLowerCase() === 'receipt.md' && isInsideSharePackage(mdAbs)) return true;
+  if (foldCaseName(name) === 'receipt.md' && isInsideSharePackage(mdAbs)) {
+    if (name.toLowerCase() === 'receipt.md' || directoryFoldsCase(dirname(mdAbs))) return true;
+  }
   if (fileIsReceiptMarkdown(mdAbs)) return true;
   return fileIsReceiptCompanionJson(mdAbs.replace(/\.md$/i, '.json'));
 }
@@ -427,6 +461,12 @@ function countsAsReceiptCompanion(mdAbs: string, name: string): boolean {
  * Each session package manifest is loaded once per call. The loader caches
  * one stat-keyed copy so a second load in the same command does not read
  * the file again.
+ *
+ * A `*.share` directory next to an input, or an input that is itself a
+ * `*.share` directory, contributes its package files. A hardlink of one of
+ * those files is the same `dev`+`ino`. Share directories elsewhere are not
+ * scanned. The four canonical names are included when the directory exists,
+ * including a manifest that is not on disk yet.
  */
 export function exportProtectedPaths(
   cwd: string,
@@ -440,6 +480,42 @@ export function exportProtectedPaths(
   /** Absolute paths added from a package manifest. Later inputs skip lookup. */
   const coveredByPackage = new Set<string>();
   const companionDirs = new Set<string>();
+  const scannedShareRoots = new Set<string>();
+  const protectedShareDirs = new Set<string>();
+
+  const addSharePackageDir = (shareDir: string) => {
+    const key = resolve(shareDir);
+    if (protectedShareDirs.has(key)) return;
+    if (!isSharePackageDirName(basename(key))) return;
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(key);
+    } catch {
+      return;
+    }
+    if (!st.isDirectory()) return;
+    protectedShareDirs.add(key);
+    for (const name of SHARE_PACKAGE_FILE_NAMES) {
+      addUnique(out, seen, join(key, name));
+    }
+  };
+
+  const scanForSharePackages = (dir: string) => {
+    const key = resolve(dir);
+    if (scannedShareRoots.has(key)) return;
+    scannedShareRoots.add(key);
+    if (isSharePackageDirName(basename(key))) addSharePackageDir(key);
+    let names: string[];
+    try {
+      names = readdirSync(key);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (!isSharePackageDirName(name)) continue;
+      addSharePackageDir(join(key, name));
+    }
+  };
 
   const markCovered = (target: string) => {
     const absTarget = resolve(target);
@@ -510,6 +586,8 @@ export function exportProtectedPaths(
     if (/\.md$/i.test(abs) && !covered && !isInsideSessionPackage(abs)) {
       addSiblingReceiptCompanions(dirname(abs), Boolean(opts.companionJson));
     }
+    scanForSharePackages(dirname(abs));
+    if (isSharePackageDirName(basename(abs))) scanForSharePackages(abs);
     if (covered) continue;
     const located = locateSessionPackage(cwd, input);
     if (located.manifestExists) addPackage(located.packageDir);
@@ -816,21 +894,47 @@ export function isSafeReceiptRel(rel: string): boolean {
 }
 
 /**
- * Disk reads of `session-manifest.json` performed by `loadSessionManifest`.
- * A cache hit does not increment. Tests reset this and assert one read per
- * package export. The cache key is realpath plus dev, ino, mtime, and size,
- * so a rewritten manifest is read again.
+ * Disk reads of `session-manifest.json` bytes. Parse and raw hash share one
+ * cache. A cache hit does not increment. `sha256FileBytes` on that basename
+ * increments too, so a load that bypasses the cache is counted. Tests reset
+ * this and assert one read per package. The cache key is realpath plus dev,
+ * ino, mtime, and size, so a rewritten manifest is read again.
  */
 let sessionManifestReads = 0;
-const manifestCache: { token: string; manifest: SessionManifest }[] = [];
+const manifestCache: { token: string; bytes: Buffer; manifest?: SessionManifest }[] = [];
 const MANIFEST_CACHE_CAP = 4;
 
 export function resetSessionManifestReads(): void {
   sessionManifestReads = 0;
+  manifestCache.length = 0;
 }
 
 export function sessionManifestReadCount(): number {
   return sessionManifestReads;
+}
+
+noteSessionManifestByteRead(() => {
+  sessionManifestReads += 1;
+});
+
+function readSessionManifestBytes(manifestPath: string): Buffer {
+  const token = manifestStatToken(manifestPath);
+  if (token) {
+    const hit = manifestCache.find((entry) => entry.token === token);
+    if (hit) return hit.bytes;
+  }
+  sessionManifestReads += 1;
+  const bytes = readFileSync(manifestPath);
+  if (token) {
+    manifestCache.push({ token, bytes });
+    if (manifestCache.length > MANIFEST_CACHE_CAP) manifestCache.shift();
+  }
+  return bytes;
+}
+
+/** SHA-256 of the cached `session-manifest.json` bytes. */
+export function sessionManifestSha256(manifestPath: string): string {
+  return createHash('sha256').update(readSessionManifestBytes(manifestPath)).digest('hex');
 }
 
 function manifestStatToken(manifestPath: string): string | null {
@@ -860,13 +964,12 @@ export function loadSessionManifest(
   }
   const token = manifestStatToken(manifestPath);
   if (token) {
-    const hit = manifestCache.find((entry) => entry.token === token);
-    if (hit) return hit.manifest;
+    const hit = manifestCache.find((entry) => entry.token === token && entry.manifest);
+    if (hit?.manifest) return hit.manifest;
   }
-  let text: string;
+  let bytes: Buffer;
   try {
-    sessionManifestReads += 1;
-    text = readFileSync(manifestPath, 'utf8');
+    bytes = readSessionManifestBytes(manifestPath);
   } catch (err) {
     if (err instanceof ByteLimitError) throw err;
     const detail = err instanceof Error ? err.message : String(err);
@@ -874,14 +977,15 @@ export function loadSessionManifest(
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(bytes.toString('utf8'));
   } catch {
     throw new SessionPackageUsageError('session-manifest.json is malformed JSON');
   }
   const manifest = parseSessionManifest(parsed);
-  if (token) {
-    manifestCache.push({ token, manifest });
-    if (manifestCache.length > MANIFEST_CACHE_CAP) manifestCache.shift();
+  const stamped = manifestStatToken(manifestPath);
+  if (stamped) {
+    const hit = manifestCache.find((entry) => entry.token === stamped && entry.bytes === bytes);
+    if (hit) hit.manifest = manifest;
   }
   return manifest;
 }
@@ -925,7 +1029,7 @@ export function inspectSessionManifestSignature(
   }
   let hex: string;
   try {
-    hex = sha256FileBytes(manifestPath);
+    hex = sessionManifestSha256(manifestPath);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     return {
