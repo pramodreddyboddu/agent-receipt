@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeSync } from 'node:fs';
 import { assertReadableSize } from '../lib/byte-limit.js';
 import { provenanceForNodes } from '../lib/resign-provenance.js';
 import { VERSION } from '../lib/version.js';
@@ -7,13 +7,13 @@ import {
   WARN_MISSING_SESSION,
   WARN_PARENT_UNVERIFIED,
   buildSessionNodes,
-  formatSessionTree,
   indexLocalReceipts,
   listOutDirReceipts,
   parseLinkMeta,
   readLocalReceipt,
   receiptIntegrity,
   validateLegacySession,
+  writeSessionTree,
   type ReadReceiptOptions,
   type SessionNode,
 } from '../lib/link.js';
@@ -55,6 +55,35 @@ export interface SessionReport {
   session: string;
   receipts: SessionReceipt[];
   reason: string | null;
+}
+
+const stdoutPause = new Int32Array(new SharedArrayBuffer(4));
+
+/**
+ * Blocking write so a large tree does not sit in the stdout buffer.
+ * `writeSync` can return a short count or EAGAIN when the fd is non-blocking.
+ */
+function writeStdoutChunk(chunk: string): void {
+  const fd = process.stdout.fd;
+  if (typeof fd !== 'number' || fd < 0) {
+    process.stdout.write(chunk);
+    return;
+  }
+  const buf = Buffer.from(chunk);
+  let offset = 0;
+  while (offset < buf.length) {
+    try {
+      const wrote = writeSync(fd, buf, offset, buf.length - offset);
+      if (wrote > 0) {
+        offset += wrote;
+        continue;
+      }
+    } catch (err) {
+      const code = err && typeof err === 'object' && 'code' in err ? (err as { code?: string }).code : '';
+      if (code !== 'EAGAIN' && code !== 'EWOULDBLOCK' && code !== 'EBUSY') throw err;
+    }
+    Atomics.wait(stdoutPause, 0, 0, 1);
+  }
 }
 
 function toReceipt(node: SessionNode): SessionReceipt {
@@ -225,6 +254,6 @@ export function cmdSession(
     return 1;
   }
 
-  console.log(formatSessionTree(session, nodes, aliasToId, provenanceForNodes(cwd, nodes)));
+  writeSessionTree(session, nodes, aliasToId, provenanceForNodes(cwd, nodes), writeStdoutChunk);
   return exitCode;
 }

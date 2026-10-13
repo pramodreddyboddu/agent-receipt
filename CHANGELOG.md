@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.44] — 2026-10-13
+
+### Fixed
+
+- The human `session <id>` view writes the parent/child tree in bounded chunks instead of joining every line and calling `console.log` once. A session of tens of thousands of receipts, including a deep parent chain whose text is larger than one JavaScript string, finishes without `RangeError: Invalid string length`. The lines are unchanged: the `session <id>` header, the receipt count, a blank line, then `- id  status  exit N  …` with the same indent, orphan, cycle, and warning flags. `--json` is still one JSON object.
+- `report` still embeds the session tree as one string in the signed payload. A tree that fits in 32 MiB is the same text as before, so a small report's signature does not change. A larger tree keeps a prefix and one truncation line (`session tree truncated: N more line(s) omitted (cap … bytes)`) instead of throwing. The signature covers that truncated text.
+
+### Notes
+
+- Package version bumped to `1.0.44`. Pin comments that track the current cut are `v1.0.44`. The action default pin is `1.0.44`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
+
 ## [1.0.43] — 2026-10-13
 
 ### Fixed
@@ -19,7 +33,7 @@ All notable changes to this project will be documented in this file.
 - Package version bumped to `1.0.43`. Pin comments that track the current cut are `v1.0.43`. The action default pin is `1.0.43`.
 - Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
 - No new runtime dependencies. This is not a certificate authority.
-- Deferred: a text `session` view of a ~50k-event tree still builds one string and can throw `Invalid string length`. Chunked output is left for a later cut.
+- The text `session` view string-length limit noted here landed in 1.0.44 (chunked stdout).
 - Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
 
 ## [1.0.42] — 2026-10-13
@@ -37,7 +51,7 @@ All notable changes to this project will be documented in this file.
 - Package version bumped to `1.0.42`. Pin comments that track the current cut are `v1.0.42`. The action default pin is `1.0.42`.
 - Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
 - No new runtime dependencies. This is not a certificate authority.
-- Deferred: a text `session` view of a ~50k-event tree still builds one string and can throw `Invalid string length`. Chunked output is left for a later cut.
+- The text `session` view string-length limit noted here landed in 1.0.44 (chunked stdout).
 - Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
 
 ## [1.0.41] — 2026-10-07
