@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.45] — 2026-10-13
+
+### Fixed
+
+- Share and the signed HTML report mask secrets in `--message` and `--agent` before a share package or report is written. `ghp_` tokens, classic GitHub PATs, and the other patterns that pipeline already knows are replaced on that surface, including the report payload and the session tree. A receipt that never went through share still verifies as captured. `--no-redact` still keeps the original text.
+- `report` and `report verify` of a session package check every member hash, including the recorded hash of `session-manifest.json`. A mismatch exits 2 with an integrity error and does not print VERIFIED.
+- `session <id>` piped to a short reader (`head`) exits 0 when the only failure is EPIPE on stdout. Writing that output to `/dev/full` exits non-zero with one short error line and no stack trace from the bin wrapper.
+
+### Notes
+
+- Package version bumped to `1.0.45`. Pin comments that track the current cut are `v1.0.45`. The action default pin is `1.0.45`.
+- 1.0.30 said the signed report uses the share redaction pipeline. The page still copied the raw `--agent` label into the payload, so a token there survived. 1.0.41 checked session-package member hashes on export and import. `report` on a package whose `session-manifest.json` hash did not match still printed VERIFIED. This cut corrects both.
+- `verify --json` does not grow a hash-cut index. `docs/gate.schema.json` rejects unknown keys, and the required gate keys stay the same. The cut index stays internal.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.44] — 2026-10-13
 
 ### Fixed

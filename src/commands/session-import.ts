@@ -509,9 +509,11 @@ function checkReceipt(
 /**
  * The same per-entry checks `session import` runs before it copies:
  * raw `bytes` hash, canonical sha256, path, sidecar, and link fields.
- * Empty when every manifest entry matches the files on disk.
- * Export of a session package must refuse (exit 2, write nothing) when
- * this list is non-empty.
+ * Also the recorded hash of `session-manifest.json` itself, which is the
+ * sha256 in `session-manifest.sig.json` when that sidecar is present.
+ * Empty when every member matches. A mismatch is an integrity failure
+ * (exit 2, write nothing on export). An absent manifest signature is
+ * allowed, the same as import without `--require-sig`.
  */
 export function sessionPackageIntegrityReasons(
   cwd: string,
@@ -521,6 +523,15 @@ export function sessionPackageIntegrityReasons(
 ): string[] {
   const resolved = limits ?? resolveByteLimits({});
   const reasons: string[] = [];
+  try {
+    const manifestSig = inspectSessionManifestSignature(packageDir);
+    if (manifestSig.present && manifestSig.ok !== true) {
+      reasons.push(manifestSig.reason || 'session manifest signature invalid');
+    }
+  } catch (err) {
+    if (err instanceof ByteLimitError) reasons.push(err.message);
+    else reasons.push(err instanceof Error ? err.message : String(err));
+  }
   for (const entry of manifest.receipts) {
     try {
       reasons.push(...checkReceipt(cwd, packageDir, manifest, entry, {}, null, resolved));

@@ -8,7 +8,9 @@
  * Missing keys write an UNSIGNED report and exit 0. A receipt that fails
  * verify, or a present invalid receipt signature, still writes the page
  * and exits 2. A session whose root or any receipt fails verification is
- * FAILED, never VERIFIED.
+ * FAILED, never VERIFIED. A session package whose member hash does not
+ * match, including the recorded hash of session-manifest.json, exits 2
+ * and does not print VERIFIED.
  */
 
 import { createHash } from 'node:crypto';
@@ -89,6 +91,7 @@ import { applyTrust, loadTrustedFingerprints, trustStoreActive, type TrustStore 
 import { VERSION } from '../lib/version.js';
 import { findLatestReceipt } from './show.js';
 import { collectSession } from './session.js';
+import { sessionPackageIntegrityReasons } from './session-import.js';
 
 const SAFE_STEM = /^[A-Za-z0-9][A-Za-z0-9._-]{0,180}$/;
 const SAFE_DIR_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,200}$/;
@@ -324,7 +327,11 @@ function buildOne(
   const ref = readLocalReceipt(filePath);
   const id = manifestEntry?.id || ref?.id || integrity.actual;
   const parent = manifestEntry?.parent ?? ref?.meta.parent ?? null;
-  const agent = manifestEntry?.agent ?? ref?.meta.agent ?? null;
+  // Agent is free text. The markdown pipeline masks it, but the payload and
+  // the session tree used to copy the raw label. Same mask as other fields.
+  const agentSource = manifestEntry?.agent ?? ref?.meta.agent ?? null;
+  const agent =
+    agentSource === null || exposure === 'unredacted' ? agentSource : redactSecretsInText(agentSource);
   const sig = signatureState(filePath, integrity.actual, store);
   const claim = manifestEntry
     ? {
@@ -642,6 +649,10 @@ function sessionPackageReport(cwd: string, pathArg: string, opts: ReportOptions)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return emptyResult(1, message);
+  }
+  const mismatch = sessionPackageIntegrityReasons(cwd, located.packageDir, manifest);
+  if (mismatch.length) {
+    return emptyResult(2, mismatch.join('; '));
   }
   const exposure = exposureOf(opts);
   const store = loadTrustedFingerprints(cwd, { extra: opts.trustedKeys });
@@ -1347,6 +1358,54 @@ function receiptsDirError(cwd: string, dir: string | undefined): string | null {
 }
 
 /**
+ * Session package next to the receipts being verified.
+ * The package root holds `session-manifest.json`. `--receipts` may be that
+ * root or its `receipts/` directory. A store that is not a package has neither.
+ */
+function sessionManifestBeside(dirs: string[]): string[] {
+  const found: string[] = [];
+  const seen = new Set<string>();
+  for (const dir of dirs) {
+    const candidates = [join(dir, SESSION_MANIFEST_NAME)];
+    if (basename(dir) === 'receipts') candidates.push(join(dirname(dir), SESSION_MANIFEST_NAME));
+    for (const candidate of candidates) {
+      let st;
+      try {
+        st = lstatSync(candidate);
+      } catch {
+        continue;
+      }
+      if (!st.isFile()) continue;
+      const key = `${st.dev}:${st.ino}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      found.push(candidate);
+    }
+  }
+  return found;
+}
+
+/**
+ * Member hashes for a session package in the verify search scope, including
+ * the recorded hash of `session-manifest.json`. Empty when no package is in
+ * scope or every hash matches.
+ */
+function sessionPackageMemberFailures(cwd: string, dirs: string[]): string[] {
+  const reasons: string[] = [];
+  for (const manifestPath of sessionManifestBeside(dirs)) {
+    let manifest;
+    try {
+      manifest = loadSessionManifest(manifestPath);
+    } catch (err) {
+      reasons.push(err instanceof Error ? err.message : String(err));
+      continue;
+    }
+    reasons.push(...sessionPackageIntegrityReasons(cwd, dirname(manifestPath), manifest));
+  }
+  return reasons;
+}
+
+/**
  * Check one report file.
  *
  * 1. Exactly one payload block and one signature block, outside comments.
@@ -1484,6 +1543,12 @@ function verifyOneReport(cwd: string, pathArg: string, opts: ReportVerifyOptions
   const explicitReceipts = Boolean(opts.receiptsDir);
   const dirs = explicitReceipts ? [resolve(cwd, opts.receiptsDir as string)] : [receiptsDir(cwd)];
   const local = checkLocalReceipts(cwd, payload, dirs, explicitReceipts);
+  const memberFailures = sessionPackageMemberFailures(cwd, dirs);
+  if (memberFailures.length) {
+    local.failed += 1;
+    const extra = memberFailures.join('; ');
+    local.reason = local.reason ? `${local.reason}; ${extra}` : extra;
+  }
   const chainRoot = auditRootForVerify(cwd, opts.receiptsDir, explicitReceipts);
   const chainError = chainRoot ? auditChainError(chainRoot) : null;
   const counts = {
