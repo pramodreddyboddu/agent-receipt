@@ -592,7 +592,11 @@ function writeReport(
     packageBase,
   );
   const generatedAt = new Date().toISOString();
-  const tree = subject === 'session' ? treeFrom(session ?? '', built) : null;
+  // Session id is free text. The tree header and the payload used to copy it
+  // raw, so an id that looks like a secret (AKIA…) survived the share mask.
+  const shownSession =
+    session === null || exposure === 'unredacted' ? session : redactSecretsInText(session);
+  const tree = subject === 'session' ? treeFrom(shownSession ?? '', built) : null;
   const payload: ReportPayload = {
     kind: 'agent-receipt-report',
     version: 1,
@@ -600,7 +604,7 @@ function writeReport(
     cliVersion: VERSION,
     generatedAt,
     subject,
-    session,
+    session: shownSession,
     manifestSha256,
     exposure,
     verdict,

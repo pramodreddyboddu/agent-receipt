@@ -1,5 +1,6 @@
 import { readFileSync, writeSync } from 'node:fs';
 import { assertReadableSize } from '../lib/byte-limit.js';
+import { redactSecretsInText } from '../lib/redact.js';
 import { provenanceForNodes } from '../lib/resign-provenance.js';
 import { VERSION } from '../lib/version.js';
 import {
@@ -286,6 +287,14 @@ export function cmdSession(
     return 1;
   }
 
-  writeSessionTree(session, nodes, aliasToId, provenanceForNodes(cwd, nodes), writeStdoutChunk);
+  // Lookup still uses the raw id. Only the printed tree is masked, same helper
+  // as share and the signed report (AKIA and the other secret patterns).
+  writeSessionTree(
+    redactSecretsInText(session),
+    nodes,
+    aliasToId,
+    provenanceForNodes(cwd, nodes),
+    writeStdoutChunk,
+  );
   return exitCode;
 }

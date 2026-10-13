@@ -20,6 +20,12 @@ export function isReceiptArtifactPath(path: string): boolean {
  */
 const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
   {
+    // JWT compact form: eyJ header, payload, signature. Header is base64 of `{"`.
+    // Runs first so a later token pattern cannot split the three segments.
+    re: /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?![A-Za-z0-9])/g,
+    replacement: '[REDACTED]',
+  },
+  {
     re: /(?<![A-Za-z0-9])AKIA[0-9A-Z]{16}(?![A-Za-z0-9])/g,
     replacement: 'AKIA[REDACTED]',
   },

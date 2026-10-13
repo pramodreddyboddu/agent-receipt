@@ -1,7 +1,7 @@
 /**
- * v1.0.45 — share/report redaction of --message and --agent,
- * session-manifest member hash fail-closed, session stdout EPIPE,
- * and one manifest read for a multi-member package.
+ * v1.0.45 — share/report redaction of --agent, JWT --message, and
+ * secret-looking session ids; session-manifest member hash fail-closed;
+ * session stdout EPIPE; and one manifest read for a multi-member package.
  */
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,6 +36,15 @@ const dirs = [];
 const GHP_MSG = `ghp_${'m'.repeat(36)}`;
 const GHP_AGENT = `ghp_${'a'.repeat(36)}`;
 const REDACTED = 'ghp_[REDACTED]';
+/** jwt.io sample: three base64url segments, header and payload start with eyJ. */
+const JWT = [
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+  'eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ',
+  'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
+].join('.');
+/** Public AWS example key: AKIA plus 16 uppercase letters or digits. */
+const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE';
+const SECRET_SESSION = `sess-${AWS_KEY}`;
 
 after(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
@@ -346,6 +355,126 @@ describe('v1.0.45 share and report redaction', () => {
     assert.equal(openHtml.includes(GHP_MSG), true);
     assert.equal(openHtml.includes(GHP_AGENT), true);
     assert.equal(payloadOf(openHtml).receipts[0].agent, GHP_AGENT);
+  });
+
+  it('masks a JWT in --message on share markdown, share html, and the signed report', () => {
+    const dir = gitRepo('ar1045-jwt-');
+    const message = `note ${JWT} please`;
+    const wrapped = cli(dir, [
+      'wrap',
+      '--agent',
+      'cursor',
+      '--message',
+      message,
+      '--session',
+      's-jwt',
+      '--json',
+    ]);
+    assert.equal(wrapped.code, 0, wrapped.err + wrapped.out);
+    const receipt = latestReceipt(dir);
+    const original = readFileSync(receipt, 'utf8');
+    assert.equal(original.includes(JWT), true);
+    assert.equal(cli(dir, ['verify', receipt]).code, 0);
+
+    const shared = parseJson(cli(dir, ['share', receipt, '--package', '--json']));
+    const md = readFileSync(join(shared.packagePath, 'receipt.md'), 'utf8');
+    const shareHtml = readFileSync(join(shared.packagePath, 'receipt.html'), 'utf8');
+    assert.equal(md.includes(JWT), false, 'share receipt.md still has the JWT');
+    assert.equal(shareHtml.includes(JWT), false, 'share receipt.html still has the JWT');
+    assert.match(md, /note \[REDACTED\] please/);
+    assert.match(shareHtml, /note \[REDACTED\] please/);
+    assert.equal(cli(dir, ['verify', '--package', shared.packagePath]).code, 0);
+
+    const made = parseJson(cli(dir, ['report', receipt, '--json']));
+    const reportHtml = readFileSync(made.htmlPath, 'utf8');
+    const payload = payloadOf(reportHtml);
+    assert.equal(reportHtml.includes(JWT), false, 'signed report still has the JWT');
+    assert.equal(payload.receipts[0].message.includes(JWT), false);
+    assert.match(payload.receipts[0].message, /note \[REDACTED\] please/);
+
+    const open = parseJson(cli(dir, [
+      'share',
+      receipt,
+      '--package',
+      '--no-redact',
+      '--out',
+      `${join(dir, 'open-jwt.share')}/`,
+      '--json',
+    ]));
+    assert.equal(readFileSync(join(open.packagePath, 'receipt.md'), 'utf8').includes(JWT), true);
+    assert.equal(readFileSync(join(open.packagePath, 'receipt.html'), 'utf8').includes(JWT), true);
+    const openReport = parseJson(cli(dir, [
+      'report',
+      receipt,
+      '--no-redact',
+      '--out',
+      join(dir, 'open-jwt.report.html'),
+      '--json',
+    ]));
+    assert.equal(payloadOf(readFileSync(openReport.htmlPath, 'utf8')).receipts[0].message.includes(JWT), true);
+  });
+
+  it('masks an AKIA-style session id in the signed report and the session tree', () => {
+    const dir = gitRepo('ar1045-sess-');
+    const wrapped = cli(dir, [
+      'wrap',
+      '--agent',
+      'cursor',
+      '--message',
+      'session id fixture',
+      '--session',
+      SECRET_SESSION,
+      '--json',
+    ]);
+    assert.equal(wrapped.code, 0, wrapped.err + wrapped.out);
+    const receipt = latestReceipt(dir);
+    assert.equal(readFileSync(receipt, 'utf8').includes(AWS_KEY), true);
+    assert.equal(cli(dir, ['verify', receipt]).code, 0);
+
+    const made = parseJson(cli(dir, [
+      'report',
+      '--session',
+      SECRET_SESSION,
+      '--out',
+      join(dir, 'sess.report.html'),
+      '--json',
+    ]));
+    const html = readFileSync(made.htmlPath, 'utf8');
+    const payload = payloadOf(html);
+    assert.equal(html.includes(AWS_KEY), false, 'signed report still has the session key');
+    assert.equal(payload.session, 'sess-AKIA[REDACTED]');
+    assert.match(payload.tree, /^session sess-AKIA\[REDACTED\]\n/);
+    assert.equal(payload.tree.includes(AWS_KEY), false);
+
+    const single = parseJson(cli(dir, [
+      'report',
+      receipt,
+      '--out',
+      join(dir, 'one.report.html'),
+      '--json',
+    ]));
+    const singleHtml = readFileSync(single.htmlPath, 'utf8');
+    assert.equal(singleHtml.includes(AWS_KEY), false, 'one-receipt report still has the session key');
+    assert.equal(payloadOf(singleHtml).session, 'sess-AKIA[REDACTED]');
+
+    const tree = cli(dir, ['session', SECRET_SESSION]);
+    assert.equal(tree.code, 0, tree.err + tree.out);
+    assert.equal(tree.out.includes(AWS_KEY), false, 'session tree still has the session key');
+    assert.match(tree.out, /^session sess-AKIA\[REDACTED\]\n/);
+    assertNoStack(tree.err);
+
+    const open = parseJson(cli(dir, [
+      'report',
+      '--session',
+      SECRET_SESSION,
+      '--no-redact',
+      '--out',
+      join(dir, 'open-sess.report.html'),
+      '--json',
+    ]));
+    const openPayload = payloadOf(readFileSync(open.htmlPath, 'utf8'));
+    assert.equal(openPayload.session, SECRET_SESSION);
+    assert.match(openPayload.tree, new RegExp(`^session ${SECRET_SESSION}\\n`));
   });
 });
 
