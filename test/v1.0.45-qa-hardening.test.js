@@ -218,8 +218,11 @@ function runChild(cwd, args, { destroyStdout = false, stdoutFd = null, timeout =
 
 function pipeHead(cwd, sessionId) {
   return new Promise((resolve) => {
+    // Ubuntu CI uses dash as /bin/sh, and dash rejects `set -o pipefail`
+    // (exit 2) before `session | head` runs. bash reports the session
+    // status when head closes the pipe early.
     const child = spawn(
-      'sh',
+      'bash',
       ['-c', 'set -o pipefail; "$NODE" "$BIN" session "$SESS" | head -n 1'],
       {
         cwd,
