@@ -12,7 +12,13 @@
  * basename matches even if `realpath` did not collapse a bind mount and the
  * file is not on disk yet. A case-folded basename matches only when that
  * volume folds case. Darwin and win32 always fold. Other platforms probe
- * one existing name in the parent directory.
+ * one existing name in the parent directory. The fold also maps long s
+ * (U+017F) and dotless i (U+0131) onto `s` and `i`.
+ *
+ * Share package files discovered beside an input are compared the same way,
+ * so a hardlink of `manifest.json` outside the `.share` directory is refused.
+ * That discovery lives with the protected-path set. This module still refuses
+ * the share names when `--out` itself is inside a `.share` directory.
  */
 import { lstatSync, readdirSync, realpathSync, statSync, type Stats } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -75,7 +81,17 @@ export interface OutGuardOptions {
  */
 const SHARE_MANIFEST_FILES = ['manifest.json', 'manifest.sig.json'];
 const SHARE_RECEIPT_FILES = ['receipt.md', 'receipt.sig.json'];
-const SHARE_PACKAGE_FILES = [...SHARE_MANIFEST_FILES, ...SHARE_RECEIPT_FILES];
+/** Share package files `--out` must not replace. Canonical, case-sensitive names. */
+export const SHARE_PACKAGE_FILE_NAMES = [...SHARE_MANIFEST_FILES, ...SHARE_RECEIPT_FILES];
+
+/**
+ * Case fold for a basename. ASCII `toLowerCase` leaves U+017F (long s) and
+ * U+0131 (dotless i) unchanged, but a case-insensitive volume maps them to
+ * `s` and `i`. `ß` and ligatures are left alone.
+ */
+export function foldCaseName(name: string): string {
+  return name.toLowerCase().replaceAll('\u017f', 's').replaceAll('\u0131', 'i');
+}
 
 /**
  * Refuse a symlink at `abs`, including a dangling one. Do not follow it.
@@ -138,7 +154,7 @@ function refuseSharePackageFile(abs: string, opts?: OutGuardOptions): void {
   const realParent = safeRealpath(parent);
   const realLooksShare = Boolean(realParent && /\.share$/i.test(basename(realParent)));
   if (!parentLooksShare && !realLooksShare) return;
-  const canonical = SHARE_PACKAGE_FILES.find((name) => name === base.toLowerCase());
+  const canonical = SHARE_PACKAGE_FILE_NAMES.find((name) => name === foldCaseName(base));
   if (!canonical) return;
   if (opts?.allowShareReceipt && SHARE_RECEIPT_FILES.includes(canonical)) return;
   if (SHARE_MANIFEST_FILES.includes(canonical) && base === canonical) {
@@ -265,7 +281,33 @@ export function sameFileTarget(outAbs: string, sourceAbs: string, foldsCase?: bo
   if (outBase === sourceBase) return true;
   const folds = foldsCase !== undefined ? foldsCase : directoryFoldsCase(parentReal);
   if (!folds) return false;
-  return outBase.toLowerCase() === sourceBase.toLowerCase();
+  return foldCaseName(outBase) === foldCaseName(sourceBase);
+}
+
+/**
+ * Message when `hit` is a share package file inside a `*.share` directory.
+ * Null for every other path. Callers check this before the `.sig.json` and
+ * `.json` messages, because `receipt.sig.json` and `manifest.json` match those.
+ */
+export function sharePackageOverwriteMessage(hit: string): string | null {
+  const base = basename(hit);
+  if (!/\.share$/i.test(basename(dirname(hit)))) return null;
+  if (!SHARE_PACKAGE_FILE_NAMES.includes(base)) return null;
+  return `refusing to write over a share package file: ${base}`;
+}
+
+/**
+ * `share --package` may refresh the canonical `receipt.md` or
+ * `receipt.sig.json` at that same path. A different path that is the same
+ * inode, or any manifest file, is not a refresh.
+ */
+function allowedShareReceiptRefresh(outAbs: string, hit: string): boolean {
+  const base = basename(hit);
+  if (base !== 'receipt.md' && base !== 'receipt.sig.json') return false;
+  if (!/\.share$/i.test(basename(dirname(hit)))) return false;
+  const outResolved = resolvedFile(outAbs);
+  const hitResolved = resolvedFile(hit);
+  return Boolean(outResolved && hitResolved && outResolved === hitResolved);
 }
 
 export function conflictingProtectedPath(outAbs: string, protectedPaths: string[]): string | null {
@@ -277,6 +319,8 @@ export function conflictingProtectedPath(outAbs: string, protectedPaths: string[
 
 /** Message for an export-style overwrite. Keeps the historical receipt wording. */
 export function protectedOverwriteMessage(hit: string, noun: string): string {
+  const shareMessage = sharePackageOverwriteMessage(hit);
+  if (shareMessage) return shareMessage;
   const base = basename(hit);
   if (base === 'session-manifest.json' || base === 'session-manifest.sig.json') {
     return `refusing to write the ${noun} over a session package file: ${base}`;
@@ -290,9 +334,20 @@ export function protectedOverwriteMessage(hit: string, noun: string): string {
   return `refusing to write the ${noun} over the receipt`;
 }
 
-export function assertProtectedOut(outAbs: string, protectedPaths: string[], noun: string): void {
-  const hit = conflictingProtectedPath(outAbs, protectedPaths);
-  if (hit) throw new OutGuardError(protectedOverwriteMessage(hit, noun));
+export function assertProtectedOut(
+  outAbs: string,
+  protectedPaths: string[],
+  noun: string,
+  opts?: OutGuardOptions,
+): void {
+  const hits: string[] = [];
+  for (const source of protectedPaths) {
+    if (sameFileTarget(outAbs, source, opts?.foldsCase)) hits.push(source);
+  }
+  if (hits.length === 0) return;
+  if (opts?.allowShareReceipt && hits.every((hit) => allowedShareReceiptRefresh(outAbs, hit))) return;
+  const blocking = hits.find((hit) => !allowedShareReceiptRefresh(outAbs, hit)) ?? hits[0];
+  throw new OutGuardError(protectedOverwriteMessage(blocking, noun));
 }
 
 /**

@@ -4,8 +4,45 @@ const HASH_MARKER = '<!-- agent-receipt-sha256:';
 const HASH_END = ' -->';
 
 /**
+ * A CommonMark fence at column 0, or indented by at most three spaces.
+ * The info string is `rest`. A closing fence has an empty info string.
+ */
+function fenceAt(line: string): { ch: string; len: number; rest: string } | null {
+  const match = /^ {0,3}(```+|~~~+)(.*)$/.exec(line);
+  if (!match) return null;
+  return { ch: match[1][0], len: match[1].length, rest: match[2] };
+}
+
+/**
+ * Index of the first `## Integrity` heading or hash-marker line that is
+ * not inside an open fence. A fenced copy of the marker stays in the body.
+ * Returns `lines.length` when the body has no footer.
+ */
+export function integrityCutIndex(lines: string[]): number {
+  let fence: { ch: string; len: number } | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].replace(/\r$/, '');
+    const marker = fenceAt(line);
+    if (marker) {
+      if (!fence) {
+        fence = { ch: marker.ch, len: marker.len };
+        continue;
+      }
+      if (fence.ch === marker.ch && marker.len >= fence.len && marker.rest.trim() === '') {
+        fence = null;
+      }
+      continue;
+    }
+    if (fence) continue;
+    if (line.startsWith('## Integrity') || line.includes('agent-receipt-sha256')) return i;
+  }
+  return lines.length;
+}
+
+/**
  * Canonical body used for hashing: everything before the Integrity section
- * (or any line containing the hash marker). Trailing blank lines normalized.
+ * (or any unfenced line containing the hash marker). A marker inside a
+ * fence stays in the body. Trailing blank lines are normalized.
  *
  * By design, anything after `## Integrity` / the hash marker is ignored by
  * verify — appends after the Integrity footer do not affect the hash.
@@ -13,13 +50,7 @@ const HASH_END = ' -->';
 export function canonicalBody(markdown: string): string {
   const normalized = markdown.replace(/\r\n/g, '\n');
   const lines = normalized.split('\n');
-  const out: string[] = [];
-  for (const line of lines) {
-    if (line.startsWith('## Integrity') || line.includes('agent-receipt-sha256')) {
-      break;
-    }
-    out.push(line);
-  }
+  const out = lines.slice(0, integrityCutIndex(lines));
   while (out.length > 0 && out[out.length - 1].trim() === '') out.pop();
   return out.join('\n') + '\n';
 }
@@ -40,12 +71,15 @@ export function appendHashFooter(markdown: string): string {
 }
 
 export function extractEmbeddedHash(markdown: string): string | null {
-  const idx = markdown.indexOf(HASH_MARKER);
+  const normalized = markdown.replace(/\r\n/g, '\n');
+  const lines = normalized.split('\n');
+  const tail = lines.slice(integrityCutIndex(lines)).join('\n');
+  const idx = tail.indexOf(HASH_MARKER);
   if (idx < 0) return null;
   const start = idx + HASH_MARKER.length;
-  const end = markdown.indexOf(HASH_END, start);
+  const end = tail.indexOf(HASH_END, start);
   if (end < 0) return null;
-  return markdown.slice(start, end).trim();
+  return tail.slice(start, end).trim();
 }
 
 /**
@@ -56,17 +90,9 @@ export function extractEmbeddedHash(markdown: string): string | null {
 export function hasTrailingAfterIntegrity(markdown: string): boolean {
   const normalized = markdown.replace(/\r\n/g, '\n');
   const lines = normalized.split('\n');
-  let i = 0;
-  while (i < lines.length) {
-    if (
-      lines[i].startsWith('## Integrity') ||
-      lines[i].includes('agent-receipt-sha256')
-    ) {
-      break;
-    }
-    i++;
-  }
-  if (i >= lines.length) return false;
+  const start = integrityCutIndex(lines);
+  if (start >= lines.length) return false;
+  let i = start;
 
   // Skip the Integrity heading, blank lines, hash marker, and SHA-256 prose.
   for (; i < lines.length; i++) {

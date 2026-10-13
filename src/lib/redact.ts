@@ -2,7 +2,7 @@
  * Redaction helpers for safer sharing of receipts.
  * Masks high-signal secrets in Markdown/HTML bodies, then callers re-hash.
  */
-import { appendHashFooter } from './hash.js';
+import { appendHashFooter, integrityCutIndex } from './hash.js';
 
 /** True for receipt / index artifacts that may embed prior secrets. */
 export function isReceiptArtifactPath(path: string): boolean {
@@ -291,7 +291,8 @@ export function redactMarkdownBody(
 ): string {
   const maskHost = opts.maskHost !== false;
   const normalized = markdown.replace(/\r\n/g, '\n');
-  const lines = normalized.split('\n');
+  const all = normalized.split('\n');
+  const lines = all.slice(0, integrityCutIndex(all));
   const out: string[] = [];
   let inDiffFence = false;
   let inNestedArtifactDiff = false;
@@ -302,10 +303,6 @@ export function redactMarkdownBody(
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-
-    if (line.startsWith('## Integrity') || line.includes('agent-receipt-sha256')) {
-      break;
-    }
 
     if (line.includes('**Redacted**:') || line.includes('Snapshot is redacted')) {
       sawRedactionNotice = true;

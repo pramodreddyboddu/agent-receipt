@@ -68,10 +68,10 @@ import {
   exportProtectedPaths,
   loadSessionManifest,
   locateSessionPackage,
+  sessionManifestSha256,
   type SessionManifestReceipt,
 } from '../lib/session-package.js';
 import { assertProtectedOut, OutGuardError, resolveDirOrFileOut } from '../lib/out-guard.js';
-import { sha256FileBytes } from '../lib/share-package.js';
 import {
   createSignatureDocument,
   inspectReceiptSignature,
@@ -653,7 +653,7 @@ function sessionPackageReport(cwd: string, pathArg: string, opts: ReportOptions)
     }
     built.push(buildOne(filePath, exposure, store, new Map(), entry, cwd));
   }
-  const manifestSha256 = sha256FileBytes(located.manifestPath);
+  const manifestSha256 = sessionManifestSha256(located.manifestPath);
   return writeReport(
     cwd,
     opts,

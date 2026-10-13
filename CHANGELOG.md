@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.43] — 2026-10-13
+
+### Fixed
+
+- `--out` refuses a hardlink or bind-mount alias of a share package file (`receipt.md`, `receipt.sig.json`, `manifest.json`, `manifest.sig.json`). The file has to sit in a `*.share` directory next to an input, or the input has to be that directory. Share files in other directories are not scanned. The check is the same identity test as v1.0.41: `realpath` of the parent plus `dev`+`ino`. The command uses the existing message and exit code and writes nothing. The name guard still refuses those names inside the `*.share` directory, including a `manifest.json` that is not on disk yet, and a case-folded name on a volume that folds case. A case-sensitive volume still allows a distinct basename.
+- On a case-folding volume the basename fold also maps long s (U+017F) and dotless i (U+0131) to `s` and `i`. `manifeſt.json`, `manifest.jſon`, and `receıpt.md` do not bypass the share-file or companion guard. `ß` and ligatures are not folded.
+- `share --package` can still create and refresh `receipt.md` and `receipt.sig.json` in that package. An alias of those files at another path is refused. A manifest file stays refused.
+- A receipt whose body quotes `agent-receipt-sha256` or `## Integrity` inside a fenced block still hashes the whole body. The cut ignores those lines while the fence is open, so capture keeps the rest of the file and a fresh export writes. A plain `README.md` that only fences an example receipt does not protect `README.json`.
+- Every read of `session-manifest.json` in one command goes through one counter: the parse and the raw byte hash. Export, attest, and report of a package read that file once. A later hash of the same bytes is a cache hit.
+
+### Notes
+
+- Package version bumped to `1.0.43`. Pin comments that track the current cut are `v1.0.43`. The action default pin is `1.0.43`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Deferred: a text `session` view of a ~50k-event tree still builds one string and can throw `Invalid string length`. Chunked output is left for a later cut.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, and npm Trusted Publishing.
+
 ## [1.0.42] — 2026-10-13
 
 ### Fixed

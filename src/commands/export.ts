@@ -103,6 +103,7 @@ export function cmdExport(
     outPath,
     exportProtectedPaths(cwd, [source], { companionJson: true }),
     'export',
+    guardOpts,
   );
   mkdirSync(dirname(outPath), { recursive: true });
 
