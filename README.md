@@ -42,7 +42,7 @@ npm install -D @pramodreddyboddu/agent-receipt
 ## GitHub Action
 
 Gate a pull request with one `uses:` line. The action runs a pinned
-`agent-receipt` (`1.0.43` by default, never `latest`) and posts a sticky
+`agent-receipt` (`1.0.44` by default, never `latest`) and posts a sticky
 summary comment.
 
 ```yaml
@@ -308,7 +308,7 @@ Flags: `--agent`, `--message`, `--session`, `--parent`, `--host`, `--link`, `--f
 
 `--agent` is free-form (spaces allowed; no newlines or control characters), matching 1.0.27 and config `defaultAgent`. `--session` still accepts 1.0.27 values such as `old sess/1` and stores them on one line. Generated ids are `s-` plus 16 hex. `--parent` is an `r-` id, a sha256, or a path to a receipt file. `--message` may span lines; each line is quoted or indented so it cannot form a header field.
 
-`agent-receipt session <id>` prints the local parent/child tree. `--json` is the machine-readable form. Exit 1 when any receipt in the session fails verify or a local parent fails verify. A parent that is not in this `outDir` is flagged `orphan`. A loop inside the session is flagged `cycle`. A parent in another local session is `warnings=cross-session-parent`. None of those warnings change the exit code by themselves.
+`agent-receipt session <id>` prints the local parent/child tree. `--json` is the machine-readable form. Exit 1 when any receipt in the session fails verify or a local parent fails verify. A parent that is not in this `outDir` is flagged `orphan`. A loop inside the session is flagged `cycle`. A parent in another local session is `warnings=cross-session-parent`. None of those warnings change the exit code by themselves. A large session is printed in chunks, so a tree of tens of thousands of receipts does not build one string. `--json` is still one JSON object. `report --session` embeds that same tree text when it is at most 32 MiB. A larger embed keeps a prefix and a truncation line. A report under that cap keeps the same signed payload.
 
 `host` stays off unless you pass `--host` or set `AGENT_RECEIPT_HOST`. `share` keeps session, parent, and agent, and masks host unless `--include-host`. `prove` shows session, parent, and whether a local parent verifies. It does not show host, and a missing parent does not change the prove exit code.
 
@@ -505,7 +505,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.43`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.44`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`

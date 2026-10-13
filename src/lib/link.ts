@@ -927,17 +927,55 @@ function toolCallCount(filePath: string): number | null {
   }
 }
 
+/** UTF-8 bytes of tree text a report may embed as one string. */
+export const SESSION_TREE_EMBED_MAX_BYTES = 32 * 1024 * 1024;
+/** Human `session` flushes after this many lines, and also after the byte cap. */
+export const SESSION_TREE_CHUNK_LINES = 64;
+export const SESSION_TREE_CHUNK_BYTES = 64 * 1024;
+
+type SessionTreeClaim = {
+  originalFingerprint: string | null;
+  resignedBy: string | null;
+  signedBy?: string | null;
+};
+
+function sessionTreeNodeLine(
+  node: SessionNode,
+  indent: string,
+  provenance?: Map<string, SessionTreeClaim>,
+): string {
+  const bits = [
+    node.id,
+    node.status,
+    `exit ${node.exitCode}`,
+    node.agent ? `agent=${node.agent}` : 'agent=(none)',
+    node.timestamp ?? '(no timestamp)',
+    node.verified ? 'verified' : 'unverified',
+  ];
+  if (node.orphan) bits.push('orphan');
+  if (node.cycle) bits.push('cycle');
+  if (node.warnings.length) bits.push(`warnings=${node.warnings.join(',')}`);
+  const claim = provenance?.get(node.id);
+  if (claim && (claim.originalFingerprint || claim.resignedBy || claim.signedBy)) {
+    bits.push(`originalFingerprint=${claim.originalFingerprint ?? 'null'}`);
+    bits.push(`resignedBy=${claim.resignedBy ?? 'null'}`);
+    if (claim.signedBy) bits.push(`signedBy=${claim.signedBy}`);
+  }
+  const tools = toolCallCount(node.path);
+  if (tools !== null) bits.push(`tools=${tools}`);
+  return `${indent}- ${bits.join('  ')}`;
+}
+
 /**
- * Parent/child lines for human `session` output. Cycle nodes stay at the root.
- * `aliasToId` maps a stored parent reference (link id or sha256) onto the
- * canonical id of a receipt in this session.
+ * One line at a time. Cycle nodes stay at the root. `aliasToId` maps a
+ * stored parent reference (link id or sha256) onto the canonical id.
  */
-export function formatSessionTree(
+function* sessionTreeLines(
   session: string,
   nodes: SessionNode[],
   aliasToId?: Map<string, string>,
-  provenance?: Map<string, { originalFingerprint: string | null; resignedBy: string | null; signedBy?: string | null }>,
-): string {
+  provenance?: Map<string, SessionTreeClaim>,
+): Generator<string> {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const children = new Map<string, SessionNode[]>();
   const roots: SessionNode[] = [];
@@ -957,11 +995,9 @@ export function formatSessionTree(
       roots.push(node);
     }
   }
-  const lines: string[] = [
-    `session ${session}`,
-    `${nodes.length} receipt(s)`,
-    '',
-  ];
+  yield `session ${session}`;
+  yield `${nodes.length} receipt(s)`;
+  yield '';
   const stack: Array<{ node: SessionNode; indent: string }> = [];
   for (let i = roots.length - 1; i >= 0; i -= 1) {
     const root = roots[i];
@@ -971,31 +1007,91 @@ export function formatSessionTree(
     const frame = stack.pop() as { node: SessionNode; indent: string };
     const node = frame.node;
     const indent = frame.indent;
-    const bits = [
-      node.id,
-      node.status,
-      `exit ${node.exitCode}`,
-      node.agent ? `agent=${node.agent}` : 'agent=(none)',
-      node.timestamp ?? '(no timestamp)',
-      node.verified ? 'verified' : 'unverified',
-    ];
-    if (node.orphan) bits.push('orphan');
-    if (node.cycle) bits.push('cycle');
-    if (node.warnings.length) bits.push(`warnings=${node.warnings.join(',')}`);
-    const claim = provenance?.get(node.id);
-    if (claim && (claim.originalFingerprint || claim.resignedBy || claim.signedBy)) {
-      bits.push(`originalFingerprint=${claim.originalFingerprint ?? 'null'}`);
-      bits.push(`resignedBy=${claim.resignedBy ?? 'null'}`);
-      if (claim.signedBy) bits.push(`signedBy=${claim.signedBy}`);
-    }
-    const tools = toolCallCount(node.path);
-    if (tools !== null) bits.push(`tools=${tools}`);
-    lines.push(`${indent}- ${bits.join('  ')}`);
+    yield sessionTreeNodeLine(node, indent, provenance);
     const kids = children.get(node.id) ?? [];
     for (let i = kids.length - 1; i >= 0; i -= 1) {
       const child = kids[i];
       if (child) stack.push({ node: child, indent: `${indent}  ` });
     }
   }
-  return lines.join('\n');
+}
+
+export function sessionTreeTruncationLine(omitted: number, maxEmbedBytes: number): string {
+  return `session tree truncated: ${omitted} more line(s) omitted (cap ${maxEmbedBytes} bytes)`;
+}
+
+/**
+ * Parent/child text for callers that embed one string (the signed report).
+ * When the tree fits in `maxEmbedBytes`, the result is the same joined
+ * line text as before. A larger tree keeps a prefix and one truncation
+ * line so the embed does not throw `Invalid string length`. The human
+ * `session` command uses `writeSessionTree` and does not cap.
+ */
+export function formatSessionTree(
+  session: string,
+  nodes: SessionNode[],
+  aliasToId?: Map<string, string>,
+  provenance?: Map<string, SessionTreeClaim>,
+  maxEmbedBytes: number = SESSION_TREE_EMBED_MAX_BYTES,
+): string {
+  const cap = maxEmbedBytes > 0 ? maxEmbedBytes : SESSION_TREE_EMBED_MAX_BYTES;
+  const lines: string[] = [];
+  let bytes = 0;
+  let omitted = 0;
+  let truncated = false;
+  for (const line of sessionTreeLines(session, nodes, aliasToId, provenance)) {
+    if (truncated) {
+      omitted += 1;
+      continue;
+    }
+    const extra = (lines.length > 0 ? 1 : 0) + Buffer.byteLength(line, 'utf8');
+    if (bytes + extra > cap) {
+      truncated = true;
+      omitted += 1;
+      continue;
+    }
+    lines.push(line);
+    bytes += extra;
+  }
+  if (omitted === 0) return lines.join('\n');
+  const note = sessionTreeTruncationLine(omitted, cap);
+  if (lines.length === 0) return note;
+  return `${lines.join('\n')}\n${note}`;
+}
+
+/**
+ * Write the human session tree in bounded chunks. Each chunk is a few
+ * lines, not the whole tree. The concatenated chunks equal the embed
+ * string plus a final newline when the tree fits in the embed cap
+ * (`console.log` used to add that newline).
+ */
+export function writeSessionTree(
+  session: string,
+  nodes: SessionNode[],
+  aliasToId: Map<string, string> | undefined,
+  provenance: Map<string, SessionTreeClaim> | undefined,
+  write: (chunk: string) => void,
+  chunkLines: number = SESSION_TREE_CHUNK_LINES,
+): void {
+  const limit = chunkLines > 0 ? chunkLines : SESSION_TREE_CHUNK_LINES;
+  let batch: string[] = [];
+  let batchBytes = 0;
+  const flush = (): void => {
+    if (batch.length === 0) return;
+    write(`${batch.join('\n')}\n`);
+    batch = [];
+    batchBytes = 0;
+  };
+  for (const line of sessionTreeLines(session, nodes, aliasToId, provenance)) {
+    const lineBytes = Buffer.byteLength(line, 'utf8') + 1;
+    if (
+      batch.length > 0 &&
+      (batch.length >= limit || batchBytes + lineBytes > SESSION_TREE_CHUNK_BYTES)
+    ) {
+      flush();
+    }
+    batch.push(line);
+    batchBytes += lineBytes;
+  }
+  flush();
 }

@@ -771,7 +771,8 @@ Scans the configured outDir for receipts whose Session header field equals
 <id> and prints a parent/child tree. Link fields are read only from the
 writer's \`## Session\` block, not from diffs or messages. Each line shows
 the receipt id, pass/fail, exit 0 or 2, agent label, timestamp, and
-verified or unverified.
+verified or unverified. A large tree is written in chunks. The command
+does not build one string of the whole tree.
 \`orphan\` means the parent ref is not a receipt in this outDir (it may
 live on another machine, or auto-prune deleted it). \`cycle\` means the
 parent links loop inside this session. Orphans and cycles do not by
@@ -930,7 +931,9 @@ one renamed to \`.md\`. \`report\` on that file exits 1.
 
 The page shows a verdict banner (VERIFIED, FAILED, UNSIGNED, UNTRUSTED),
 what the agent did (summary, commands, files, risk flags, What to review),
-the session tree for a session report, commits and range, signer
+the session tree for a session report (a tree over 32 MiB keeps a
+prefix and one truncation line; a smaller tree is the same text),
+commits and range, signer
 fingerprints and trust per receipt (including originalFingerprint,
 resignedBy, and signedBy), the CLI version, and the exact commands to
 re-verify offline. Those commands use basenames.
