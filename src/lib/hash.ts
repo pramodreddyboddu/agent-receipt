@@ -3,6 +3,10 @@ import { createHash } from 'node:crypto';
 const HASH_MARKER = '<!-- agent-receipt-sha256:';
 const HASH_END = ' -->';
 
+export function sha256Hex(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
 /**
  * A CommonMark fence at column 0, or indented by at most three spaces.
  * The info string is `rest`. A closing fence has an empty info string.
@@ -14,18 +18,49 @@ function fenceAt(line: string): { ch: string; len: number; rest: string } | null
 }
 
 /**
- * Index of the first `## Integrity` heading or hash-marker line that is
- * not inside an open fence. A fenced copy of the marker stays in the body.
- * Returns `lines.length` when the body has no footer.
+ * Column-0 closing fence. A unified-diff context line is prefixed with a
+ * space, so ` ``` ` or ` ~~~ ` inside a diff must not close the writer's fence.
  */
-export function integrityCutIndex(lines: string[]): number {
+function isWriterDiffClose(line: string, open: { ch: string; len: number }): boolean {
+  const match = /^(```+|~~~+)(.*)$/.exec(line);
+  if (!match) return false;
+  return match[1][0] === open.ch && match[1].length >= open.len && match[2].trim() === '';
+}
+
+/**
+ * v1.0.42 cut: the first integrity line, fences ignored. A marker inside a
+ * diff or a code fence ended the body, and `appendHashFooter` dropped the rest.
+ */
+function legacyCutIndex(lines: string[]): number {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith('## Integrity') || line.includes('agent-receipt-sha256')) return i;
+  }
+  return lines.length;
+}
+
+/**
+ * v1.0.43 cut. A quoted marker stays in the body while a fence is open.
+ * Writer ` ```diff ` blocks skip fence tracking: diff text that shows
+ * ` ``` ` or `~~~` is not a fence, and a marker inside the diff is not the footer.
+ */
+function modernCutIndex(lines: string[]): number {
   let fence: { ch: string; len: number } | null = null;
+  let inDiff = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].replace(/\r$/, '');
+    if (inDiff && fence) {
+      if (isWriterDiffClose(line, fence)) {
+        inDiff = false;
+        fence = null;
+      }
+      continue;
+    }
     const marker = fenceAt(line);
     if (marker) {
       if (!fence) {
         fence = { ch: marker.ch, len: marker.len };
+        if (marker.ch === '`' && marker.rest.trim() === 'diff') inDiff = true;
         continue;
       }
       if (fence.ch === marker.ch && marker.len >= fence.len && marker.rest.trim() === '') {
@@ -39,6 +74,39 @@ export function integrityCutIndex(lines: string[]): number {
   return lines.length;
 }
 
+function bodyAt(lines: string[], cut: number): string {
+  const out = lines.slice(0, cut);
+  while (out.length > 0 && out[out.length - 1].trim() === '') out.pop();
+  return out.join('\n') + '\n';
+}
+
+function embeddedHashAfter(lines: string[], cut: number): string | null {
+  const tail = lines.slice(cut).join('\n');
+  const idx = tail.indexOf(HASH_MARKER);
+  if (idx < 0) return null;
+  const start = idx + HASH_MARKER.length;
+  const end = tail.indexOf(HASH_END, start);
+  if (end < 0) return null;
+  return tail.slice(start, end).trim();
+}
+
+/**
+ * Index of the integrity footer. Returns `lines.length` when the body has none.
+ *
+ * The receipt has no field that says which cut sealed it. v1.0.42 cut at the
+ * first marker even inside a fence, which can leave ` ```diff ` or ` ``` `
+ * unclosed above the real footer. When that older body still hashes to the
+ * embedded marker, keep it. Otherwise use the fence-aware cut.
+ */
+export function integrityCutIndex(lines: string[]): number {
+  const modern = modernCutIndex(lines);
+  const legacy = legacyCutIndex(lines);
+  if (legacy === modern) return legacy;
+  const embedded = embeddedHashAfter(lines, legacy);
+  if (embedded && embedded === sha256Hex(bodyAt(lines, legacy))) return legacy;
+  return modern;
+}
+
 /**
  * Canonical body used for hashing: everything before the Integrity section
  * (or any unfenced line containing the hash marker). A marker inside a
@@ -50,13 +118,7 @@ export function integrityCutIndex(lines: string[]): number {
 export function canonicalBody(markdown: string): string {
   const normalized = markdown.replace(/\r\n/g, '\n');
   const lines = normalized.split('\n');
-  const out = lines.slice(0, integrityCutIndex(lines));
-  while (out.length > 0 && out[out.length - 1].trim() === '') out.pop();
-  return out.join('\n') + '\n';
-}
-
-export function sha256Hex(content: string): string {
-  return createHash('sha256').update(content, 'utf8').digest('hex');
+  return bodyAt(lines, integrityCutIndex(lines));
 }
 
 export function appendHashFooter(markdown: string): string {
@@ -73,13 +135,7 @@ export function appendHashFooter(markdown: string): string {
 export function extractEmbeddedHash(markdown: string): string | null {
   const normalized = markdown.replace(/\r\n/g, '\n');
   const lines = normalized.split('\n');
-  const tail = lines.slice(integrityCutIndex(lines)).join('\n');
-  const idx = tail.indexOf(HASH_MARKER);
-  if (idx < 0) return null;
-  const start = idx + HASH_MARKER.length;
-  const end = tail.indexOf(HASH_END, start);
-  if (end < 0) return null;
-  return tail.slice(start, end).trim();
+  return embeddedHashAfter(lines, integrityCutIndex(lines));
 }
 
 /**

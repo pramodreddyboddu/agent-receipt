@@ -10,6 +10,8 @@ All notable changes to this project will be documented in this file.
 - On a case-folding volume the basename fold also maps long s (U+017F) and dotless i (U+0131) to `s` and `i`. `manifeſt.json`, `manifest.jſon`, and `receıpt.md` do not bypass the share-file or companion guard. `ß` and ligatures are not folded.
 - `share --package` can still create and refresh `receipt.md` and `receipt.sig.json` in that package. An alias of those files at another path is refused. A manifest file stays refused.
 - A receipt whose body quotes `agent-receipt-sha256` or `## Integrity` inside a fenced block still hashes the whole body. The cut ignores those lines while the fence is open, so capture keeps the rest of the file and a fresh export writes. A plain `README.md` that only fences an example receipt does not protect `README.json`.
+- A context line inside the receipt's own ` ```diff ` block is diff text. ` ``` ` and `~~~` on those lines do not open or close a fence, and they do not hide `## Integrity`. `capture --since <base>` of an edit inside a fenced code block in a markdown file still verifies.
+- Receipts have no field for which cut sealed them. v1.0.42 cut at the first `agent-receipt-sha256` or `## Integrity` line, including one quoted in a diff, and that could leave ` ```diff ` or ` ``` ` unclosed. When that older body still hashes to the embedded marker, verify keeps that cut. A receipt sealed by v1.0.43 still hashes the quoted line and the rest of the fenced body.
 - Every read of `session-manifest.json` in one command goes through one counter: the parse and the raw byte hash. Export, attest, and report of a package read that file once. A later hash of the same bytes is a cache hit.
 
 ### Notes

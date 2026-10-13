@@ -4,6 +4,7 @@
  */
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawnSync, execFileSync } from 'node:child_process';
 import {
   existsSync,
@@ -299,7 +300,42 @@ describe('v1.0.43 share identity', () => {
     assert.deepEqual(readFileSync(captured.path), sourceBefore);
   });
 
-  it('counts every session-manifest load once per package', async () => {
+  it('verifies capture --since base of an edit inside a fenced doc.md block', () => {
+    const dir = gitRepo();
+    const doc = [
+      '# Notes',
+      '',
+      '```js',
+      'const value = "before";',
+      '```',
+      '',
+      'tail',
+      '',
+    ].join('\n');
+    writeFileSync(join(dir, 'doc.md'), doc);
+    git(dir, ['add', 'doc.md']);
+    git(dir, ['commit', '-m', 'add fenced doc']);
+    git(dir, ['tag', 'base']);
+    writeFileSync(
+      join(dir, 'doc.md'),
+      doc.replace('const value = "before";', 'const value = "after-fence";'),
+    );
+    git(dir, ['add', 'doc.md']);
+    git(dir, ['commit', '-m', 'edit inside the fence']);
+    const captured = parseJson(
+      cli(dir, ['capture', '--since', 'base', '--json', '--agent', 'cursor']),
+    );
+    const text = readFileSync(captured.path, 'utf8');
+    assert.match(text, /after-fence/);
+    assert.match(text, /```diff/);
+    assert.match(text, /^ ```$/m);
+    assert.match(text, /## Integrity/);
+    assert.match(text, /\btail\b/);
+    const verified = cli(dir, ['verify', captured.path]);
+    assert.equal(verified.code, 0, verified.err + verified.out);
+  });
+
+  it('counts every session-manifest load once per package, including a cache hit', async () => {
     const sessionSrc = readFileSync(join(root, 'src/lib/session-package.ts'), 'utf8');
     const reportSrc = readFileSync(join(root, 'src/commands/report.ts'), 'utf8');
     assert.equal(sessionSrc.includes('sha256FileBytes('), false);
@@ -331,10 +367,14 @@ describe('v1.0.43 share identity', () => {
     assert.equal(sessionManifestReadCount(), 1);
 
     resetSessionManifestReads();
-    loadSessionManifest(manifestPath);
-    sessionManifestSha256(manifestPath);
+    const loaded = loadSessionManifest(manifestPath);
+    assert.equal(sessionManifestReadCount(), 1);
+    assert.equal(loadSessionManifest(manifestPath), loaded);
+    const disk = createHash('sha256').update(readFileSync(manifestPath)).digest('hex');
+    assert.equal(sessionManifestSha256(manifestPath), disk);
     const inspected = inspectSessionManifestSignature(packed.packagePath);
     assert.equal(inspected.present, true);
+    assert.equal(inspected.ok, true, inspected.reason);
     assert.equal(sessionManifestReadCount(), 1);
 
     sha256FileBytes(manifestPath);
