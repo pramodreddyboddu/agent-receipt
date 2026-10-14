@@ -49,6 +49,8 @@
 # Session-id export masking and JWT mask coverage are local redaction. This smoke still does not listen and does not push.
 # v1.0.47 left that live file unchanged for the same reason.
 # Redaction ReDoS, distinct masked ids, and the include-host directory name are local. This smoke still does not listen and does not push.
+# v1.0.48 left that live file unchanged for the same reason.
+# JWT prefix restart, ghp_ path and attest stamps, joined JWTs, and word suffixes are local redaction. This smoke still does not listen and does not push.
 name: CI
 
 on:

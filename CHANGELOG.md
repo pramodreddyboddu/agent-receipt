@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.48] — 2026-10-14
+
+### Fixed
+
+- A real JWT after a long glued run of `eyJ-`, `eyJ_`, or `eyJ=` prefixes is masked. The interior restart cap still stops a quadratic rescan. After that cap, the scan tries the last `eyJ` before the header dot once, so nine or more of one prefix, and a longer mixed run, no longer leave the token in the clear. The 64KB `eyJ-` / `eyJ_` / `eyJ=` bounds and the 1MB `eyJ=` bound stay in place.
+- A `ghp_`-shaped filename is no longer raw in the share `###` path header or in `receipt.html`. Each path segment is stamped the same way a secret-shaped session id is (`ghp_[REDACTED:<sha256-12>]` from that segment). The raw token is not in the stamp. Other lines that already went through secret redaction stay free of the raw token.
+- `attest` stamps a `ghp_`-shaped filename the same way, so two files stay two subjects and the raw name is not in the statement. Verify maps the stamp back by running that same stamp on the file name in the original receipt.
+- Two JWT-shaped tokens joined by one `-` are both masked. The hyphen stays. Neither token's header, payload, or signature remains in the clear.
+- A lowercase hyphen suffix that is an ordinary word (`-word`, and the existing `-then`) stays after `[REDACTED]`. A token-alphabet tail (`-suffix`, a tail with a digit, and the strict-mode `-low` fixture) is still consumed with the token.
+
+### Notes
+
+- These are v1.0.47 Release QA follow-ups.
+- Package version bumped to `1.0.48`. Pin comments that track the current cut are `v1.0.48`. The action default pin is `1.0.48`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.47] — 2026-10-14
 
 ### Fixed
