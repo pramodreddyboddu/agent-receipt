@@ -50,7 +50,7 @@ import {
   type ToolCallFact,
 } from '../lib/intoto.js';
 import { listOutDirReceipts, parseSessionHeader, receiptIntegrity } from '../lib/link.js';
-import { maskJwtTokens, redactMarkdownBody, redactSecretsInText } from '../lib/redact.js';
+import { containsRedactionMark, maskJwtTokens, redactMarkdownBody, redactSecretsInText } from '../lib/redact.js';
 import { redactTranscriptText } from '../lib/adapters/redact-transcript.js';
 import {
   auditLogPath,
@@ -171,7 +171,7 @@ function narrative(value: string | null): string | null {
 }
 
 function scrubJwt(message: string): string {
-  return maskJwtTokens(message);
+  return maskJwtTokens(message, 'strict');
 }
 
 /** Subject names are redacted so a secret in a filename does not enter the statement. */
@@ -321,9 +321,9 @@ function buildRun(cwd: string, receiptPath: string, kind: PredicateKind): BuiltR
   }
   const redacted = redactMarkdownBody(original, { maskHost: true });
   const fields = fieldsOf(redacted);
-  // Names in the statement are redacted. Verify maps a `[REDACTED]` name
-  // back through this original file table. Narrative sections come from
-  // the redacted body.
+  // Names in the statement are redacted. Verify maps a `[REDACTED]` or
+  // stamped `[REDACTED:<sha256-12>]` name back through this original file
+  // table. Narrative sections come from the redacted body.
   const files = parseFiles(sectionAfter(original, 'Files changed'));
   const tools = parseTools(sectionAfter(redacted, 'Tool calls'));
   const policyHits = parsePolicy(sectionAfter(redacted, 'Risk findings'));
@@ -732,7 +732,7 @@ function filesMatching(cwd: string, receiptAbs: string, redactedName: string): s
 function resolveReceiptPathByName(cwd: string, name: string): { path: string | null; reason: string | null } {
   const literal = resolveInside(cwd, name);
   if (literal && isRegularFile(literal)) return { path: literal, reason: null };
-  if (!name.includes('[REDACTED]')) return { path: null, reason: `receipt subject missing: ${name}` };
+  if (!containsRedactionMark(name)) return { path: null, reason: `receipt subject missing: ${name}` };
   const hits = receiptsMatching(cwd, name);
   if (hits.length === 1) return { path: hits[0], reason: null };
   if (hits.length > 1) return { path: null, reason: 'subject name is ambiguous after redaction' };
@@ -746,7 +746,7 @@ function resolveSubjectPath(
 ): { path: string | null; reason: string | null } {
   const literal = resolveInside(cwd, name);
   if (literal && isRegularFile(literal)) return { path: literal, reason: null };
-  if (!name.includes('[REDACTED]') || !receiptAbs) return { path: null, reason: `subject missing: ${name}` };
+  if (!containsRedactionMark(name) || !receiptAbs) return { path: null, reason: `subject missing: ${name}` };
   const hits = filesMatching(cwd, receiptAbs, name);
   if (hits.length === 1) return { path: hits[0], reason: null };
   if (hits.length > 1) return { path: null, reason: 'subject name is ambiguous after redaction' };

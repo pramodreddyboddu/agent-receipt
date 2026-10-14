@@ -61,7 +61,7 @@ describe('redact helpers', () => {
       'aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
     ].join('\n');
     const out = redactSecretsInText(sample);
-    assert.match(out, /AKIA\[REDACTED\]/);
+    assert.match(out, /AKIA\[REDACTED:[0-9a-f]{12}\]/);
     assert.match(out, /ghp_\[REDACTED\]/);
     assert.match(out, /xox\[REDACTED\]/);
     assert.match(out, /\[REDACTED\]/);
@@ -153,7 +153,7 @@ describe('wrap + export + base + redact CLI', () => {
 
   it('version is 1.0.30', () => {
     const out = cli(dir, ['version']);
-    assert.match(out, /1\.0\.46/);
+    assert.match(out, /1\.0\.47/);
   });
 
   it('help lists wrap and export', () => {

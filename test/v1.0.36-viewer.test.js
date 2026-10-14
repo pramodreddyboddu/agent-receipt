@@ -405,7 +405,7 @@ describe('v1.0.40 local viewer', { concurrency: 1 }, () => {
         assert.match(listed.headers['content-type'], /application\/json/);
         assertSecurity(listed.headers, { connectSelf: false });
         assert.equal(listed.body.includes(SECRET), false);
-        assert.match(listed.body, /AKIA\[REDACTED\]/);
+        assert.match(listed.body, /AKIA\[REDACTED:[0-9a-f]{12}\]/);
         const list = JSON.parse(listed.body);
         assert.equal(list.receipts.length, 2);
         const parent = list.receipts.find((row) => row.id === parentId);
@@ -423,7 +423,7 @@ describe('v1.0.40 local viewer', { concurrency: 1 }, () => {
         assert.equal(parent.failed, true);
         assert.equal(parent.session, 'viewer-sess');
         assert.ok(parent.policyHits.some((hit) => hit.rule === 'lockfiles' && hit.action === 'deny'));
-        assert.match(parent.message, /AKIA\[REDACTED\]/);
+        assert.match(parent.message, /AKIA\[REDACTED:[0-9a-f]{12}\]/);
         assert.equal(childRow.agent, 'child');
         assert.equal(childRow.host, 'runner');
         assert.equal(childRow.parent, parentId);
@@ -532,7 +532,7 @@ describe('v1.0.40 local viewer', { concurrency: 1 }, () => {
 
         const served = [index.body, listed.body, detail.body, verify.body, sessions.body].join('\n');
         assert.equal(served.includes(SECRET), false);
-        assert.match(served, /AKIA\[REDACTED\]/);
+        assert.match(served, /AKIA\[REDACTED:[0-9a-f]{12}\]/);
       },
       { PATH: `${openerDir}:${process.env.PATH}` },
     );
@@ -567,8 +567,8 @@ describe('v1.0.40 local viewer', { concurrency: 1 }, () => {
     assert.equal(snapshot.sessions[0].id, 'viewer-sess');
     assert.equal(htmlA.includes(SECRET), false);
     assert.equal(jsonA.includes(SECRET), false);
-    assert.match(htmlA, /AKIA\[REDACTED\]/);
-    assert.match(jsonA, /AKIA\[REDACTED\]/);
+    assert.match(htmlA, /AKIA\[REDACTED:[0-9a-f]{12}\]/);
+    assert.match(jsonA, /AKIA\[REDACTED:[0-9a-f]{12}\]/);
     assert.match(htmlA, /<pre id="viewer-data" hidden>/);
   });
 

@@ -817,10 +817,13 @@ values are masked, a nested receipt or index diff body is replaced with
 \`[REDACTED — nested receipt/index body omitted]\`, and the header Host
 line becomes \`[REDACTED]\`. Session, parent, and agent stay. A
 secret-shaped session id is masked in the receipts and the manifest
-together, and the default directory is \`session-<sha256-12>.session\`
-from the original id. The receipt
-is re-hashed. \`--include-host\` keeps the original bytes, including Host
-and any secrets. \`share --include-host\` still masks secrets and nested
+together, and the receipt is re-hashed. When \`--out\` is omitted, a
+secret-shaped id uses \`session-<sha256-12>.session\` from the original
+id, including when \`--include-host\` leaves the packaged bytes unmasked,
+so the directory name is never the raw secret. \`--include-host\` keeps
+the original bytes, including Host and any secrets, and the manifest
+session stays the original id.
+\`share --include-host\` still masks secrets and nested
 bodies; only session export's flag skips the pipeline.
 A valid source sidecar is copied when the bytes do not change. A rewrite
 whose sidecar fingerprint is the local key is re-signed when keys load,

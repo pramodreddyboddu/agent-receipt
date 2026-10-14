@@ -82,7 +82,7 @@ function scrub(message: string, secrets: string[]): string {
   for (const secret of secrets) {
     if (secret && secret.length >= 8) out = out.split(secret).join('[REDACTED]');
   }
-  return maskJwtTokens(out);
+  return maskJwtTokens(out, 'strict');
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

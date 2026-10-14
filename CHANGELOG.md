@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.47] — 2026-10-14
+
+### Fixed
+
+- JWT masking is a linear scan. A ~1MB run of `eyJ.` no longer goes through a nested quantifier that can backtrack. Real JWTs are still masked. Credential URLs keep the same `scheme://user:password@` replacement, with the scheme capped at 65 characters so that same input cannot make the scheme quantifier eat the whole buffer.
+- Distinct AWS access keys no longer collapse to one masked id. `AKIA` and `ASIA` values are stamped `AKIA[REDACTED:<sha256-12>]` (and the same for `ASIA`) from the original key. The raw key is not in the stamp. The same key always stamps the same way. Session import still merges on the stored session string, so two packages that used different keys stay two sessions. Attest verify still maps that stamped subject name back to the file named in the original receipt.
+- `session export --include-host` without `--out` no longer uses a secret-shaped session id as the directory name. The default directory is `session-<sha256-12>.session` from the original id, the same opaque form as the v1.0.46 export fix. `--include-host` still keeps the original bytes and the original id inside the package. A non-secret id still uses `<id>.session`. `--out` still names the directory.
+- A JWT segment longer than 8 KiB is masked. The per-segment cap is 256 KiB. A longer segment is not treated as a JWT. That bound is the DoS limit for the scan.
+- A hyphen plus a lowercase base64url tail after a JWT (`-suffix`) is consumed with the token, including when padding makes the whole span invalid but the prefix is still a JWT. `_x` and a lone `_` or `-` stay. A mixed-case tail such as `-Def9Xyz` stays inside the token.
+
+### Notes
+
+- These are v1.0.46 Release QA follow-ups.
+- Attest and keyless error scrubbers use a stricter JWT matcher than share, report, session export, and `redactSecretsInText`. Both use this linear scan, the 256 KiB segment cap, and the same suffix rule. The stricter matcher requires a non-empty `alg`. The general path also accepts a header whose `typ` is `JWT`.
+- Package version bumped to `1.0.47`. Pin comments that track the current cut are `v1.0.47`. The action default pin is `1.0.47`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.46] — 2026-10-13
 
 ### Fixed

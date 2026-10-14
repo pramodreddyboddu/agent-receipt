@@ -2,7 +2,25 @@
  * Redaction helpers for safer sharing of receipts.
  * Masks high-signal secrets in Markdown/HTML bodies, then callers re-hash.
  */
-import { appendHashFooter, integrityCutIndex } from './hash.js';
+import { appendHashFooter, integrityCutIndex, sha256Hex } from './hash.js';
+
+/**
+ * 12 hex chars of sha256(secret). Distinct secrets stay distinct after
+ * masking. The same secret always stamps the same way. The stamp is not
+ * reversible to the raw secret.
+ */
+export function secretMaskStamp(secret: string): string {
+  return sha256Hex(secret).slice(0, 12);
+}
+
+/**
+ * True for `[REDACTED]` and the stamped form `[REDACTED:<sha256-12>]`.
+ * The stamp's `]` is not next to `REDACTED`, so a search for the exact
+ * substring `[REDACTED]` misses it.
+ */
+export function containsRedactionMark(text: string): boolean {
+  return /\[REDACTED(?::[0-9a-f]{12})?\]/.test(text);
+}
 
 /** True for receipt / index artifacts that may embed prior secrets. */
 export function isReceiptArtifactPath(path: string): boolean {
@@ -18,14 +36,18 @@ export function isReceiptArtifactPath(path: string): boolean {
  * after `_` or before `_`, because both are word characters. A letter/digit
  * lookaround matches there and still stops at a real word character.
  */
-const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
+type SecretReplacement = string | ((match: string) => string);
+
+const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: SecretReplacement }> = [
   {
+    // Stamp the full key. Two AKIA values must not collapse to one id
+    // after session import merges on the masked session string.
     re: /(?<![A-Za-z0-9])AKIA[0-9A-Z]{16}(?![A-Za-z0-9])/g,
-    replacement: 'AKIA[REDACTED]',
+    replacement: (match) => `AKIA[REDACTED:${secretMaskStamp(match)}]`,
   },
   {
     re: /(?<![A-Za-z0-9])ASIA[0-9A-Z]{16}(?![A-Za-z0-9])/g,
-    replacement: 'ASIA[REDACTED]',
+    replacement: (match) => `ASIA[REDACTED:${secretMaskStamp(match)}]`,
   },
   {
     // ghp_ classic, gho_ OAuth, ghu_ user-to-server, ghs_ server, ghr_ refresh
@@ -121,8 +143,11 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
     replacement: '$1[REDACTED]',
   },
   {
-    // Connection / credential URLs: scheme://user:password@host (or :password@)
-    re: /(?<![A-Za-z0-9])([a-z][a-z0-9+.-]*:\/\/(?:[^:@\/\s"'<>]*):)([^@\/\s"'<>]+)(@)/gi,
+    // Connection / credential URLs: scheme://user:password@host (or :password@).
+    // The scheme is capped at 65 characters. An unbounded `[a-z0-9+.-]*`
+    // includes `.` and, with the `i` flag, eats a long `eyJ.` run before
+    // it looks for `://`, which is quadratic. Real schemes are far shorter.
+    re: /(?<![A-Za-z0-9])([a-z][a-z0-9+.-]{0,64}:\/\/(?:[^:@\/\s"'<>]*):)([^@\/\s"'<>]+)(@)/gi,
     replacement: '$1[REDACTED]$3',
   },
   {
@@ -267,14 +292,53 @@ export function isHighSecretRiskCode(code: string): boolean {
 }
 
 /**
- * A trailing `_x`, `-suffix`, or a lone `_` / `-` that sits on the end of a
- * JWT-shaped match. Longer alternatives are first so `_x` is not peeled as `_`.
- * Mixed-case tails such as `-Def9Xyz` are not a suffix: they stay inside the token.
+ * Per-segment cap for a compact JWT.
+ * 1.0.46 stopped at 8 KiB, so a token-like segment just over that bound
+ * stayed in the clear. 256 KiB is the DoS bound: the scan reads at most
+ * this many token characters per segment, and a longer segment is not a
+ * JWT. The walk is linear. It does not use a nested quantifier.
  */
-const JWT_TRAILING_SUFFIX = /(_[A-Za-z0-9]{1,2}|-[a-z][a-z0-9]*|[_-])$/;
+export const JWT_SEGMENT_MAX = 256 * 1024;
+
+/**
+ * `general` is share, report, session export, and `redactSecretsInText`.
+ * A header with a non-empty `alg`, or `typ` exactly `JWT`, is enough.
+ * `strict` is the attest and keyless error scrubbers. Those require a
+ * non-empty `alg` and do not accept `typ: JWT` alone. Both modes share
+ * this scan, this cap, and the same suffix rule.
+ */
+export type JwtMaskMode = 'general' | 'strict';
+
+/** `_x` / `_ab`, or a lone `_` / `-`. A hyphen plus a lowercase tail is not preserved. */
+const JWT_PRESERVE_SUFFIX = /(_[A-Za-z0-9]{1,2}|[_-])$/;
+/** Lowercase base64url continuation. Consumed with the token, not left visible. */
+const JWT_HYPHEN_LOWER_TAIL = /-[a-z][a-z0-9]*$/;
+
+const JWT_DOT = 46;
+
+function isJwtTokenCode(code: number): boolean {
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    code === 95 ||
+    code === 43 ||
+    code === 47 ||
+    code === 61 ||
+    code === 45
+  );
+}
+
+function isAsciiAlnum(code: number): boolean {
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122)
+  );
+}
 
 function decodeBase64Segment(segment: string): string | null {
-  if (!segment || segment.length > 8192) return null;
+  if (!segment || segment.length > JWT_SEGMENT_MAX) return null;
   let pad = 0;
   if (segment.endsWith('==')) pad = 2;
   else if (segment.endsWith('=')) pad = 1;
@@ -291,7 +355,7 @@ function decodeBase64Segment(segment: string): string | null {
 
 function isBase64Segment(segment: string, allowEmpty: boolean): boolean {
   if (segment.length === 0) return allowEmpty;
-  if (segment.length > 8192) return false;
+  if (segment.length > JWT_SEGMENT_MAX) return false;
   let pad = 0;
   if (segment.endsWith('==')) pad = 2;
   else if (segment.endsWith('=')) pad = 1;
@@ -300,11 +364,15 @@ function isBase64Segment(segment: string, allowEmpty: boolean): boolean {
   return /^[A-Za-z0-9_+\-/]+$/.test(body);
 }
 
-/** Header decodes to a JSON object with a non-empty string `alg`, or `typ` JWT. */
-function headerIsJwt(header: string): boolean {
-  if (!header.startsWith('eyJ')) return false;
+/**
+ * Header decodes to a JSON object. `general` accepts a non-empty string
+ * `alg` or `typ` exactly `JWT`. `strict` accepts only a non-empty `alg`.
+ * A valid header is at least 15 characters (`{"alg":"a"}`).
+ */
+function headerIsJwt(header: string, mode: JwtMaskMode): boolean {
+  if (header.length < 15 || !header.startsWith('eyJ')) return false;
   const decoded = decodeBase64Segment(header);
-  if (!decoded) return false;
+  if (!decoded || decoded.charCodeAt(0) !== 123) return false;
   let parsed: unknown;
   try {
     parsed = JSON.parse(decoded);
@@ -314,6 +382,7 @@ function headerIsJwt(header: string): boolean {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
   const record = parsed as Record<string, unknown>;
   if (typeof record.alg === 'string' && record.alg.length > 0) return true;
+  if (mode === 'strict') return false;
   return record.typ === 'JWT';
 }
 
@@ -322,7 +391,7 @@ function headerIsJwt(header: string): boolean {
  * Payload must be non-empty. Segments may be shorter than 8 characters and may
  * use standard base64 (`+`, `/`, `=`) as well as base64url.
  */
-function isJwtToken(token: string): boolean {
+function isJwtToken(token: string, mode: JwtMaskMode): boolean {
   const parts = token.split('.');
   if (parts.length !== 3) return false;
   const header = parts[0] ?? '';
@@ -331,40 +400,152 @@ function isJwtToken(token: string): boolean {
   if (!isBase64Segment(header, false)) return false;
   if (!isBase64Segment(payload, false)) return false;
   if (!isBase64Segment(signature, true)) return false;
-  return headerIsJwt(header);
-}
-
-function splitJwtSuffix(token: string): { jwt: string; suffix: string } | null {
-  const match = JWT_TRAILING_SUFFIX.exec(token);
-  if (!match || match.index <= 0) return null;
-  const suffix = match[0];
-  const jwt = token.slice(0, match.index);
-  if (!isJwtToken(jwt)) return null;
-  return { jwt, suffix };
+  return headerIsJwt(header, mode);
 }
 
 /**
- * Mask compact JWTs. Runs before the other token patterns so a later pattern
- * cannot split the three segments. Dotted text whose header does not decode
- * as a JWT (`eyJsee.the.docs`, versions, filenames) is left alone.
- * A short suffix immediately after the token (`_x`, `-suffix`) stays visible.
+ * How much of `span` to replace. `keep` characters at the end stay
+ * (`_x`, a lone `_` or `-`). A hyphen plus a lowercase token-alphabet
+ * tail is consumed, including when padding makes the whole span invalid
+ * but the prefix is still a JWT (`…=.` + `-suffix`).
  */
-export function maskJwtTokens(text: string): string {
-  const re =
-    /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_+/=-]{0,8192}(?:\.[A-Za-z0-9_+/=-]{0,8192}){2}(?![A-Za-z0-9_+/=-])/g;
-  return text.replace(re, (match) => {
-    const peeled = splitJwtSuffix(match);
-    if (peeled) return `[REDACTED]${peeled.suffix}`;
-    if (isJwtToken(match)) return '[REDACTED]';
-    return match;
-  });
+function jwtMaskCut(span: string, mode: JwtMaskMode): { cut: number; keep: number } | null {
+  const preserve = JWT_PRESERVE_SUFFIX.exec(span);
+  if (preserve && preserve.index > 0 && isJwtToken(span.slice(0, preserve.index), mode)) {
+    return { cut: preserve.index, keep: preserve[0].length };
+  }
+  if (isJwtToken(span, mode)) return { cut: span.length, keep: 0 };
+  const tail = JWT_HYPHEN_LOWER_TAIL.exec(span);
+  if (tail && tail.index > 0 && isJwtToken(span.slice(0, tail.index), mode)) {
+    return { cut: span.length, keep: 0 };
+  }
+  return null;
+}
+
+function readJwtSegment(text: string, from: number): { end: number; tooLong: boolean } {
+  const n = text.length;
+  const cap = Math.min(n, from + JWT_SEGMENT_MAX);
+  let j = from;
+  while (j < cap && isJwtTokenCode(text.charCodeAt(j))) j += 1;
+  const tooLong = j === from + JWT_SEGMENT_MAX && j < n && isJwtTokenCode(text.charCodeAt(j));
+  return { end: j, tooLong };
+}
+
+/**
+ * Where to resume after a segment that cannot complete a JWT at `start`.
+ * A run with no dot is skipped once. A dot after an over-long segment
+ * resumes within one cap of that dot, which is the first start that
+ * could still fit.
+ */
+function resumeAfterJwtRun(text: string, start: number, segEnd: number, tooLong: boolean): number {
+  const n = text.length;
+  let k = segEnd;
+  if (tooLong) {
+    while (k < n && isJwtTokenCode(text.charCodeAt(k))) k += 1;
+  }
+  if (tooLong && k < n && text.charCodeAt(k) === JWT_DOT) {
+    return Math.max(start + 1, k - JWT_SEGMENT_MAX);
+  }
+  return Math.max(k, start + 1);
+}
+
+interface JwtStructure {
+  end: number;
+  dot1: number;
+}
+
+function readJwtStructure(text: string, start: number): JwtStructure | { resume: number } {
+  const n = text.length;
+  const seg1 = readJwtSegment(text, start);
+  if (seg1.end === start) return { resume: start + 1 };
+  if (seg1.tooLong || seg1.end >= n || text.charCodeAt(seg1.end) !== JWT_DOT) {
+    return { resume: resumeAfterJwtRun(text, start, seg1.end, seg1.tooLong) };
+  }
+  const dot1 = seg1.end;
+  const seg2 = readJwtSegment(text, dot1 + 1);
+  if (seg2.tooLong || seg2.end >= n || text.charCodeAt(seg2.end) !== JWT_DOT) {
+    return { resume: resumeAfterJwtRun(text, start, seg2.end, seg2.tooLong) };
+  }
+  const seg3 = readJwtSegment(text, seg2.end + 1);
+  if (seg3.tooLong) {
+    return { resume: resumeAfterJwtRun(text, start, seg3.end, true) };
+  }
+  return { end: seg3.end, dot1 };
+}
+
+function nextBoundaryEyJ(text: string, from: number): number {
+  const n = text.length;
+  let i = from;
+  while (i < n) {
+    const found = text.indexOf('eyJ', i);
+    if (found < 0) return -1;
+    if (found === 0 || !isAsciiAlnum(text.charCodeAt(found - 1))) return found;
+    i = found + 3;
+  }
+  return -1;
+}
+
+function nextInteriorEyJ(text: string, from: number, dot: number): number {
+  let i = from + 3;
+  while (i < dot) {
+    const found = text.indexOf('eyJ', i);
+    if (found < 0 || found >= dot) return -1;
+    if (!isAsciiAlnum(text.charCodeAt(found - 1))) return found;
+    i = found + 3;
+  }
+  return -1;
+}
+
+/**
+ * Mask compact JWTs. One left-to-right scan, no nested quantifier, so a
+ * long run of `eyJ.` cannot backtrack. Dotted text whose header does not
+ * decode as a JWT (`eyJsee.the.docs`, versions, filenames) is left alone.
+ * `_x` and a lone `_` or `-` stay. A hyphenated lowercase token tail is
+ * consumed with the token.
+ */
+export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): string {
+  const n = text.length;
+  let out = '';
+  let last = 0;
+  let i = 0;
+  while (i < n) {
+    const start = nextBoundaryEyJ(text, i);
+    if (start < 0) break;
+    const structure = readJwtStructure(text, start);
+    if (!('end' in structure)) {
+      i = structure.resume > start ? structure.resume : start + 1;
+      continue;
+    }
+    let cursor = start;
+    let matched = false;
+    while (cursor < structure.dot1) {
+      const span = text.slice(cursor, structure.end);
+      const decided = jwtMaskCut(span, mode);
+      if (decided) {
+        out += text.slice(last, cursor);
+        out += `[REDACTED]${span.slice(decided.cut, decided.cut + decided.keep)}`;
+        last = cursor + decided.cut + decided.keep;
+        i = last;
+        matched = true;
+        break;
+      }
+      const interior = nextInteriorEyJ(text, cursor, structure.dot1);
+      if (interior < 0) break;
+      cursor = interior;
+    }
+    if (!matched) i = structure.dot1 + 1;
+  }
+  out += text.slice(last);
+  return out;
 }
 
 export function redactSecretsInText(text: string): string {
   let out = redactSecretAssignments(text);
   out = maskJwtTokens(out);
   for (const { re, replacement } of SECRET_VALUE_PATTERNS) {
-    out = out.replace(re, replacement);
+    out = typeof replacement === 'function'
+      ? out.replace(re, replacement)
+      : out.replace(re, replacement);
   }
   return out;
 }
@@ -478,7 +659,7 @@ export function redactMarkdownBody(
             '[REDACTED]',
           );
           out.push(
-            `| ${cells[0].trim()} | ${cells[1].trim()} | ${detail.includes('[REDACTED]') ? detail : '[REDACTED — secret detail masked]'} |`,
+            `| ${cells[0].trim()} | ${cells[1].trim()} | ${containsRedactionMark(detail) ? detail : '[REDACTED — secret detail masked]'} |`,
           );
           continue;
         }
