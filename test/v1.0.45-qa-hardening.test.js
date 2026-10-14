@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendHashFooter } from '../dist/lib/hash.js';
+import { redactSecretsInText } from '../dist/lib/redact.js';
 import {
   resetSessionManifestReads,
   sessionManifestReadCount,
@@ -442,8 +443,9 @@ describe('v1.0.45 share and report redaction', () => {
     const html = readFileSync(made.htmlPath, 'utf8');
     const payload = payloadOf(html);
     assert.equal(html.includes(AWS_KEY), false, 'signed report still has the session key');
-    assert.equal(payload.session, 'sess-AKIA[REDACTED]');
-    assert.match(payload.tree, /^session sess-AKIA\[REDACTED\]\n/);
+    const maskedSession = redactSecretsInText(SECRET_SESSION);
+    assert.equal(payload.session, maskedSession);
+    assert.equal(payload.tree.startsWith(`session ${maskedSession}\n`), true);
     assert.equal(payload.tree.includes(AWS_KEY), false);
 
     const single = parseJson(cli(dir, [
@@ -455,12 +457,12 @@ describe('v1.0.45 share and report redaction', () => {
     ]));
     const singleHtml = readFileSync(single.htmlPath, 'utf8');
     assert.equal(singleHtml.includes(AWS_KEY), false, 'one-receipt report still has the session key');
-    assert.equal(payloadOf(singleHtml).session, 'sess-AKIA[REDACTED]');
+    assert.equal(payloadOf(singleHtml).session, maskedSession);
 
     const tree = cli(dir, ['session', SECRET_SESSION]);
     assert.equal(tree.code, 0, tree.err + tree.out);
     assert.equal(tree.out.includes(AWS_KEY), false, 'session tree still has the session key');
-    assert.match(tree.out, /^session sess-AKIA\[REDACTED\]\n/);
+    assert.equal(tree.out.startsWith(`session ${maskedSession}\n`), true);
     assertNoStack(tree.err);
 
     const open = parseJson(cli(dir, [

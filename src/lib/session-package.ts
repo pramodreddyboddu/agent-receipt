@@ -156,6 +156,8 @@ export interface SessionPackageLocation {
  * so the name cannot escape the parent directory and a secret-shaped id is
  * not the directory name. The manifest stores the id written on the packaged
  * receipts. `forceOpaque` hashes `sessionId` as passed (the original id).
+ * Session export sets it when redaction changes the id, and also when
+ * `--include-host` leaves the bytes raw but the id is still secret-shaped.
  */
 export function sessionPackageBaseName(sessionId: string, forceOpaque = false): string {
   if (!forceOpaque && SAFE_DIR_ID.test(sessionId) && !sessionId.includes('..')) {

@@ -20,6 +20,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendHashFooter, verifyMarkdown } from '../dist/lib/hash.js';
 import { spanIdFor, traceIdFor } from '../dist/lib/otlp.js';
+import { redactSecretsInText } from '../dist/lib/redact.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, 'bin', 'agent-receipt.js');
@@ -279,13 +280,14 @@ describe('v1.0.40 OTLP export', () => {
     assert.equal(doc.resourceSpans.length, 1);
     assert.equal(doc.resourceSpans[0].scopeSpans.length, 1);
     assert.equal(doc.resourceSpans[0].scopeSpans[0].scope.name, 'agent-receipt');
-    assert.equal(doc.resourceSpans[0].scopeSpans[0].scope.version, '1.0.46');
+    assert.equal(doc.resourceSpans[0].scopeSpans[0].scope.version, '1.0.47');
     assert.equal(resourceAttr(doc, 'service.name').value.stringValue, 'agent-receipt');
-    assert.equal(resourceAttr(doc, 'service.version').value.stringValue, '1.0.46');
-    assert.equal(resourceAttr(doc, 'host.name').value.stringValue, 'AKIA[REDACTED]');
+    assert.equal(resourceAttr(doc, 'service.version').value.stringValue, '1.0.47');
+    const maskedHost = redactSecretsInText(AKIA);
+    assert.equal(resourceAttr(doc, 'host.name').value.stringValue, maskedHost);
     assert.equal(resourceAttr(doc, 'vcs.repository.url.full').value.stringValue, 'https://github.com/example/repo.git');
     assert.equal(text.includes(AKIA), false);
-    assert.equal(text.includes('AKIA[REDACTED]'), true);
+    assert.equal(text.includes(maskedHost), true);
     assert.equal(first.out.includes(AKIA), false);
 
     const traceId = captured.sha256.slice(0, 32);
@@ -309,7 +311,7 @@ describe('v1.0.40 OTLP export', () => {
     assert.equal(attr(root, 'agent_receipt.index').value.intValue, '0');
     assert.match(attr(root, 'agent_receipt.risk').value.intValue, /^\d+$/);
     assert.match(attr(root, 'agent_receipt.hash_chain_position').value.intValue, /^[1-9]\d*$/);
-    assert.equal(attr(root, 'host.name').value.stringValue, 'AKIA[REDACTED]');
+    assert.equal(attr(root, 'host.name').value.stringValue, maskedHost);
     const stamp = readFileSync(captured.path, 'utf8').match(/^- \*\*Timestamp\*\*: (\S+)/m)[1];
     const nano = (BigInt(Date.parse(stamp)) * 1000000n).toString();
     assert.equal(root.startTimeUnixNano, nano);

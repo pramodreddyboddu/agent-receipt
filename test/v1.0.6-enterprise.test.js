@@ -99,7 +99,7 @@ describe('cloud token redaction', () => {
     assert.match(out, /npm_\[REDACTED\]/);
     assert.match(out, /AIza\[REDACTED\]/);
     assert.match(out, /ya29\.\[REDACTED\]/);
-    assert.match(out, /ASIA\[REDACTED\]/);
+    assert.match(out, /ASIA\[REDACTED:[0-9a-f]{12}\]/);
     assert.match(out, /sk_live_\[REDACTED\]/);
     assert.match(out, /SG\.\[REDACTED\]/);
     assert.match(out, /AccountKey=\[REDACTED\]/);

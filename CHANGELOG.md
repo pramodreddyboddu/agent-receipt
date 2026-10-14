@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.47] — 2026-10-14
+
+### Fixed
+
+- JWT masking is a linear scan. A ~1MB run of `eyJ.` no longer goes through a nested quantifier that can backtrack. An interior `eyJ` after `-`, `_`, or `=` does not restart the scan over the same span. Restarts inside one header are capped, so a 64KB `eyJ-` or `eyJ_` run and a 1MB dotted `eyJ=` run stay fast. Real JWTs are still masked, including a segment longer than 8 KiB and a token after a short `eyJ-` / `eyJ_` / `eyJ=` prefix. Credential URLs keep the same `scheme://user:password@` replacement, with the scheme capped at 65 characters so that same input cannot make the scheme quantifier eat the whole buffer.
+- Distinct AWS access keys no longer collapse to one masked id. `AKIA` and `ASIA` values are stamped `AKIA[REDACTED:<sha256-12>]` (and the same for `ASIA`) from the original key. The raw key is not in the stamp. The same key always stamps the same way. Session import still merges on the stored session string, so two packages that used different keys stay two sessions. Attest verify still maps that stamped subject name back to the file named in the original receipt.
+- Every other masked session id is stamped the same way when the mask would be a bare `[REDACTED]`. A `ghp_` id becomes `ghp_[REDACTED:<sha256-12>]` from the original id, and a JWT-shaped id becomes `[REDACTED:<sha256-12>]`. Two different secrets stay two sessions after import. The same id always stamps the same way. The raw id is not in the stamp and cannot be looked up after import. Use the masked id on the packaged Session line or in `session-manifest.json`. `AKIA` and `ASIA` keep the key stamp above. Text that is not a session id, such as a `ghp_` token in a message, stays `ghp_[REDACTED]` without a stamp.
+- `session export --include-host` without `--out` no longer uses a secret-shaped session id as the directory name. The default directory is `session-<sha256-12>.session` from the original id, the same opaque form as the v1.0.46 export fix. `--include-host` still keeps the original bytes and the original id inside the package. A non-secret id still uses `<id>.session`. `--out` still names the directory.
+- A JWT segment longer than 8 KiB is masked. The per-segment cap is 256 KiB. A longer segment is not treated as a JWT. That bound is the DoS limit for the scan.
+- A hyphen plus a lowercase base64url tail after a JWT (`-suffix`) is consumed with the token, including when padding makes the whole span invalid but the prefix is still a JWT. `_x` and a lone `_` or `-` stay. A mixed-case tail such as `-Def9Xyz` stays inside the token. A real word such as `-then` stays after the mask (`[REDACTED]-then`).
+
+### Notes
+
+- These are v1.0.46 Release QA follow-ups.
+- Attest and keyless error scrubbers use a stricter JWT matcher than share, report, session export, and `redactSecretsInText`. Both use this linear scan, the 256 KiB segment cap, and the same suffix rule. The stricter matcher requires a non-empty `alg`. The general path also accepts a header whose `typ` is `JWT`.
+- Package version bumped to `1.0.47`. Pin comments that track the current cut are `v1.0.47`. The action default pin is `1.0.47`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.46] — 2026-10-13
 
 ### Fixed

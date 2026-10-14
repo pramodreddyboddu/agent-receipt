@@ -1216,6 +1216,9 @@ const CASES = [
     kind: 'tamper',
     run() {
       const { dir, receipt, packaged, id } = signedPackageAttack();
+      // The two keys stamp differently, so the redacted body no longer
+      // matches the signed payload. That is a payload difference, not a
+      // same-bytes missing signature.
       replaceOnce(receipt, AWS, 'AKIAIOSFODNN7EXAMPLZ');
       writeFileSync(receipt, sealReceipt(readFileSync(receipt, 'utf8')));
       rmSync(receipt.replace(/\.md$/i, '.sig.json'));
@@ -1223,7 +1226,7 @@ const CASES = [
         dir,
         ['report', 'verify', packaged.htmlPath, '--require-sig'],
         'stripped-aws',
-        new RegExp(`receipt ${id} at .* signature mismatch`),
+        new RegExp(`receipt ${id} at .* differs from the signed payload`),
       );
     },
   },

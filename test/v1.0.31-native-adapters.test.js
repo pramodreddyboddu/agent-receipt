@@ -183,7 +183,7 @@ function assertRedacted(text, label) {
   assert.equal(text.includes(GH), false, `${label} kept a GitHub token`);
   assert.equal(text.includes(SK), false, `${label} kept an API key`);
   assert.equal(text.includes(SECRET_URL), false, `${label} kept a URL`);
-  assert.match(text, /AKIA\[REDACTED\]/, label);
+  assert.match(text, /AKIA\[REDACTED:[0-9a-f]{12}\]/, label);
   assert.match(text, /ghp_\[REDACTED\]/, label);
   assert.match(text, /sk-ant-\[REDACTED\]/, label);
   assert.match(text, /\[host\]/, label);
@@ -555,7 +555,7 @@ describe('v1.0.31 native adapters', () => {
     const cursorEvents = getAdapter('cursor').parseTranscript(cursorFile, dir);
     assert.equal(cursorEvents.ok, true, cursorEvents.reason);
     assert.equal(cursorEvents.events[0].tool, 'mcp:github/create_issue');
-    assert.match(cursorEvents.events[0].argsSummary, /AKIA\[REDACTED\]/);
+    assert.match(cursorEvents.events[0].argsSummary, /AKIA\[REDACTED:[0-9a-f]{12}\]/);
     assert.equal(cursorEvents.events[0].argsSummary.includes(AKIA), false);
 
     const codexFile = join(dir, 'codex.jsonl');
@@ -734,7 +734,7 @@ describe('v1.0.31 native adapters', () => {
       const markdown = readFileSync(gate.path, 'utf8');
       const companion = JSON.parse(readFileSync(gate.jsonPath, 'utf8'));
       assert.match(markdown, /## Tool calls/, label);
-      assert.match(markdown, /AKIA\[REDACTED\]/, label);
+      assert.match(markdown, /AKIA\[REDACTED:[0-9a-f]{12}\]/, label);
       assert.match(markdown, /ghp_\[REDACTED\]/, label);
       assert.match(markdown, /tok_\[REDACTED\]/, label);
       assert.match(markdown, /pw='\[REDACTED\]/, label);

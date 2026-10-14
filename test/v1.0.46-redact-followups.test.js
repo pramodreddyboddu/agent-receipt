@@ -2,7 +2,7 @@
  * v1.0.46 — Release QA follow-ups from v1.0.45.
  * Secret-shaped session ids export as a verifiable package, and JWT masking
  * covers alg:none, short segments, standard base64, without swallowing a
- * trailing _x or -suffix.
+ * trailing _x. A hyphenated lowercase tail is consumed (v1.0.47).
  */
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,7 +20,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { redactSecretsInText } from '../dist/lib/redact.js';
+import { maskSessionId, redactSecretsInText } from '../dist/lib/redact.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, 'bin', 'agent-receipt.js');
@@ -135,7 +135,7 @@ function opaqueName(sessionId) {
 }
 
 describe('v1.0.46 JWT mask coverage and boundary', () => {
-  it('masks alg:none, short segments, and standard base64, and keeps a trailing suffix', () => {
+  it('masks alg:none, short segments, and standard base64, and keeps a trailing _x', () => {
     assert.ok(ALG_NONE.endsWith('.'));
     assert.equal(ALG_NONE.split('.').length, 3);
     assert.ok(SHORT.split('.')[1].length < 8);
@@ -147,7 +147,7 @@ describe('v1.0.46 JWT mask coverage and boundary', () => {
 
     assert.equal(redactSecretsInText(`note ${SAMPLE} please`), 'note [REDACTED] please');
     assert.equal(redactSecretsInText(`${SAMPLE}_x`), '[REDACTED]_x');
-    assert.equal(redactSecretsInText(`${SAMPLE}-suffix`), '[REDACTED]-suffix');
+    assert.equal(redactSecretsInText(`${SAMPLE}-suffix`), '[REDACTED]');
     assert.equal(redactSecretsInText(`${SAMPLE}-`), '[REDACTED]-');
     assert.equal(redactSecretsInText(`${SAMPLE}_`), '[REDACTED]_');
     assert.equal(redactSecretsInText(`${SAMPLE}-Def9Xyz`).includes('Def9Xyz'), false);
@@ -161,12 +161,12 @@ describe('v1.0.46 JWT mask coverage and boundary', () => {
     assert.equal(redactSecretsInText('file.name.txt'), 'file.name.txt');
     assert.equal(redactSecretsInText('foo.bar.baz'), 'foo.bar.baz');
     assert.equal(redactSecretsInText(GHP), 'ghp_[REDACTED]');
-    assert.equal(redactSecretsInText(AKIA_SESSION), 'sess-AKIA[REDACTED]');
+    assert.match(redactSecretsInText(AKIA_SESSION), /^sess-AKIA\[REDACTED:[0-9a-f]{12}\]$/);
     assert.equal(redactSecretsInText(SAMPLE), '[REDACTED]');
     assert.equal(redactSecretsInText('sess-plain'), 'sess-plain');
   });
 
-  it('redacts the missed JWT shapes on share and report and leaves the suffix', () => {
+  it('redacts the missed JWT shapes on share and report and keeps _x', () => {
     const dir = gitRepo('ar1046-jwt-');
     const message = [
       `none ${ALG_NONE} end`,
@@ -203,14 +203,14 @@ describe('v1.0.46 JWT mask coverage and boundary', () => {
       assert.equal(sharedResult.out.includes(token), false, 'share stdout still has a raw token');
     }
     assert.equal(md.includes('[REDACTED]_x'), true);
-    assert.equal(md.includes('[REDACTED]-suffix'), true);
+    assert.equal(md.includes('-suffix'), false);
     assert.equal(shareHtml.includes('[REDACTED]_x'), true);
-    assert.equal(shareHtml.includes('[REDACTED]-suffix'), true);
+    assert.equal(shareHtml.includes('-suffix'), false);
     assert.equal(md.includes('eyJsee.the.docs'), true);
     assert.equal(md.includes('v1.0.46'), true);
     assert.equal(md.includes('file.name.txt'), true);
     assert.equal(md.includes('foo.bar.baz'), true);
-    assert.equal(md.includes('suffix'), true);
+    assert.equal(md.includes('suffix'), false);
     assert.equal(cli(dir, ['verify', '--package', shared.packagePath]).code, 0);
 
     const made = parseJson(cli(dir, ['report', receipt, '--json']));
@@ -222,18 +222,19 @@ describe('v1.0.46 JWT mask coverage and boundary', () => {
       assert.equal(shown.includes(token), false);
     }
     assert.equal(shown.includes('[REDACTED]_x'), true);
-    assert.equal(shown.includes('[REDACTED]-suffix'), true);
+    assert.equal(shown.includes('-suffix'), false);
     assert.equal(shown.includes('eyJsee.the.docs'), true);
     assert.equal(shown.includes('file.name.txt'), true);
-    assert.equal(shown.includes('suffix'), true);
+    assert.equal(shown.includes('suffix'), false);
   });
 });
 
 describe('v1.0.46 secret-shaped session export', () => {
   for (const [label, session, masked] of [
-    ['ghp_', GHP, 'ghp_[REDACTED]'],
-    ['jwt', SAMPLE, '[REDACTED]'],
-    ['akia', AKIA_SESSION, 'sess-AKIA[REDACTED]'],
+    // v1.0.47 stamps a masked session id. A message token stays unstamped.
+    ['ghp_', GHP, maskSessionId(GHP)],
+    ['jwt', SAMPLE, maskSessionId(SAMPLE)],
+    ['akia', AKIA_SESSION, redactSecretsInText(AKIA_SESSION)],
   ]) {
     it(`exports and shares a ${label} session id without a manifest mismatch`, () => {
       const dir = gitRepo(`ar1046-${label}-`);

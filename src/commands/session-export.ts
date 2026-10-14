@@ -3,6 +3,7 @@ import { basename, join } from 'node:path';
 import { ByteLimitError, assertReadableSize, resolveByteLimits } from '../lib/byte-limit.js';
 import { color } from '../lib/color.js';
 import { verifyMarkdown } from '../lib/hash.js';
+import { redactSecretsInText } from '../lib/redact.js';
 import { parseLinkMeta, type SessionNode } from '../lib/link.js';
 import { receiptsDir } from '../lib/receipt-index.js';
 import {
@@ -109,6 +110,9 @@ const RESIGN_TIP =
  * those packaged receipts, so a secret-shaped id is masked in both places.
  * When that text differs from the original id and `--out` is omitted, the
  * directory name is `session-<sha256-12>.session` from the original id.
+ * `--include-host` keeps the original bytes, but a secret-shaped id still
+ * uses that opaque directory when `--out` is omitted, so the path does
+ * not contain the raw secret.
  * A rewritten body whose sidecar fingerprint is
  * not the local key is refused unless `--resign`. An unchanged body keeps
  * the original sidecar. A same-key rewrite is re-signed when local keys
@@ -285,7 +289,13 @@ export function cmdSessionExport(
 
   let packagePath: string;
   try {
-    packagePath = resolveSessionPackageDir(cwd, session, opts.out, recorded !== session);
+    const secretShaped = redactSecretsInText(session) !== session;
+    packagePath = resolveSessionPackageDir(
+      cwd,
+      session,
+      opts.out,
+      recorded !== session || secretShaped,
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return finish(emptyReport(recorded, 1, message));
