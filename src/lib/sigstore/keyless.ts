@@ -26,6 +26,7 @@ import {
   encodeBase64,
   type DsseEnvelope,
 } from '../dsse.js';
+import { maskJwtTokens } from '../redact.js';
 import { fingerprint } from '../sign.js';
 import {
   chainToTrustedRoot,
@@ -81,7 +82,7 @@ function scrub(message: string, secrets: string[]): string {
   for (const secret of secrets) {
     if (secret && secret.length >= 8) out = out.split(secret).join('[REDACTED]');
   }
-  return out.replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?/g, '[REDACTED]');
+  return maskJwtTokens(out);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

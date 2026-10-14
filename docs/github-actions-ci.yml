@@ -45,6 +45,8 @@
 # Chunked session text is a local stdout write. This smoke still does not listen and does not push.
 # v1.0.45 left that live file unchanged for the same reason.
 # Share redaction, session-manifest member hashes, and session stdout EPIPE are local. This smoke still does not listen and does not push.
+# v1.0.46 left that live file unchanged for the same reason.
+# Session-id export masking and JWT mask coverage are local redaction. This smoke still does not listen and does not push.
 name: CI
 
 on:

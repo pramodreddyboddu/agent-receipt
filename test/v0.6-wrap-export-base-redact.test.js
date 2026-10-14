@@ -153,7 +153,7 @@ describe('wrap + export + base + redact CLI', () => {
 
   it('version is 1.0.30', () => {
     const out = cli(dir, ['version']);
-    assert.match(out, /1\.0\.45/);
+    assert.match(out, /1\.0\.46/);
   });
 
   it('help lists wrap and export', () => {

@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.46] — 2026-10-13
+
+### Fixed
+
+- `session export` (and `session pack`) of a session id that looks like a secret no longer exits 2 with a manifest/session mismatch. Share's redaction masked the Session line in the packaged receipt and re-hashed those bytes, then wrote the original id into `session-manifest.json`. The export integrity check compared those two and failed closed. The manifest `session` field is now the id on the packaged receipts, and the member hashes stay the hashes of the bytes that were written. When that id differs from the original and `--out` is omitted, the directory name is `session-<sha256-12>.session` from the original id, so the raw id is not a path segment. `--include-host` still keeps the original bytes and the original id on both sides. A package whose manifest session or member hash is then changed still fails verify.
+- JWT masking now covers an unsigned `alg:none` token (an empty signature after two segments), short header, payload, and signature segments that still decode as a JWT header, and standard base64 (`+`, `/`, `=`) as well as base64url. The same share, report, and message paths as 1.0.45 apply. Dotted text that is not a token (a version, a filename, or an `eyJ` string whose header does not decode to a JWT) is left alone.
+- A trailing `_x` or `-suffix` immediately after a JWT is no longer swallowed. The token is replaced and that suffix stays.
+
+### Notes
+
+- These are v1.0.45 Release QA follow-ups.
+- Package version bumped to `1.0.46`. Pin comments that track the current cut are `v1.0.46`. The action default pin is `1.0.46`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.45] — 2026-10-13
 
 ### Fixed

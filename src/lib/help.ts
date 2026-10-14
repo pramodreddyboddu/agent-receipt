@@ -805,7 +805,8 @@ including orphans and cycles. The default directory is the sibling of
 outDir: \`.agent-receipt/receipts\` becomes
 \`.agent-receipt/<id>.session/\`. A session id that is not one safe path
 segment (spaces or slashes, such as \`old sess/1\`) is packed as
-\`session-<sha256-12>.session\`. The manifest stores the real id.
+\`session-<sha256-12>.session\`. The manifest stores the id written on
+the packaged receipts.
 \`--out <dir>\` is that directory. An existing path is refused and nothing
 is written.
 The package contains \`session-manifest.json\`, \`receipts/<basename>.md\`
@@ -814,7 +815,10 @@ copied or re-signed. See \`docs/session-package.schema.json\`.
 Unless \`--include-host\`, export uses share's redaction function: secret
 values are masked, a nested receipt or index diff body is replaced with
 \`[REDACTED — nested receipt/index body omitted]\`, and the header Host
-line becomes \`[REDACTED]\`. Session, parent, and agent stay. The receipt
+line becomes \`[REDACTED]\`. Session, parent, and agent stay. A
+secret-shaped session id is masked in the receipts and the manifest
+together, and the default directory is \`session-<sha256-12>.session\`
+from the original id. The receipt
 is re-hashed. \`--include-host\` keeps the original bytes, including Host
 and any secrets. \`share --include-host\` still masks secrets and nested
 bodies; only session export's flag skips the pipeline.

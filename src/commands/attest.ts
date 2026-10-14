@@ -50,7 +50,7 @@ import {
   type ToolCallFact,
 } from '../lib/intoto.js';
 import { listOutDirReceipts, parseSessionHeader, receiptIntegrity } from '../lib/link.js';
-import { redactMarkdownBody, redactSecretsInText } from '../lib/redact.js';
+import { maskJwtTokens, redactMarkdownBody, redactSecretsInText } from '../lib/redact.js';
 import { redactTranscriptText } from '../lib/adapters/redact-transcript.js';
 import {
   auditLogPath,
@@ -171,7 +171,7 @@ function narrative(value: string | null): string | null {
 }
 
 function scrubJwt(message: string): string {
-  return message.replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?/g, '[REDACTED]');
+  return maskJwtTokens(message);
 }
 
 /** Subject names are redacted so a secret in a filename does not enter the statement. */
