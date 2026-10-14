@@ -125,7 +125,9 @@ export interface SessionManifest {
   receiptCount: number;
   /**
    * False when export masked Host (the default). True when `--include-host`
-   * kept the label. Session, parent, and agent are always kept.
+   * kept the label. Session, parent, and agent stay on the receipt. A
+   * secret-shaped session id is masked in the receipt and in `session`
+   * together. `--include-host` keeps the original id.
    */
   includeHost: boolean;
   warnings: string[];
@@ -150,11 +152,13 @@ export interface SessionPackageLocation {
 /**
  * Directory basename for a session id.
  * A single safe path segment is `<id>.session`. Anything else (spaces,
- * slashes) becomes `session-<12 hex of sha256(id)>.session` so the name
- * cannot escape the parent directory. The manifest stores the real id.
+ * slashes, or `forceOpaque`) becomes `session-<12 hex of sha256(id)>.session`
+ * so the name cannot escape the parent directory and a secret-shaped id is
+ * not the directory name. The manifest stores the id written on the packaged
+ * receipts. `forceOpaque` hashes `sessionId` as passed (the original id).
  */
-export function sessionPackageBaseName(sessionId: string): string {
-  if (SAFE_DIR_ID.test(sessionId) && !sessionId.includes('..')) {
+export function sessionPackageBaseName(sessionId: string, forceOpaque = false): string {
+  if (!forceOpaque && SAFE_DIR_ID.test(sessionId) && !sessionId.includes('..')) {
     return `${sessionId}.session`;
   }
   const digest = createHash('sha256').update(sessionId, 'utf8').digest('hex').slice(0, 12);
@@ -164,18 +168,27 @@ export function sessionPackageBaseName(sessionId: string): string {
 /**
  * Default package directory: the sibling of outDir.
  * `.agent-receipt/receipts` → `.agent-receipt/<id>.session`.
+ * `forceOpaque` uses a hash of `sessionId` even when the id is a safe path segment.
  */
-export function defaultSessionPackageDir(cwd: string, sessionId: string): string {
-  return join(dirname(receiptsDir(cwd)), sessionPackageBaseName(sessionId));
+export function defaultSessionPackageDir(
+  cwd: string,
+  sessionId: string,
+  forceOpaque = false,
+): string {
+  return join(dirname(receiptsDir(cwd)), sessionPackageBaseName(sessionId, forceOpaque));
 }
 
-/** `--out` always names the package directory. Omitted keeps the sibling of outDir. */
+/**
+ * `--out` always names the package directory. Omitted keeps the sibling of outDir.
+ * `forceOpaque` applies only to the default directory.
+ */
 export function resolveSessionPackageDir(
   cwd: string,
   sessionId: string,
   out?: string,
+  forceOpaque = false,
 ): string {
-  if (!out) return defaultSessionPackageDir(cwd, sessionId);
+  if (!out) return defaultSessionPackageDir(cwd, sessionId, forceOpaque);
   return resolve(cwd, out);
 }
 

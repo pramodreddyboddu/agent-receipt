@@ -10,6 +10,7 @@ import {
   SESSION_MANIFEST_SIG_NAME,
   SESSION_RECEIPTS_DIR,
   SESSION_WARNING_CYCLE,
+  SESSION_WARNING_MISSING_SESSION,
   SESSION_WARNING_ORPHAN,
   ensurePackageParent,
   isRegularFile,
@@ -104,7 +105,11 @@ const RESIGN_TIP =
  * Verifies first. A failure writes nothing. Unless `--include-host`, each
  * receipt goes through share's redaction pipeline (secrets, nested
  * receipt/index bodies, and Host) and is re-hashed. `--include-host`
- * keeps the original bytes. A rewritten body whose sidecar fingerprint is
+ * keeps the original bytes. The manifest `session` field is the id on
+ * those packaged receipts, so a secret-shaped id is masked in both places.
+ * When that text differs from the original id and `--out` is omitted, the
+ * directory name is `session-<sha256-12>.session` from the original id.
+ * A rewritten body whose sidecar fingerprint is
  * not the local key is refused unless `--resign`. An unchanged body keeps
  * the original sidecar. A same-key rewrite is re-signed when local keys
  * load and left unsigned when they do not. An unsigned source whose bytes
@@ -169,47 +174,6 @@ export function cmdSessionExport(
       2,
       `refusing to export: receipt failed verify: ${detail}`,
     ));
-  }
-
-  let packagePath: string;
-  try {
-    packagePath = resolveSessionPackageDir(cwd, session, opts.out);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return finish(emptyReport(session, 1, message));
-  }
-  try {
-    const st = lstatSync(packagePath);
-    if (st.isSymbolicLink()) {
-      let dangling = false;
-      try {
-        statSync(packagePath);
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code !== 'ENOENT') throw err;
-        dangling = true;
-      }
-      const why = dangling
-        ? `refusing to write through a dangling symlink: ${packagePath}`
-        : `refusing to write through a symlink: ${packagePath}`;
-      return finish(emptyReport(session, 1, why));
-    }
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code !== 'ENOENT') {
-      const message = err instanceof Error ? err.message : String(err);
-      return finish(emptyReport(session, 1, message));
-    }
-  }
-  if (existsSync(packagePath)) {
-    return finish({
-      ...emptyReport(session, 1, `session package already exists: ${packagePath}`),
-      packagePath,
-    });
-  }
-  const outDir = receiptsDir(cwd);
-  if (packagePath === outDir) {
-    return finish(emptyReport(session, 1, 'session export --out must not be the receipt outDir'));
   }
 
   const relBySource = allocateRelPaths(collected.nodes);
@@ -299,16 +263,65 @@ export function cmdSessionExport(
     });
   }
 
+  let recorded = session;
+  try {
+    recorded = recordedSessionId(session, prepared);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return finish(emptyReport(session, 2, message));
+  }
+
   const foreignRewrites = prepared.filter((item) => item.masked && item.foreign);
   if (foreignRewrites.length && !resign) {
     const detail = foreignRewrites
       .map((item) => `${basename(item.node.path)} (signer ${item.sourceFingerprint})`)
       .join(', ');
     return finish(emptyReport(
-      session,
+      recorded,
       2,
       `refusing to re-sign ${detail}: the sidecar was signed by a different key. Pass --resign to re-sign with the local key and record both fingerprints. Nothing was written.`,
     ));
+  }
+
+  let packagePath: string;
+  try {
+    packagePath = resolveSessionPackageDir(cwd, session, opts.out, recorded !== session);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return finish(emptyReport(recorded, 1, message));
+  }
+  try {
+    const st = lstatSync(packagePath);
+    if (st.isSymbolicLink()) {
+      let dangling = false;
+      try {
+        statSync(packagePath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') throw err;
+        dangling = true;
+      }
+      const why = dangling
+        ? `refusing to write through a dangling symlink: ${packagePath}`
+        : `refusing to write through a symlink: ${packagePath}`;
+      return finish(emptyReport(recorded, 1, why));
+    }
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') {
+      const message = err instanceof Error ? err.message : String(err);
+      return finish(emptyReport(recorded, 1, message));
+    }
+  }
+  if (existsSync(packagePath)) {
+    return finish({
+      ...emptyReport(recorded, 1, `session package already exists: ${packagePath}`),
+      packagePath,
+    });
+  }
+  const outDir = receiptsDir(cwd);
+  if (packagePath === outDir) {
+    return finish(emptyReport(recorded, 1, 'session export --out must not be the receipt outDir'));
   }
 
   const tmp = partialPackageDir(packagePath);
@@ -388,7 +401,7 @@ export function cmdSessionExport(
       kind: 'agent-receipt-session',
       version: 1,
       cliVersion: VERSION,
-      session,
+      session: recorded,
       receiptCount: entries.length,
       includeHost,
       warnings,
@@ -404,7 +417,7 @@ export function cmdSessionExport(
 
     const report = finish({
       exitCode: 0,
-      session,
+      session: recorded,
       packagePath,
       manifestPath: join(packagePath, SESSION_MANIFEST_NAME),
       manifestSigPath: signedManifest.sigPath
@@ -424,10 +437,33 @@ export function cmdSessionExport(
     removeTree(tmp);
     const message = err instanceof Error ? err.message : String(err);
     return finish({
-      ...emptyReport(session, 2, `session export failed (${message})`),
+      ...emptyReport(recorded, 2, `session export failed (${message})`),
       packagePath: null,
     });
   }
+}
+
+/**
+ * Session id written on the packaged receipts. Export compares this to the
+ * manifest, so it has to be the text redaction actually stored, not a second
+ * mask of the original id (`--include-host` leaves the receipt raw).
+ * Receipts that disagree throw before anything is written.
+ */
+function recordedSessionId(
+  session: string,
+  prepared: Array<{ node: SessionNode; markdown: string }>,
+): string {
+  const values: string[] = [];
+  for (const item of prepared) {
+    if (item.node.warnings.includes(SESSION_WARNING_MISSING_SESSION)) continue;
+    const parsed = parseLinkMeta(item.markdown).session;
+    if (!parsed) continue;
+    values.push(parsed);
+  }
+  if (values.length === 0) return session;
+  const first = values[0] as string;
+  if (values.every((value) => value === first)) return first;
+  throw new Error('packaged receipts disagree on session id after redaction');
 }
 
 function localFingerprint(cwd: string): string | null {

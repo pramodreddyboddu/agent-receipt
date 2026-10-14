@@ -20,12 +20,6 @@ export function isReceiptArtifactPath(path: string): boolean {
  */
 const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
   {
-    // JWT compact form: eyJ header, payload, signature. Header is base64 of `{"`.
-    // Runs first so a later token pattern cannot split the three segments.
-    re: /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?![A-Za-z0-9])/g,
-    replacement: '[REDACTED]',
-  },
-  {
     re: /(?<![A-Za-z0-9])AKIA[0-9A-Z]{16}(?![A-Za-z0-9])/g,
     replacement: 'AKIA[REDACTED]',
   },
@@ -272,8 +266,103 @@ export function isHighSecretRiskCode(code: string): boolean {
   return HIGH_SECRET_CODES.has(code);
 }
 
+/**
+ * A trailing `_x`, `-suffix`, or a lone `_` / `-` that sits on the end of a
+ * JWT-shaped match. Longer alternatives are first so `_x` is not peeled as `_`.
+ * Mixed-case tails such as `-Def9Xyz` are not a suffix: they stay inside the token.
+ */
+const JWT_TRAILING_SUFFIX = /(_[A-Za-z0-9]{1,2}|-[a-z][a-z0-9]*|[_-])$/;
+
+function decodeBase64Segment(segment: string): string | null {
+  if (!segment || segment.length > 8192) return null;
+  let pad = 0;
+  if (segment.endsWith('==')) pad = 2;
+  else if (segment.endsWith('=')) pad = 1;
+  const body = segment.slice(0, segment.length - pad);
+  if (!body || body.includes('=')) return null;
+  if (!/^[A-Za-z0-9_+\-/]+$/.test(body)) return null;
+  const normalized = body.replace(/-/g, '+').replace(/_/g, '/');
+  if (normalized.length % 4 === 1) return null;
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+  const bytes = Buffer.from(padded, 'base64');
+  if (bytes.length === 0) return null;
+  return bytes.toString('utf8');
+}
+
+function isBase64Segment(segment: string, allowEmpty: boolean): boolean {
+  if (segment.length === 0) return allowEmpty;
+  if (segment.length > 8192) return false;
+  let pad = 0;
+  if (segment.endsWith('==')) pad = 2;
+  else if (segment.endsWith('=')) pad = 1;
+  const body = segment.slice(0, segment.length - pad);
+  if (!body || body.includes('=')) return false;
+  return /^[A-Za-z0-9_+\-/]+$/.test(body);
+}
+
+/** Header decodes to a JSON object with a non-empty string `alg`, or `typ` JWT. */
+function headerIsJwt(header: string): boolean {
+  if (!header.startsWith('eyJ')) return false;
+  const decoded = decodeBase64Segment(header);
+  if (!decoded) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decoded);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+  const record = parsed as Record<string, unknown>;
+  if (typeof record.alg === 'string' && record.alg.length > 0) return true;
+  return record.typ === 'JWT';
+}
+
+/**
+ * Three segments, header.payload.signature. Signature may be empty (`alg:none`).
+ * Payload must be non-empty. Segments may be shorter than 8 characters and may
+ * use standard base64 (`+`, `/`, `=`) as well as base64url.
+ */
+function isJwtToken(token: string): boolean {
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  const header = parts[0] ?? '';
+  const payload = parts[1] ?? '';
+  const signature = parts[2] ?? '';
+  if (!isBase64Segment(header, false)) return false;
+  if (!isBase64Segment(payload, false)) return false;
+  if (!isBase64Segment(signature, true)) return false;
+  return headerIsJwt(header);
+}
+
+function splitJwtSuffix(token: string): { jwt: string; suffix: string } | null {
+  const match = JWT_TRAILING_SUFFIX.exec(token);
+  if (!match || match.index <= 0) return null;
+  const suffix = match[0];
+  const jwt = token.slice(0, match.index);
+  if (!isJwtToken(jwt)) return null;
+  return { jwt, suffix };
+}
+
+/**
+ * Mask compact JWTs. Runs before the other token patterns so a later pattern
+ * cannot split the three segments. Dotted text whose header does not decode
+ * as a JWT (`eyJsee.the.docs`, versions, filenames) is left alone.
+ * A short suffix immediately after the token (`_x`, `-suffix`) stays visible.
+ */
+export function maskJwtTokens(text: string): string {
+  const re =
+    /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_+/=-]{0,8192}(?:\.[A-Za-z0-9_+/=-]{0,8192}){2}(?![A-Za-z0-9_+/=-])/g;
+  return text.replace(re, (match) => {
+    const peeled = splitJwtSuffix(match);
+    if (peeled) return `[REDACTED]${peeled.suffix}`;
+    if (isJwtToken(match)) return '[REDACTED]';
+    return match;
+  });
+}
+
 export function redactSecretsInText(text: string): string {
   let out = redactSecretAssignments(text);
+  out = maskJwtTokens(out);
   for (const { re, replacement } of SECRET_VALUE_PATTERNS) {
     out = out.replace(re, replacement);
   }
@@ -287,8 +376,10 @@ export function redactSecretsInText(text: string): string {
  * - Omits nested prior-receipt / index diff bodies (avoids re-embedding secrets)
  * - Inserts a redaction notice under Session when not already present
  * - Masks an explicit Host label (`[REDACTED]`) unless `maskHost` is false.
- *   Session, parent, and agent stay. Capture passes `maskHost: false` so a
- *   local `--host` survives secret redaction. share / export mask it unless
+ *   Session, parent, and agent stay as fields. A secret-shaped value on
+ *   those lines, including a JWT-shaped session id, is masked with the
+ *   other secret patterns. Capture passes `maskHost: false` so a local
+ *   `--host` survives secret redaction. share / export mask it unless
  *   `--include-host`.
  */
 export function redactMarkdownBody(
