@@ -50,7 +50,7 @@ import {
   type ToolCallFact,
 } from '../lib/intoto.js';
 import { listOutDirReceipts, parseSessionHeader, receiptIntegrity } from '../lib/link.js';
-import { containsRedactionMark, maskJwtTokens, redactMarkdownBody, redactSecretsInText } from '../lib/redact.js';
+import { containsRedactionMark, maskJwtTokens, maskSecretPath, redactMarkdownBody, redactSecretsInText } from '../lib/redact.js';
 import { redactTranscriptText } from '../lib/adapters/redact-transcript.js';
 import {
   auditLogPath,
@@ -174,9 +174,15 @@ function scrubJwt(message: string): string {
   return maskJwtTokens(message, 'strict');
 }
 
-/** Subject names are redacted so a secret in a filename does not enter the statement. */
+/**
+ * Subject names are redacted so a secret in a filename does not enter the
+ * statement. A `ghp_` segment is stamped `ghp_[REDACTED:<sha256-12>]` from
+ * that segment, the same way a secret-shaped session id is stamped, so two
+ * files stay distinct. Verify maps the stamp back by running this on the
+ * original receipt's file name.
+ */
 function publicName(name: string): string {
-  return redactSecretsInText(name);
+  return maskSecretPath(name);
 }
 
 function sectionAfter(text: string, heading: string): string {
