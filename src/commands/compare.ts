@@ -11,6 +11,7 @@ import {
 } from '../lib/receipt.js';
 import { resolveReceiptPath, findLatestReceipt } from './show.js';
 import { color } from '../lib/color.js';
+import { decodeReceiptTablePath } from '../lib/git.js';
 
 export interface ReceiptGlance {
   path: string;
@@ -105,7 +106,7 @@ export function parseReceiptGlance(path: string): ReceiptGlance {
   const filesSection = text.split('## Files changed')[1]?.split(/^## /m)[0] || '';
   for (const line of filesSection.split('\n')) {
     const m = line.match(/^\|\s*\w+\s*\|\s*`([^`]+)`\s*\|/);
-    if (m) glance.files.push(m[1]);
+    if (m) glance.files.push(decodeReceiptTablePath(m[1]));
   }
 
   const toolSection = text.split(/^## Tool calls$/m)[1]?.split(/^## /m)[0];

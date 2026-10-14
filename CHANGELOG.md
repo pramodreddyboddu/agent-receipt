@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.50] — 2026-10-14
+
+### Fixed
+
+- `unquoteGitPath` keeps raw non-ASCII inside a git-quoted path. With `quotePath=false`, a quoted name used to mask each character with `0xff`, so `你` collapsed to one byte and the file dropped out of the receipt and out of `attest`. An octal value above 255 (`\400`) is that character, not a NUL, and the rest of the path stays. Real UTF-8 octal (`\303\251`, `\304\200`) still decodes to the filename.
+- The 1.0.49 sentence for a ~1MB `eyJ` run now matches measured time: about a second on a typical host, around three seconds on a slow one. It does not promise a hard sub-second bound. The masker is unchanged for that wording.
+- Two JWT-shaped tokens joined by one `+` or one `/` are both masked. The joiner stays. Neither token's header, payload, or signature remains in the clear. A third token joined the same way is masked too. The `-`, `_`, and `=` joins from 1.0.48 and 1.0.49 are unchanged. The scan stays linear.
+- A filename that contains a backslash or a newline is included in the receipt files table and as an `attest` subject. A newline is one quoted table row (`"has\nnewline.txt"`) so the row does not split. A secret-shaped name is still stamped, and the raw token is not in the statement.
+- `history --json` masks secret-shaped text in the listing, including a `ghp_` token and the other existing secret patterns. A commit message passed as `--message` no longer shows the raw token. The stored index is left as captured.
+
+### Notes
+
+- These are v1.0.49 Release QA follow-ups.
+- Package version bumped to `1.0.50`. Pin comments that track the current cut are `v1.0.50`. The action default pin is `1.0.50`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.49] — 2026-10-14
 
 ### Fixed
@@ -9,7 +27,7 @@ All notable changes to this project will be documented in this file.
 - Two JWT-shaped tokens joined by one `_` or one `=` are both masked. The joiner stays. Neither token's header, payload, or signature remains in the clear. A third token joined the same way is masked too. The hyphen join from 1.0.48 is unchanged. The scan stays linear.
 - A hyphen suffix stays only when every piece is a whole word, lowercase or with one leading capital (`-then`, `-Then`, `-config-file`). The whole suffix stays, so `-config-file` is not cut down to `[REDACTED]-file`. A tail that is not one of those words is consumed with the token. That includes a short stopword (`-the`, `-a`, `-not`), an all-caps tail (`-THEN`), a digit (`-word9`), and the `-suffix` / `-low` leaks. A mixed tail such as `-suffix-file` is consumed in full. A padded token plus `-Then` or `-config-file` no longer leaves the token in the clear. `_x` and a lone `_` or `-` still stay.
 - Filenames git prints quoted (non-ASCII and other C-style escapes, such as `"caf\303\251.txt"`) are decoded before the receipt is written. `attest` includes them as subjects. A secret-shaped name is still stamped, and the raw token is not in the statement.
-- A ~1MB run of nine `eyJ-` prefixes plus a dot, and a ~1MB run of a JWT header plus repeated `-eyJ-eyJ`, finish well under a second. A header that is only `eyJ-` / `eyJ_` / `eyJ=` chunks is skipped, and a decoded header that is not one JSON object is not passed to `JSON.parse`. Real JWTs, including one after a long glued prefix, stay masked.
+- A ~1MB run of nine `eyJ-` prefixes plus a dot, and a ~1MB run of a JWT header plus repeated `-eyJ-eyJ`, finishes in about a second on a typical host and around three seconds on a slow one. That is not a hard sub-second bound. A header that is only `eyJ-` / `eyJ_` / `eyJ=` chunks is skipped, and a decoded header that is not one JSON object is not passed to `JSON.parse`. Real JWTs, including one after a long glued prefix, stay masked.
 
 ### Notes
 

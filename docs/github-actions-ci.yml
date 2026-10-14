@@ -53,6 +53,8 @@
 # JWT prefix restart, ghp_ path and attest stamps, joined JWTs, and word suffixes are local redaction. This smoke still does not listen and does not push.
 # v1.0.49 left that live file unchanged for the same reason.
 # Joined JWT masking, the hyphen-suffix rule, git-quoted attest paths, and the eyJ scan are local. This smoke still does not listen and does not push.
+# v1.0.50 left that live file unchanged for the same reason.
+# UTF-8 git paths, +/ JWT joins, backslash and newline filenames, and history redaction are local. This smoke still does not listen and does not push.
 name: CI
 
 on:

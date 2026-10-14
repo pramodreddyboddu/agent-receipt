@@ -180,7 +180,7 @@ describe('share + CI json gates', () => {
     assert.equal(gate.verified, true);
     assert.equal(gate.redacted, true);
     assert.equal(gate.failOn, 'high');
-    assert.equal(gate.version, '1.0.49');
+    assert.equal(gate.version, '1.0.50');
     assert.ok(gate.risk.high >= 1);
     assert.match(gate.htmlPath, /leaky-gate\.html$/);
     assert.equal(gate.markdownPath, null);

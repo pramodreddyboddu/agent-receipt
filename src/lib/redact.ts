@@ -630,9 +630,9 @@ function lastBoundaryEyJ(text: string, from: number, end: number): number {
 
 /**
  * Last `eyJ` in the signature segment that is glued on with one `-`, `_`,
- * or `=`. Those three are token characters, so the next header is swallowed
- * into this signature and the other token's payload stays in the clear.
- * One backward pass. No slice of the segment.
+ * `=`, `+`, or `/`. Those five are token characters, so the next header is
+ * swallowed into this signature and the other token's payload stays in
+ * the clear. One backward pass. No slice of the segment.
  */
 function lastJoinedEyJ(text: string, from: number, end: number): number {
   const stop = Math.min(end, text.length);
@@ -641,7 +641,7 @@ function lastJoinedEyJ(text: string, from: number, end: number): number {
       continue;
     }
     const prev = i > 0 ? text.charCodeAt(i - 1) : 0;
-    if (prev !== 45 && prev !== 95 && prev !== 61) continue;
+    if (prev !== 45 && prev !== 95 && prev !== 61 && prev !== 43 && prev !== 47) continue;
     return i;
   }
   return -1;
@@ -649,7 +649,7 @@ function lastJoinedEyJ(text: string, from: number, end: number): number {
 
 /**
  * Index of a second compact JWT glued onto this one with a single `-`,
- * `_`, or `=`. The joiner stays between the two masks.
+ * `_`, `=`, `+`, or `/`. The joiner stays between the two masks.
  */
 function gluedJwtSplit(
   text: string,
@@ -684,11 +684,12 @@ function gluedJwtSplit(
 }
 
 /**
- * True when [start, end) is only `eyJ-`, `eyJ_`, or `eyJ=` chunks.
- * That shape decodes to a repeating `{"~` / `{"\x7f` byte pattern, or it
- * has `=` in the middle, so it is never a JWT header. Skipping it avoids
- * a decode per chunk on a 1MB run of nine `eyJ-` prefixes plus a dot.
- * A real header after those prefixes has other characters and is not skipped.
+ * True when [start, end) is only `eyJ-`, `eyJ_`, `eyJ=`, `eyJ+`, or `eyJ/`
+ * chunks. That shape decodes to a repeating byte pattern, or it has `=`
+ * in the middle, so it is never a JWT header. Skipping it avoids a decode
+ * per chunk on a 1MB run of nine `eyJ-` prefixes plus a dot. The same skip
+ * keeps a `+` or `/` run linear. A real header after those prefixes has
+ * other characters and is not skipped.
  */
 function isPureEyJPrefixRun(text: string, start: number, end: number): boolean {
   const len = end - start;
@@ -698,7 +699,7 @@ function isPureEyJPrefixRun(text: string, start: number, end: number): boolean {
       return false;
     }
     const sep = text.charCodeAt(i + 3);
-    if (sep !== 45 && sep !== 95 && sep !== 61) return false;
+    if (sep !== 45 && sep !== 95 && sep !== 61 && sep !== 43 && sep !== 47) return false;
   }
   return true;
 }
@@ -709,13 +710,13 @@ function isPureEyJPrefixRun(text: string, start: number, end: number): boolean {
  * at every interior `eyJ` after `-`, `_`, or `=`. Those restarts are
  * capped. After the cap, the last `eyJ` before the header dot is tried
  * once, so a real token after a long glued prefix is still masked.
- * Two JWTs joined by one `-`, `_`, or `=` are masked separately. The joiner
- * stays. Dotted text whose header does not decode as a JWT
+ * Two JWTs joined by one `-`, `_`, `=`, `+`, or `/` are masked separately.
+ * The joiner stays. Dotted text whose header does not decode as a JWT
  * (`eyJsee.the.docs`, versions, filenames) is left alone. `_x`, a lone `_`
  * or `-`, and a whole-word suffix such as `-then`, `-Then`, or
  * `-config-file` stay. A token tail, a short stopword, and a mixed tail
- * are consumed. A header that is only `eyJ-` / `eyJ_` / `eyJ=` chunks is
- * skipped in one pass.
+ * are consumed. A header that is only `eyJ-` / `eyJ_` / `eyJ=` / `eyJ+` /
+ * `eyJ/` chunks is skipped in one pass.
  */
 export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): string {
   const n = text.length;

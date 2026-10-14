@@ -19,6 +19,7 @@ import {
 } from './link.js';
 import { failedOnFromIndex, findIndexEntry } from './receipt-index.js';
 import { isProveOnePagerName, isSessionPackageDirName, isSharePackageDirName } from './receipt.js';
+import { decodeReceiptTablePath } from './git.js';
 import { redactMarkdownBody, redactSecretsInText } from './redact.js';
 import { parseRiskSummaryMarkdown } from './risk.js';
 import { inspectReceiptSignature, type SignatureStatus } from './sign.js';
@@ -512,7 +513,7 @@ function parseFiles(lines: string[]): ViewerFile[] {
     if (match[1].trim() === 'Status') continue;
     files.push({
       status: match[1].trim(),
-      path: match[2],
+      path: decodeReceiptTablePath(match[2]),
       insertions: Number(match[3]),
       deletions: Number(match[4]),
     });
