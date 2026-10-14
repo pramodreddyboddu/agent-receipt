@@ -198,11 +198,15 @@ const PASSPHRASE_STOPWORDS = new Set([
 ]);
 
 /**
- * Ordinary English words kept after `[REDACTED]` when they are a lowercase
- * hyphen suffix. Stopwords are kept too. Anything else that is only a
- * lowercase base64url tail stays with the token, including the v1.0.47
- * `-suffix` leak and the strict-mode `-low` fixture. Those two spellings
- * are intentionally absent.
+ * Whole words that may stay after `[REDACTED]` as a hyphen suffix.
+ * A suffix is kept only when every `-` piece is one of these words,
+ * written all-lowercase or with a single leading capital (`-then`,
+ * `-Then`, `-config-file`). All-caps, digits, short stopwords that are
+ * not in this set (`-the`, `-a`), and any other token tail are consumed
+ * with the token. `suffix` and `low` are intentionally absent so the
+ * v1.0.47 / v1.0.48 leaks stay masked. A mixed tail is consumed in full,
+ * so a real word is not split off the end (`-config-file` stays whole;
+ * `-suffix-file` does not leave `-file`).
  */
 const HYPHEN_WORD_SUFFIXES = new Set(
   `word hello file name time after before outside inside between without
@@ -219,7 +223,8 @@ const HYPHEN_WORD_SUFFIXES = new Set(
   list item type date case text line path code data test world still
   under above below again never small large first other which where
   while because through without between during inside around another
-  before after changed change added removed read write open close`.split(/\s+/).filter(Boolean),
+  before after changed change added removed read write open close
+  then config`.split(/\s+/).filter(Boolean),
 );
 
 const PASSPHRASE_WORD = /^[A-Za-z][A-Za-z0-9]{2,20}$/;
@@ -334,10 +339,8 @@ export const JWT_SEGMENT_MAX = 256 * 1024;
  */
 export type JwtMaskMode = 'general' | 'strict';
 
-/** `_x` / `_ab`, or a lone `_` / `-`. A hyphen plus a lowercase tail is not preserved. */
+/** `_x` / `_ab`, or a lone `_` / `-`. A hyphen plus a word or token tail is handled separately. */
 const JWT_PRESERVE_SUFFIX = /(_[A-Za-z0-9]{1,2}|[_-])$/;
-/** Lowercase base64url continuation. Consumed with the token, not left visible. */
-const JWT_HYPHEN_LOWER_TAIL = /-[a-z][a-z0-9]*$/;
 /**
  * Extra `eyJ` starts tried inside one header after the first candidate fails.
  * Each try slices the same span. `eyJ-`, `eyJ_`, and `eyJ=` make every
@@ -404,13 +407,22 @@ function isBase64Segment(segment: string, allowEmpty: boolean): boolean {
  * `alg` or `typ` exactly `JWT`. `strict` accepts only a non-empty `alg`.
  * A valid header is at least 15 characters (`{"alg":"a"}`).
  */
-function headerIsJwt(header: string, mode: JwtMaskMode): boolean {
+function headerIsJwtUncached(header: string, mode: JwtMaskMode): boolean {
   if (header.length < 15 || !header.startsWith('eyJ')) return false;
   const decoded = decodeBase64Segment(header);
-  if (!decoded || decoded.charCodeAt(0) !== 123) return false;
+  if (!decoded) return false;
+  // Compact JWT headers are one JSON object. Reject anything that does
+  // not end at `}` before JSON.parse. A near-miss such as `eyJ-` repeated,
+  // or a real header with `-eyJ` glued on, decodes to text that still
+  // starts with `{` and then fails to parse. The throw is expensive, and
+  // a 1MB run of those shapes used to spend seconds on it.
+  const trimmed = decoded.trimEnd();
+  if (trimmed.charCodeAt(0) !== 123 || trimmed.charCodeAt(trimmed.length - 1) !== 125) {
+    return false;
+  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(decoded);
+    parsed = JSON.parse(trimmed);
   } catch {
     return false;
   }
@@ -419,6 +431,25 @@ function headerIsJwt(header: string, mode: JwtMaskMode): boolean {
   if (typeof record.alg === 'string' && record.alg.length > 0) return true;
   if (mode === 'strict') return false;
   return record.typ === 'JWT';
+}
+
+/**
+ * Repeated adversarial headers are the same short string. Remember the
+ * last answer so a 1MB run does not decode it once per copy. The answer
+ * depends only on the header and the mode.
+ */
+let cachedHeader = '';
+let cachedMode: JwtMaskMode | null = null;
+let cachedHeaderOk = false;
+
+function headerIsJwt(header: string, mode: JwtMaskMode): boolean {
+  if (header.length > 256) return headerIsJwtUncached(header, mode);
+  if (header === cachedHeader && mode === cachedMode) return cachedHeaderOk;
+  const ok = headerIsJwtUncached(header, mode);
+  cachedHeader = header;
+  cachedMode = mode;
+  cachedHeaderOk = ok;
+  return ok;
 }
 
 /**
@@ -438,43 +469,72 @@ function isJwtToken(token: string, mode: JwtMaskMode): boolean {
   return headerIsJwt(header, mode);
 }
 
+function isLetterCode(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
 /**
- * A lowercase hyphen tail stays visible when it is a stopword (`-then`)
- * or another ordinary word (`-word`). A token-alphabet continuation
- * (`-suffix`, a tail with a digit, a string that is not a word) is consumed,
- * including when padding makes the whole span invalid but the prefix is
- * still a JWT.
+ * A dictionary word, all-lowercase or Capitalized. All-caps and mixed
+ * internals are token alphabet, not words. Short stopwords stay out unless
+ * they are listed (`then` is; `the` and `a` are not).
  */
-function isKeptHyphenWord(word: string): boolean {
-  if (PASSPHRASE_STOPWORDS.has(word)) return true;
-  if (!/^[a-z]{3,12}$/.test(word)) return false;
-  return HYPHEN_WORD_SUFFIXES.has(word);
+function isClearHyphenWord(segment: string): boolean {
+  const n = segment.length;
+  if (n < 3 || n > 12) return false;
+  for (let i = 0; i < n; i += 1) {
+    if (!isLetterCode(segment.charCodeAt(i))) return false;
+  }
+  const lower = segment.toLowerCase();
+  const title = lower[0].toUpperCase() + lower.slice(1);
+  if (segment !== lower && segment !== title) return false;
+  return HYPHEN_WORD_SUFFIXES.has(lower);
+}
+
+/**
+ * Trailing `-piece` run. `clear` is true only when every piece is a whole
+ * dictionary word. Otherwise the run is token material and must be consumed
+ * in full, including a dictionary word that sits after a non-word piece.
+ * The index is the first hyphen of the run.
+ */
+function hyphenSuffixRun(span: string): { index: number; clear: boolean } | null {
+  let i = span.length;
+  let clear = true;
+  let parts = 0;
+  while (i > 0) {
+    let j = i;
+    while (j > 0) {
+      const code = span.charCodeAt(j - 1);
+      const digit = code >= 48 && code <= 57;
+      if (!isLetterCode(code) && !digit) break;
+      j -= 1;
+    }
+    if (j === i) break;
+    if (j === 0 || span.charCodeAt(j - 1) !== 45) break;
+    if (!isClearHyphenWord(span.slice(j, i))) clear = false;
+    parts += 1;
+    i = j - 1;
+  }
+  if (parts === 0) return null;
+  return { index: i, clear };
 }
 
 /**
  * How much of `span` to replace. `keep` characters at the end stay
- * (`_x`, a lone `_` or `-`, or a real word such as `-then` or `-word`).
- * A hyphen plus a lowercase token tail (`-suffix`) is consumed.
+ * (`_x`, a lone `_` or `-`, or a whole-word suffix such as `-then`,
+ * `-Then`, or `-config-file`). Anything else after a real token is
+ * consumed, including `-suffix`, `-low`, `-the`, and `-word9`.
  */
 function jwtMaskCut(span: string, mode: JwtMaskMode): { cut: number; keep: number } | null {
   const preserve = JWT_PRESERVE_SUFFIX.exec(span);
   if (preserve && preserve.index > 0 && isJwtToken(span.slice(0, preserve.index), mode)) {
     return { cut: preserve.index, keep: preserve[0].length };
   }
-  const word = /-([a-z][a-z0-9]*)$/.exec(span);
-  if (
-    word &&
-    word.index > 0 &&
-    isKeptHyphenWord(word[1]) &&
-    isJwtToken(span.slice(0, word.index), mode)
-  ) {
-    return { cut: word.index, keep: word[0].length };
-  }
-  if (isJwtToken(span, mode)) return { cut: span.length, keep: 0 };
-  const tail = JWT_HYPHEN_LOWER_TAIL.exec(span);
-  if (tail && tail.index > 0 && isJwtToken(span.slice(0, tail.index), mode)) {
+  const run = hyphenSuffixRun(span);
+  if (run && run.index > 0 && isJwtToken(span.slice(0, run.index), mode)) {
+    if (run.clear) return { cut: run.index, keep: span.length - run.index };
     return { cut: span.length, keep: 0 };
   }
+  if (isJwtToken(span, mode)) return { cut: span.length, keep: 0 };
   return null;
 }
 
@@ -569,10 +629,27 @@ function lastBoundaryEyJ(text: string, from: number, end: number): number {
 }
 
 /**
- * Index of a second compact JWT glued onto this one with a single `-`.
- * The signature segment otherwise swallows the next header, so one token
- * is masked and the rest of the other stays in the clear. One last-`eyJ`
- * check, not a restart per hyphen.
+ * Last `eyJ` in the signature segment that is glued on with one `-`, `_`,
+ * or `=`. Those three are token characters, so the next header is swallowed
+ * into this signature and the other token's payload stays in the clear.
+ * One backward pass. No slice of the segment.
+ */
+function lastJoinedEyJ(text: string, from: number, end: number): number {
+  const stop = Math.min(end, text.length);
+  for (let i = stop - 3; i >= from; i -= 1) {
+    if (text.charCodeAt(i) !== 101 || text.charCodeAt(i + 1) !== 121 || text.charCodeAt(i + 2) !== 74) {
+      continue;
+    }
+    const prev = i > 0 ? text.charCodeAt(i - 1) : 0;
+    if (prev !== 45 && prev !== 95 && prev !== 61) continue;
+    return i;
+  }
+  return -1;
+}
+
+/**
+ * Index of a second compact JWT glued onto this one with a single `-`,
+ * `_`, or `=`. The joiner stays between the two masks.
  */
 function gluedJwtSplit(
   text: string,
@@ -585,15 +662,45 @@ function gluedJwtSplit(
   if (dot2 < 0 || dot2 >= end) return -1;
   // Only the third segment. Searching past `end` would rescan a long tail
   // on every failed candidate.
-  if (!text.slice(dot2 + 1, end).includes('-eyJ')) return -1;
-  const ey = lastBoundaryEyJ(text, dot2 + 1, end);
-  if (ey <= cursor || text.charCodeAt(ey - 1) !== 45) return -1;
+  const ey = lastJoinedEyJ(text, dot2 + 1, end);
+  if (ey <= cursor) return -1;
   if (!isJwtToken(text.slice(cursor, ey - 1), mode)) return -1;
   const right = readJwtStructure(text, ey);
   if (!('end' in right)) return -1;
-  const decided = jwtMaskCut(text.slice(ey, right.end), mode);
+  // A third token glued with `=` makes the whole right span fail base64
+  // (`=` is only padding at the end). Validate the right token up to that
+  // next joiner so the pair still splits, and the following iteration
+  // masks the rest. `_` and `-` stay valid inside a signature, so a clean
+  // pair is unchanged.
+  let rightEnd = right.end;
+  const sigDot = text.indexOf('.', right.dot1 + 1);
+  if (sigDot > right.dot1 && sigDot < right.end) {
+    const next = lastJoinedEyJ(text, sigDot + 1, right.end);
+    if (next > sigDot) rightEnd = next - 1;
+  }
+  const decided = jwtMaskCut(text.slice(ey, rightEnd), mode);
   if (!decided || decided.cut + decided.keep <= 0) return -1;
   return ey;
+}
+
+/**
+ * True when [start, end) is only `eyJ-`, `eyJ_`, or `eyJ=` chunks.
+ * That shape decodes to a repeating `{"~` / `{"\x7f` byte pattern, or it
+ * has `=` in the middle, so it is never a JWT header. Skipping it avoids
+ * a decode per chunk on a 1MB run of nine `eyJ-` prefixes plus a dot.
+ * A real header after those prefixes has other characters and is not skipped.
+ */
+function isPureEyJPrefixRun(text: string, start: number, end: number): boolean {
+  const len = end - start;
+  if (len < 4 || len % 4 !== 0) return false;
+  for (let i = start; i < end; i += 4) {
+    if (text.charCodeAt(i) !== 101 || text.charCodeAt(i + 1) !== 121 || text.charCodeAt(i + 2) !== 74) {
+      return false;
+    }
+    const sep = text.charCodeAt(i + 3);
+    if (sep !== 45 && sep !== 95 && sep !== 61) return false;
+  }
+  return true;
 }
 
 /**
@@ -602,11 +709,13 @@ function gluedJwtSplit(
  * at every interior `eyJ` after `-`, `_`, or `=`. Those restarts are
  * capped. After the cap, the last `eyJ` before the header dot is tried
  * once, so a real token after a long glued prefix is still masked.
- * Two JWTs joined by one `-` are masked separately. The hyphen stays.
- * Dotted text whose header does not decode as a JWT (`eyJsee.the.docs`,
- * versions, filenames) is left alone. `_x`, a lone `_` or `-`, and a real
- * word such as `-then` or `-word` stay. A hyphenated lowercase token tail
- * is consumed.
+ * Two JWTs joined by one `-`, `_`, or `=` are masked separately. The joiner
+ * stays. Dotted text whose header does not decode as a JWT
+ * (`eyJsee.the.docs`, versions, filenames) is left alone. `_x`, a lone `_`
+ * or `-`, and a whole-word suffix such as `-then`, `-Then`, or
+ * `-config-file` stay. A token tail, a short stopword, and a mixed tail
+ * are consumed. A header that is only `eyJ-` / `eyJ_` / `eyJ=` chunks is
+ * skipped in one pass.
  */
 export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): string {
   const n = text.length;
@@ -621,11 +730,18 @@ export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): stri
       i = structure.resume > start ? structure.resume : start + 1;
       continue;
     }
+    if (isPureEyJPrefixRun(text, start, structure.dot1)) {
+      i = structure.dot1 + 1;
+      continue;
+    }
     let cursor = start;
     let matched = false;
     let restarts = 0;
     let triedLast = false;
     while (cursor < structure.dot1) {
+      // A JWT header is at least 15 characters. Shorter tails (`-eyJ`) cannot
+      // match, and slicing them on every copy of a 1MB run dominates.
+      if (structure.dot1 - cursor < 15) break;
       const glued = gluedJwtSplit(text, cursor, structure.dot1, structure.end, mode);
       if (glued > cursor) {
         const leftSpan = text.slice(cursor, glued - 1);

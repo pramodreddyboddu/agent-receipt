@@ -2,6 +2,71 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+/**
+ * Decode a path git printed with C-style quoting (`core.quotePath`).
+ * Non-ASCII, quotes, backslashes, and control bytes show up as
+ * `"caf\303\251.txt"`. Octal escapes are bytes, then UTF-8. A path that
+ * is not wrapped in double quotes is returned unchanged.
+ */
+export function unquoteGitPath(path: string): string {
+  if (path.length < 2 || path.charCodeAt(0) !== 34 || path.charCodeAt(path.length - 1) !== 34) {
+    return path;
+  }
+  const body = path.slice(1, -1);
+  const bytes: number[] = [];
+  for (let i = 0; i < body.length; i += 1) {
+    const code = body.charCodeAt(i);
+    if (code !== 92) {
+      bytes.push(code & 0xff);
+      continue;
+    }
+    const next = body.charCodeAt(i + 1);
+    if (Number.isNaN(next)) {
+      bytes.push(92);
+      break;
+    }
+    if (next === 97) bytes.push(7);
+    else if (next === 98) bytes.push(8);
+    else if (next === 116) bytes.push(9);
+    else if (next === 110) bytes.push(10);
+    else if (next === 118) bytes.push(11);
+    else if (next === 102) bytes.push(12);
+    else if (next === 114) bytes.push(13);
+    else if (next === 92) bytes.push(92);
+    else if (next === 34) bytes.push(34);
+    else if (next >= 48 && next <= 55) {
+      let oct = String.fromCharCode(next);
+      let j = i + 2;
+      while (oct.length < 3 && j < body.length) {
+        const digit = body.charCodeAt(j);
+        if (digit < 48 || digit > 55) break;
+        oct += String.fromCharCode(digit);
+        j += 1;
+      }
+      bytes.push(parseInt(oct, 8) & 0xff);
+      i = j - 1;
+      continue;
+    } else {
+      bytes.push(next & 0xff);
+    }
+    i += 1;
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+/**
+ * A diff path, after git quoting is removed. Rename lines use `=>`.
+ * Unquote first so the braces and arrow are real characters, not escapes.
+ */
+function normalizeDiffPath(raw: string): string {
+  const path = unquoteGitPath(raw);
+  if (!path.includes('=>')) return path;
+  return path
+    .replace(/\{(.+?)\s*=>\s*(.+?)\}/, '$2')
+    .replace(/(.+)\s*=>\s*(.+)/, '$2')
+    .trim();
+}
+
 export function runGit(args: string[], cwd: string): string {
   try {
     return execFileSync('git', args, {
@@ -173,11 +238,7 @@ export function getChangedFiles(
     const parts = line.split('\t');
     if (parts.length < 3) continue;
     const [insS, delS, ...pathParts] = parts;
-    const path = pathParts.join('\t');
-    // rename shows as old => new
-    const finalPath = path.includes('=>')
-      ? path.replace(/\{(.+?)\s*=>\s*(.+?)\}/, '$2').replace(/(.+)\s*=>\s*(.+)/, '$2').trim()
-      : path;
+    const finalPath = normalizeDiffPath(pathParts.join('\t'));
     const binary = insS === '-' && delS === '-';
     numMap.set(finalPath, {
       ins: binary ? 0 : parseInt(insS, 10) || 0,
@@ -195,9 +256,9 @@ export function getChangedFiles(
     let path: string;
     if (status.startsWith('R') || status.startsWith('C')) {
       const bits = rest.split('\t');
-      path = bits[bits.length - 1];
+      path = unquoteGitPath(bits[bits.length - 1]);
     } else {
-      path = rest.split('\t')[0];
+      path = unquoteGitPath(rest.split('\t')[0]);
     }
     const stats = numMap.get(path) || { ins: 0, del: 0, binary: false };
     files.push({
@@ -339,13 +400,7 @@ export function getWorkingTreeFiles(cwd: string): FileStat[] {
       const parts = line.split('\t');
       if (parts.length < 3) continue;
       const [insS, delS, ...pathParts] = parts;
-      const path = pathParts.join('\t');
-      const finalPath = path.includes('=>')
-        ? path
-            .replace(/\{(.+?)\s*=>\s*(.+?)\}/, '$2')
-            .replace(/(.+)\s*=>\s*(.+)/, '$2')
-            .trim()
-        : path;
+      const finalPath = normalizeDiffPath(pathParts.join('\t'));
       const binary = insS === '-' && delS === '-';
       numMap.set(finalPath, {
         ins: binary ? 0 : parseInt(insS, 10) || 0,
@@ -362,9 +417,9 @@ export function getWorkingTreeFiles(cwd: string): FileStat[] {
       let path: string;
       if (status.startsWith('R') || status.startsWith('C')) {
         const bits = rest.split('\t');
-        path = bits[bits.length - 1];
+        path = unquoteGitPath(bits[bits.length - 1]);
       } else {
-        path = rest.split('\t')[0];
+        path = unquoteGitPath(rest.split('\t')[0]);
       }
       const stats = numMap.get(path) || { ins: 0, del: 0, binary: false };
       files.push({
@@ -384,7 +439,8 @@ export function getWorkingTreeFiles(cwd: string): FileStat[] {
   } catch {
     untracked = '';
   }
-  for (const path of untracked.split('\n').filter(Boolean)) {
+  for (const rawPath of untracked.split('\n').filter(Boolean)) {
+    const path = unquoteGitPath(rawPath);
     if (seen.has(path)) continue;
     const { ins, binary } = countLinesAndBinary(cwd, path);
     files.push({
