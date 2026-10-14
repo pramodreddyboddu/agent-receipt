@@ -11,6 +11,7 @@ import { loadConfig, type PolicyException } from './config.js';
 import { parseNestedYaml } from './nested-yaml.js';
 import { globPatternError, globToRegExp, pathMatchesGlob } from './ignore.js';
 import { meetsFailOn, parseRiskSummaryMarkdown, type Severity } from './risk.js';
+import { decodeReceiptTablePath } from './git.js';
 import { redactSecretsInText } from './redact.js';
 import { canonicalBody, appendHashFooter, extractEmbeddedHash } from './hash.js';
 import { inspectReceiptSignature } from './sign.js';
@@ -753,7 +754,7 @@ function readFacts(target: PolicyTarget): ReceiptFacts {
   const fileSection = sectionBody(target.markdown, '## Files changed');
   for (const line of fileSection.split('\n')) {
     const match = line.match(/^\|[^|]*\|\s*`([^`]+)`\s*\|/);
-    if (match) files.push(match[1]);
+    if (match) files.push(decodeReceiptTablePath(match[1]));
   }
   const commands: string[] = [];
   const tools: string[] = [];

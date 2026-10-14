@@ -15,7 +15,7 @@
  * A Sigstore bundle also requires the certificate identity and OIDC issuer.
  */
 import { existsSync, lstatSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { writeExclusiveFile } from '../lib/exclusive-write.js';
 import { DEFAULT_MAX_RECEIPT_BYTES } from '../lib/byte-limit.js';
 import { color } from '../lib/color.js';
@@ -35,6 +35,7 @@ import {
   verifyKeylessFile,
   type IdentityPolicy,
 } from '../lib/sigstore/keyless.js';
+import { decodeReceiptTablePath } from '../lib/git.js';
 import { sha256Hex } from '../lib/hash.js';
 import {
   buildStatement,
@@ -143,13 +144,18 @@ function fail(message: string): never {
 }
 
 function displayName(cwd: string, filePath: string): string | null {
-  const rel = relative(cwd, filePath).replace(/\\/g, '/');
-  if (!rel || rel === '..' || rel.startsWith('../') || isAbsolute(rel)) return null;
-  return rel;
+  const rel = relative(cwd, filePath);
+  // On Windows `\` is the separator. On POSIX it is a filename character,
+  // so a blanket replace would rename `foo\bar` to `foo/bar` and drop it.
+  const normalized = sep === '\\' ? rel.replace(/\\/g, '/') : rel;
+  if (!normalized || normalized === '..' || normalized.startsWith('../') || isAbsolute(normalized)) {
+    return null;
+  }
+  return normalized;
 }
 
 function resolveInside(cwd: string, name: string): string | null {
-  if (!name || name.includes('\0') || name.includes('\\')) return null;
+  if (!name || name.includes('\0')) return null;
   if (isAbsolute(name)) return null;
   const abs = resolve(cwd, name);
   const rel = relative(cwd, abs);
@@ -213,7 +219,7 @@ function parseFiles(section: string): Array<{ status: string; name: string }> {
     if (!match) continue;
     const status = match[1].trim();
     if (!status || status === 'Status' || /^-+$/.test(status)) continue;
-    files.push({ status, name: match[2] });
+    files.push({ status, name: decodeReceiptTablePath(match[2]) });
   }
   return files;
 }

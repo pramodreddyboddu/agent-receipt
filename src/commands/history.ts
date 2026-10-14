@@ -1,5 +1,6 @@
 import { listReceipts, parseReceiptGlance, type ReceiptGlance } from './compare.js';
 import { color, severityColor } from '../lib/color.js';
+import { redactSecretsInText } from '../lib/redact.js';
 import {
   failedOnFromIndex,
   loadIndex,
@@ -148,8 +149,26 @@ function printEmptyHistory(unfiltered: number, opts: HistoryOptions): void {
   printHistoryTips();
 }
 
+/**
+ * History JSON is a local listing, and it still repeats secret-shaped
+ * text that was only in a commit message or `--message`. Mask the same
+ * patterns as share and report. The stored index is left as captured.
+ */
+function redactHistoryJson(value: unknown): unknown {
+  if (typeof value === 'string') return redactSecretsInText(value);
+  if (Array.isArray(value)) return value.map(redactHistoryJson);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = redactHistoryJson(inner);
+    }
+    return out;
+  }
+  return value;
+}
+
 function emitJson(rows: unknown[]): number {
-  console.log(JSON.stringify(rows, null, 2));
+  console.log(JSON.stringify(rows.map(redactHistoryJson), null, 2));
   return 0;
 }
 

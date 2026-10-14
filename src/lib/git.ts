@@ -5,35 +5,71 @@ import { join } from 'node:path';
 /**
  * Decode a path git printed with C-style quoting (`core.quotePath`).
  * Non-ASCII, quotes, backslashes, and control bytes show up as
- * `"caf\303\251.txt"`. Octal escapes are bytes, then UTF-8. A path that
- * is not wrapped in double quotes is returned unchanged.
+ * `"caf\303\251.txt"`. Octal escapes `\000`–`\377` are bytes, then UTF-8.
+ * A path that is not wrapped in double quotes is returned unchanged.
+ *
+ * With `quotePath=false`, git still quotes a path that contains a
+ * backslash, quote, or control byte, and leaves bytes above 0x7f raw.
+ * Node has already decoded those raw bytes to code points. Masking each
+ * one with `0xff` collapses it to a single byte and turns U+0100 into
+ * NUL, so the name no longer matches the file. Those code points are
+ * kept. An octal value above 255 (`\400`) is the Unicode scalar, not a
+ * byte masked down to NUL, and the rest of the path stays.
  */
 export function unquoteGitPath(path: string): string {
   if (path.length < 2 || path.charCodeAt(0) !== 34 || path.charCodeAt(path.length - 1) !== 34) {
     return path;
   }
   const body = path.slice(1, -1);
+  const parts: string[] = [];
   const bytes: number[] = [];
+  const flush = (): void => {
+    if (!bytes.length) return;
+    parts.push(Buffer.from(bytes).toString('utf8'));
+    bytes.length = 0;
+  };
+  const pushByte = (value: number): void => {
+    bytes.push(value);
+  };
+  const pushPoint = (code: number): void => {
+    flush();
+    if (code >= 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)) {
+      parts.push(String.fromCodePoint(code));
+      return;
+    }
+    parts.push('\uFFFD');
+  };
+
   for (let i = 0; i < body.length; i += 1) {
     const code = body.charCodeAt(i);
     if (code !== 92) {
-      bytes.push(code & 0xff);
+      if (code >= 0xd800 && code <= 0xdbff && i + 1 < body.length) {
+        const pair = body.charCodeAt(i + 1);
+        if (pair >= 0xdc00 && pair <= 0xdfff) {
+          const point = ((code - 0xd800) << 10) + (pair - 0xdc00) + 0x10000;
+          pushPoint(point);
+          i += 1;
+          continue;
+        }
+      }
+      if (code < 128) pushByte(code);
+      else pushPoint(code);
       continue;
     }
     const next = body.charCodeAt(i + 1);
     if (Number.isNaN(next)) {
-      bytes.push(92);
+      pushByte(92);
       break;
     }
-    if (next === 97) bytes.push(7);
-    else if (next === 98) bytes.push(8);
-    else if (next === 116) bytes.push(9);
-    else if (next === 110) bytes.push(10);
-    else if (next === 118) bytes.push(11);
-    else if (next === 102) bytes.push(12);
-    else if (next === 114) bytes.push(13);
-    else if (next === 92) bytes.push(92);
-    else if (next === 34) bytes.push(34);
+    if (next === 97) pushByte(7);
+    else if (next === 98) pushByte(8);
+    else if (next === 116) pushByte(9);
+    else if (next === 110) pushByte(10);
+    else if (next === 118) pushByte(11);
+    else if (next === 102) pushByte(12);
+    else if (next === 114) pushByte(13);
+    else if (next === 92) pushByte(92);
+    else if (next === 34) pushByte(34);
     else if (next >= 48 && next <= 55) {
       let oct = String.fromCharCode(next);
       let j = i + 2;
@@ -43,15 +79,76 @@ export function unquoteGitPath(path: string): string {
         oct += String.fromCharCode(digit);
         j += 1;
       }
-      bytes.push(parseInt(oct, 8) & 0xff);
+      const value = parseInt(oct, 8);
+      if (value <= 255) pushByte(value);
+      else pushPoint(value);
       i = j - 1;
       continue;
+    } else if (next < 128) {
+      pushByte(next);
     } else {
-      bytes.push(next & 0xff);
+      pushPoint(next);
     }
     i += 1;
   }
-  return Buffer.from(bytes).toString('utf8');
+  flush();
+  return parts.join('');
+}
+
+/**
+ * True when a receipt table cell must be one physical line. A newline in
+ * the cell splits the row, so the file drops out of every parser. A name
+ * that already looks quoted is quoted again so a later decode does not
+ * strip characters that belong to the name.
+ */
+function needsReceiptQuoting(path: string): boolean {
+  if (/[\u0000-\u001f\u007f\u2028\u2029]/.test(path)) return true;
+  return path.length >= 2 && path.startsWith('"') && path.endsWith('"');
+}
+
+/**
+ * One-line form of a path for a markdown table cell. Names that fit on
+ * one line, including a backslash, are unchanged. A newline or other
+ * control is git-quoted (`"has\nnewline.txt"`) and round-trips through
+ * `decodeReceiptTablePath`.
+ */
+export function quoteReceiptTablePath(path: string): string {
+  if (!needsReceiptQuoting(path)) return path;
+  let out = '"';
+  for (const ch of path) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (ch === '\\') out += '\\\\';
+    else if (ch === '"') out += '\\"';
+    else if (ch === '\n') out += '\\n';
+    else if (ch === '\r') out += '\\r';
+    else if (ch === '\t') out += '\\t';
+    else if (ch === '\b') out += '\\b';
+    else if (ch === '\f') out += '\\f';
+    else if (ch === '\v') out += '\\v';
+    else if (code < 32 || code === 127 || code === 0x2028 || code === 0x2029) {
+      // Named escapes cover the usual controls. Anything else that would
+      // split a row (DEL, U+2028, U+2029) is UTF-8 octal, which unquote
+      // turns back into the same character. A raw U+2028 inside quotes
+      // would still break the line.
+      for (const byte of Buffer.from(ch, 'utf8')) {
+        out += `\\${byte.toString(8).padStart(3, '0')}`;
+      }
+    } else out += ch;
+  }
+  out += '"';
+  return out;
+}
+
+/**
+ * Inverse of `quoteReceiptTablePath`. A cell we quoted contains a
+ * backslash escape. Older receipts store the path raw, including a
+ * backslash, and do not get a second decode.
+ */
+export function decodeReceiptTablePath(cell: string): string {
+  if (cell.length >= 2 && cell.startsWith('"') && cell.endsWith('"') && cell.includes('\\')) {
+    return unquoteGitPath(cell);
+  }
+  return cell;
 }
 
 /**

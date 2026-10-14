@@ -1,4 +1,4 @@
-import type { FileStat } from './git.js';
+import { quoteReceiptTablePath, type FileStat } from './git.js';
 
 export interface ChangeSummary {
   kind: 'package' | 'lockfile' | 'workflow' | 'dependency-manifest';
@@ -104,7 +104,8 @@ export function formatDiffStatTable(files: FileStat[]): string[] {
   );
   lines.push('```');
   for (const f of files) {
-    const shown = f.path.length > maxPath ? '…' + f.path.slice(-(maxPath - 1)) : f.path;
+    const raw = quoteReceiptTablePath(f.path);
+    const shown = raw.length > maxPath ? '…' + raw.slice(-(maxPath - 1)) : raw;
     const path = shieldDiffStatPath(shown);
     const pad = ' '.repeat(Math.max(1, maxPath - path.length + 1));
     const barPlus = '+'.repeat(Math.min(20, f.insertions));

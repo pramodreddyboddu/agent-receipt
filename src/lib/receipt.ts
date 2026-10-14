@@ -1,7 +1,7 @@
 import { appendHashFooter, sha256Hex, canonicalBody } from './hash.js';
 import type { ToolCallSection } from './adapters/tool-calls.js';
 import { formatToolCallSection } from './adapters/tool-calls.js';
-import type { FileStat } from './git.js';
+import { quoteReceiptTablePath, type FileStat } from './git.js';
 import { summarizeRisks, sortRisks, type RiskHint } from './risk.js';
 import { summarizeNotableChanges, formatDiffStatTable } from './summary.js';
 
@@ -340,7 +340,9 @@ export function formatMarkdown(
     lines.push('## Notable changes');
     lines.push('');
     for (const n of notable) {
-      pushUserLines(lines, `- **${n.kind}**: ${n.note} (\`${n.path}\`)`);
+      const path = quoteReceiptTablePath(n.path);
+      const note = n.path ? n.note.replaceAll(n.path, path) : n.note;
+      pushUserLines(lines, `- **${n.kind}**: ${note} (\`${path}\`)`);
     }
     lines.push('');
   }
@@ -368,7 +370,7 @@ export function formatMarkdown(
     for (const f of data.files) {
       pushUserLines(
         lines,
-        `| ${f.status} | \`${f.path}\` | ${f.insertions} | ${f.deletions} | ${f.binary ? 'yes' : ''} |`,
+        `| ${f.status} | \`${quoteReceiptTablePath(f.path)}\` | ${f.insertions} | ${f.deletions} | ${f.binary ? 'yes' : ''} |`,
       );
     }
     lines.push('');
@@ -420,7 +422,7 @@ export function formatMarkdown(
     lines.push('');
   } else {
     for (const p of paths) {
-      pushUserLines(lines, `### \`${p}\``);
+      pushUserLines(lines, `### \`${quoteReceiptTablePath(p)}\``);
       lines.push('');
       lines.push('```diff');
       pushUserLines(lines, data.diffs[p]);

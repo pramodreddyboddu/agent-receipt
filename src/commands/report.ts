@@ -27,6 +27,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { auditLogPath, loadAuditEvents, verifyAuditChain } from '../lib/audit.js';
 import { color } from '../lib/color.js';
 import { loadConfig } from '../lib/config.js';
+import { decodeReceiptTablePath } from '../lib/git.js';
 import { canonicalBody, extractEmbeddedHash, sha256Hex } from '../lib/hash.js';
 import {
   buildSessionNodes,
@@ -213,7 +214,7 @@ function filesFrom(text: string): string[] {
   const files: string[] = [];
   for (const line of filesSection.split('\n')) {
     const match = line.match(/^\|\s*\w+\s*\|\s*`([^`]+)`\s*\|/);
-    if (match) files.push(match[1]);
+    if (match) files.push(decodeReceiptTablePath(match[1]));
   }
   return files;
 }
