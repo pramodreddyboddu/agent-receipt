@@ -20,7 +20,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { redactSecretsInText } from '../dist/lib/redact.js';
+import { maskSessionId, redactSecretsInText } from '../dist/lib/redact.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, 'bin', 'agent-receipt.js');
@@ -231,8 +231,9 @@ describe('v1.0.46 JWT mask coverage and boundary', () => {
 
 describe('v1.0.46 secret-shaped session export', () => {
   for (const [label, session, masked] of [
-    ['ghp_', GHP, 'ghp_[REDACTED]'],
-    ['jwt', SAMPLE, '[REDACTED]'],
+    // v1.0.47 stamps a masked session id. A message token stays unstamped.
+    ['ghp_', GHP, maskSessionId(GHP)],
+    ['jwt', SAMPLE, maskSessionId(SAMPLE)],
     ['akia', AKIA_SESSION, redactSecretsInText(AKIA_SESSION)],
   ]) {
     it(`exports and shares a ${label} session id without a manifest mismatch`, () => {

@@ -817,7 +817,10 @@ values are masked, a nested receipt or index diff body is replaced with
 \`[REDACTED — nested receipt/index body omitted]\`, and the header Host
 line becomes \`[REDACTED]\`. Session, parent, and agent stay. A
 secret-shaped session id is masked in the receipts and the manifest
-together, and the receipt is re-hashed. When \`--out\` is omitted, a
+together, and the receipt is re-hashed. A bare \`[REDACTED]\` on that id
+is stamped with a short hash so two secrets stay two sessions. After
+import, \`session\` with the raw id does not find those receipts. Use the
+masked id from the packaged Session line. When \`--out\` is omitted, a
 secret-shaped id uses \`session-<sha256-12>.session\` from the original
 id, including when \`--include-host\` leaves the packaged bytes unmasked,
 so the directory name is never the raw secret. \`--include-host\` keeps

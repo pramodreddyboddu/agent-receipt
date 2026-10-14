@@ -38,7 +38,7 @@ import {
   type SessionNode,
 } from '../lib/link.js';
 import { defangUrls } from '../lib/prove-html.js';
-import { isHighSecretRiskCode, publishRedactedReceipt, redactSecretsInText } from '../lib/redact.js';
+import { isHighSecretRiskCode, maskSessionId, publishRedactedReceipt, redactSecretsInText } from '../lib/redact.js';
 import { readIndexStrict, receiptsDir } from '../lib/receipt-index.js';
 import { loadResignProvenance, type ResignClaim } from '../lib/resign-provenance.js';
 import {
@@ -595,7 +595,7 @@ function writeReport(
   // Session id is free text. The tree header and the payload used to copy it
   // raw, so an id that looks like a secret (AKIA…) survived the share mask.
   const shownSession =
-    session === null || exposure === 'unredacted' ? session : redactSecretsInText(session);
+    session === null || exposure === 'unredacted' ? session : maskSessionId(session);
   const tree = subject === 'session' ? treeFrom(shownSession ?? '', built) : null;
   const payload: ReportPayload = {
     kind: 'agent-receipt-report',

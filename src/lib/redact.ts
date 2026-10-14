@@ -313,6 +313,13 @@ export type JwtMaskMode = 'general' | 'strict';
 const JWT_PRESERVE_SUFFIX = /(_[A-Za-z0-9]{1,2}|[_-])$/;
 /** Lowercase base64url continuation. Consumed with the token, not left visible. */
 const JWT_HYPHEN_LOWER_TAIL = /-[a-z][a-z0-9]*$/;
+/**
+ * Extra `eyJ` starts tried inside one header after the first candidate fails.
+ * Each try slices the same span. `eyJ-`, `eyJ_`, and `eyJ=` make every
+ * later `eyJ` a candidate, which is quadratic. A short cap still masks a
+ * real token after a few of those prefixes, then the scan moves on.
+ */
+const JWT_INTERIOR_RESTART_CAP = 8;
 
 const JWT_DOT = 46;
 
@@ -405,14 +412,23 @@ function isJwtToken(token: string, mode: JwtMaskMode): boolean {
 
 /**
  * How much of `span` to replace. `keep` characters at the end stay
- * (`_x`, a lone `_` or `-`). A hyphen plus a lowercase token-alphabet
- * tail is consumed, including when padding makes the whole span invalid
- * but the prefix is still a JWT (`…=.` + `-suffix`).
+ * (`_x`, a lone `_` or `-`, or a real word such as `-then`). A hyphen
+ * plus a lowercase token tail (`-suffix`) is consumed, including when
+ * padding makes the whole span invalid but the prefix is still a JWT.
  */
 function jwtMaskCut(span: string, mode: JwtMaskMode): { cut: number; keep: number } | null {
   const preserve = JWT_PRESERVE_SUFFIX.exec(span);
   if (preserve && preserve.index > 0 && isJwtToken(span.slice(0, preserve.index), mode)) {
     return { cut: preserve.index, keep: preserve[0].length };
+  }
+  const word = /-([a-z][a-z0-9]*)$/.exec(span);
+  if (
+    word &&
+    word.index > 0 &&
+    PASSPHRASE_STOPWORDS.has(word[1]) &&
+    isJwtToken(span.slice(0, word.index), mode)
+  ) {
+    return { cut: word.index, keep: word[0].length };
   }
   if (isJwtToken(span, mode)) return { cut: span.length, keep: 0 };
   const tail = JWT_HYPHEN_LOWER_TAIL.exec(span);
@@ -498,10 +514,12 @@ function nextInteriorEyJ(text: string, from: number, dot: number): number {
 
 /**
  * Mask compact JWTs. One left-to-right scan, no nested quantifier, so a
- * long run of `eyJ.` cannot backtrack. Dotted text whose header does not
- * decode as a JWT (`eyJsee.the.docs`, versions, filenames) is left alone.
- * `_x` and a lone `_` or `-` stay. A hyphenated lowercase token tail is
- * consumed with the token.
+ * long run of `eyJ.` cannot backtrack. A failed candidate does not restart
+ * at every interior `eyJ` after `-`, `_`, or `=`. Those restarts are
+ * capped, then the scan moves past the header instead of re-slicing it.
+ * Dotted text whose header does not decode as a JWT (`eyJsee.the.docs`,
+ * versions, filenames) is left alone. `_x`, a lone `_` or `-`, and a real
+ * word such as `-then` stay. A hyphenated lowercase token tail is consumed.
  */
 export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): string {
   const n = text.length;
@@ -518,6 +536,7 @@ export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): stri
     }
     let cursor = start;
     let matched = false;
+    let restarts = 0;
     while (cursor < structure.dot1) {
       const span = text.slice(cursor, structure.end);
       const decided = jwtMaskCut(span, mode);
@@ -529,9 +548,11 @@ export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): stri
         matched = true;
         break;
       }
+      if (restarts >= JWT_INTERIOR_RESTART_CAP) break;
       const interior = nextInteriorEyJ(text, cursor, structure.dot1);
       if (interior < 0) break;
       cursor = interior;
+      restarts += 1;
     }
     if (!matched) i = structure.dot1 + 1;
   }
@@ -551,6 +572,19 @@ export function redactSecretsInText(text: string): string {
 }
 
 /**
+ * Session id after redaction. A bare `[REDACTED]` is stamped with
+ * sha256-12 of the original id so two secret-looking ids (including
+ * `ghp_` tokens that share one mask) stay two sessions. `AKIA` and
+ * `ASIA` already stamp the key and are left as that stamp. The stamp
+ * is not reversible. After import the raw id does not find the copy.
+ */
+export function maskSessionId(id: string): string {
+  const masked = redactSecretsInText(id);
+  if (masked === id || !masked.includes('[REDACTED]')) return masked;
+  return masked.replaceAll('[REDACTED]', `[REDACTED:${secretMaskStamp(id)}]`);
+}
+
+/**
  * Redact a full Markdown receipt body (before Integrity).
  * - Masks secret values in diffs and prose
  * - Masks high/secret risk detail cells
@@ -559,7 +593,9 @@ export function redactSecretsInText(text: string): string {
  * - Masks an explicit Host label (`[REDACTED]`) unless `maskHost` is false.
  *   Session, parent, and agent stay as fields. A secret-shaped value on
  *   those lines, including a JWT-shaped session id, is masked with the
- *   other secret patterns. Capture passes `maskHost: false` so a local
+ *   other secret patterns. The Session value is stamped when that mask
+ *   would otherwise be a bare `[REDACTED]`, so two ids do not merge.
+ *   Capture passes `maskHost: false` so a local
  *   `--host` survives secret redaction. share / export mask it unless
  *   `--include-host`.
  */
@@ -589,6 +625,16 @@ export function redactMarkdownBody(
     if (maskHost && /^- \*\*Host\*\*:/.test(line)) {
       out.push('- **Host**: [REDACTED]');
       continue;
+    }
+
+    // Header field only. A copy of this line inside a diff stays on the
+    // diff path (nested receipt bodies are omitted, not stamped).
+    if (!inDiffFence && !inRiskTable) {
+      const sessionField = /^- \*\*Session\*\*:\s*(.*)$/.exec(line);
+      if (sessionField) {
+        out.push(`- **Session**: ${maskSessionId(sessionField[1])}`);
+        continue;
+      }
     }
 
     // Track ### `path` under Diff summaries

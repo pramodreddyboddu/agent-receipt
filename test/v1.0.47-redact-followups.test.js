@@ -1,7 +1,8 @@
 /**
  * v1.0.47 — Release QA follow-ups from v1.0.46.
- * Linear JWT scan, distinct masked AWS ids, opaque include-host folders,
- * segments over 8 KiB, and hyphenated lowercase tails consumed with the token.
+ * Linear JWT scan, distinct masked session ids, opaque include-host folders,
+ * segments over 8 KiB, and hyphenated lowercase tails. A real word such as
+ * `-then` stays after the token.
  */
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import {
   JWT_SEGMENT_MAX,
   maskJwtTokens,
+  maskSessionId,
   redactSecretsInText,
   secretMaskStamp,
 } from '../dist/lib/redact.js';
@@ -149,6 +151,36 @@ describe('v1.0.47 linear JWT scan', () => {
     assert.equal(out.includes('eyJ.'), true);
     assert.equal(out.includes('[REDACTED]'), true);
   });
+
+  it('stays near v1.0.46 speed on eyJ-, eyJ_, and eyJ= runs', () => {
+    const bound = 500;
+    for (const unit of ['eyJ-', 'eyJ_', 'eyJ=']) {
+      const body = unit.repeat(Math.ceil(65536 / unit.length));
+      assert.ok(body.length >= 65536, unit);
+      const input = `${body}.a.b ${SAMPLE}`;
+      const started = Date.now();
+      const out = redactSecretsInText(input);
+      const elapsed = Date.now() - started;
+      assert.ok(elapsed < bound, `${unit} redaction took ${elapsed}ms`);
+      assert.equal(out.includes(SAMPLE), false, unit);
+      assert.equal(out.includes('[REDACTED]'), true, unit);
+    }
+    const dotted = `${'eyJ='.repeat(Math.ceil((1024 * 1024) / 4))}.a.b`;
+    assert.ok(dotted.length >= 1024 * 1024);
+    const started = Date.now();
+    const out = redactSecretsInText(dotted);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < bound, `1MB eyJ= dotted redaction took ${elapsed}ms`);
+    assert.equal(out.includes('eyJ='), true);
+  });
+
+  it('still masks a real JWT after one eyJ-, eyJ_, or eyJ= prefix', () => {
+    for (const prefix of ['eyJ-', 'eyJ_', 'eyJ=']) {
+      const out = redactSecretsInText(`${prefix}${SAMPLE}`);
+      assert.equal(out.includes(SAMPLE), false, prefix);
+      assert.match(out, /\[REDACTED\]/);
+    }
+  });
 });
 
 describe('v1.0.47 distinct masked secret ids', () => {
@@ -199,6 +231,51 @@ describe('v1.0.47 distinct masked secret ids', () => {
     assert.equal(listedB.receipts[0].agent, 'beta');
     assert.equal(JSON.stringify(listedA).includes('beta'), false);
     assert.equal(JSON.stringify(listedB).includes('alpha'), false);
+  });
+
+  it('stamps two ghp_ session ids so import keeps them apart', () => {
+    const idA = `ghp_${'a'.repeat(36)}`;
+    const idB = `ghp_${'b'.repeat(36)}`;
+    assert.equal(redactSecretsInText(idA), 'ghp_[REDACTED]');
+    assert.equal(redactSecretsInText(idB), 'ghp_[REDACTED]');
+    const maskedA = maskSessionId(idA);
+    const maskedB = maskSessionId(idB);
+    assert.notEqual(maskedA, maskedB);
+    assert.equal(maskedA, `ghp_[REDACTED:${secretMaskStamp(idA)}]`);
+    assert.equal(maskedB, `ghp_[REDACTED:${secretMaskStamp(idB)}]`);
+    assert.equal(maskSessionId(maskedA), maskedA);
+    assert.equal(maskedA.includes('a'.repeat(36)), false);
+    assert.equal(maskedB.includes('b'.repeat(36)), false);
+
+    const alpha = gitRepo('ar1047-ghp-a-');
+    const beta = gitRepo('ar1047-ghp-b-');
+    assert.equal(cli(alpha, [
+      'wrap', '--agent', 'alpha', '--message', 'alpha', '--session', idA, '--json',
+    ]).code, 0);
+    assert.equal(cli(beta, [
+      'wrap', '--agent', 'beta', '--message', 'beta', '--session', idB, '--json',
+    ]).code, 0);
+
+    const expA = parseJson(cli(alpha, ['session', 'export', idA, '--json']));
+    const expB = parseJson(cli(beta, ['session', 'export', idB, '--json']));
+    assert.equal(expA.session, maskedA);
+    assert.equal(expB.session, maskedB);
+    assert.equal(packageText(expA.packagePath).includes(idA), false);
+    assert.equal(packageText(expB.packagePath).includes(idB), false);
+
+    const dest = gitRepo('ar1047-ghp-merge-');
+    assert.equal(cli(dest, ['session', 'import', expA.packagePath, '--json']).code, 0);
+    assert.equal(cli(dest, ['session', 'import', expB.packagePath, '--json']).code, 0);
+
+    const listedA = parseJson(cli(dest, ['session', maskedA, '--json']));
+    const listedB = parseJson(cli(dest, ['session', maskedB, '--json']));
+    assert.equal(listedA.receipts.length, 1);
+    assert.equal(listedB.receipts.length, 1);
+    assert.equal(listedA.receipts[0].agent, 'alpha');
+    assert.equal(listedB.receipts[0].agent, 'beta');
+    const raw = JSON.parse(cli(dest, ['session', idA, '--json']).out);
+    assert.equal(raw.ok, false);
+    assert.equal(raw.receipts.length, 0);
   });
 });
 
@@ -293,6 +370,9 @@ describe('v1.0.47 oversized JWT segments and hyphen tails', () => {
     assert.equal(redactSecretsInText(`${SAMPLE}-suffix`).includes('suffix'), false);
     assert.equal(redactSecretsInText(`${STD}-suffix`).includes('suffix'), false);
     assert.equal(redactSecretsInText(`${STD}-suffix`).includes(STD), false);
+    assert.equal(redactSecretsInText(`${SAMPLE}-then`), '[REDACTED]-then');
+    assert.equal(redactSecretsInText(`${STD}-then`), '[REDACTED]-then');
+    assert.equal(redactSecretsInText('see hello-then next'), 'see hello-then next');
     assert.equal(redactSecretsInText(`${SAMPLE}_x`), '[REDACTED]_x');
     assert.equal(redactSecretsInText(`${SAMPLE}-`), '[REDACTED]-');
     assert.equal(redactSecretsInText(`${SAMPLE}_`), '[REDACTED]_');
@@ -305,7 +385,7 @@ describe('v1.0.47 oversized JWT segments and hyphen tails', () => {
     assert.equal(maskJwtTokens(`${SAMPLE}-low`, 'strict').includes('low'), false);
 
     const dir = gitRepo('ar1047-tail-');
-    const message = `dash ${SAMPLE}-suffix keep ${SAMPLE}_x`;
+    const message = `dash ${SAMPLE}-suffix keep ${SAMPLE}_x word ${SAMPLE}-then`;
     assert.equal(cli(dir, [
       'wrap', '--agent', 'ci', '--message', message, '--session', 's-tail', '--json',
     ]).code, 0);
@@ -314,12 +394,14 @@ describe('v1.0.47 oversized JWT segments and hyphen tails', () => {
     const md = readFileSync(join(shared.packagePath, 'receipt.md'), 'utf8');
     assert.equal(md.includes(SAMPLE), false);
     assert.equal(md.includes('suffix'), false);
+    assert.equal(md.includes('-then'), true);
     assert.equal(md.includes('[REDACTED]_x'), true);
     const shown = payloadOf(readFileSync(
       parseJson(cli(dir, ['report', receipt, '--json'])).htmlPath,
       'utf8',
     )).receipts[0].message;
     assert.equal(shown.includes('suffix'), false);
+    assert.equal(shown.includes('-then'), true);
     assert.equal(shown.includes('[REDACTED]_x'), true);
   });
 });

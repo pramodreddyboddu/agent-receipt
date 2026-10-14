@@ -1,6 +1,6 @@
 import { readFileSync, writeSync } from 'node:fs';
 import { assertReadableSize } from '../lib/byte-limit.js';
-import { redactSecretsInText } from '../lib/redact.js';
+import { maskSessionId } from '../lib/redact.js';
 import { provenanceForNodes } from '../lib/resign-provenance.js';
 import { VERSION } from '../lib/version.js';
 import {
@@ -287,10 +287,12 @@ export function cmdSession(
     return 1;
   }
 
-  // Lookup still uses the raw id. Only the printed tree is masked, same helper
-  // as share and the signed report (AKIA and the other secret patterns).
+  // Local lookup uses the id stored on the receipt. The printed tree shows
+  // the masked id. A bare `[REDACTED]` is stamped so two secrets stay two
+  // sessions. After import that masked id is what was stored, so the raw
+  // id does not find the copy.
   writeSessionTree(
-    redactSecretsInText(session),
+    maskSessionId(session),
     nodes,
     aliasToId,
     provenanceForNodes(cwd, nodes),
