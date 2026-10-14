@@ -1,5 +1,6 @@
 import { readFileSync, writeSync } from 'node:fs';
 import { assertReadableSize } from '../lib/byte-limit.js';
+import { redactSecretsInText } from '../lib/redact.js';
 import { provenanceForNodes } from '../lib/resign-provenance.js';
 import { VERSION } from '../lib/version.js';
 import {
@@ -59,14 +60,34 @@ export interface SessionReport {
 
 const stdoutPause = new Int32Array(new SharedArrayBuffer(4));
 
+function writeErrorCode(err: unknown): string {
+  if (!err || typeof err !== 'object' || !('code' in err)) return '';
+  const code = (err as { code?: unknown }).code;
+  return typeof code === 'string' ? code : '';
+}
+
+/** `session id | head` closes stdout on purpose. That is not a command failure. */
+function isBrokenPipe(err: unknown): boolean {
+  const code = writeErrorCode(err);
+  return code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED';
+}
+
 /**
  * Blocking write so a large tree does not sit in the stdout buffer.
  * `writeSync` can return a short count or EAGAIN when the fd is non-blocking.
+ * EPIPE stops the write and returns. The caller still uses the session exit
+ * code. ENOSPC is a one-line error, not a stack from the bin wrapper.
  */
 function writeStdoutChunk(chunk: string): void {
   const fd = process.stdout.fd;
   if (typeof fd !== 'number' || fd < 0) {
-    process.stdout.write(chunk);
+    try {
+      process.stdout.write(chunk);
+    } catch (err) {
+      if (isBrokenPipe(err)) return;
+      if (writeErrorCode(err) === 'ENOSPC') throw new Error('no space left on device');
+      throw err;
+    }
     return;
   }
   const buf = Buffer.from(chunk);
@@ -79,8 +100,14 @@ function writeStdoutChunk(chunk: string): void {
         continue;
       }
     } catch (err) {
-      const code = err && typeof err === 'object' && 'code' in err ? (err as { code?: string }).code : '';
-      if (code !== 'EAGAIN' && code !== 'EWOULDBLOCK' && code !== 'EBUSY') throw err;
+      const code = writeErrorCode(err);
+      if (code === 'EAGAIN' || code === 'EWOULDBLOCK' || code === 'EBUSY') {
+        Atomics.wait(stdoutPause, 0, 0, 1);
+        continue;
+      }
+      if (isBrokenPipe(err)) return;
+      if (code === 'ENOSPC') throw new Error('no space left on device');
+      throw err;
     }
     Atomics.wait(stdoutPause, 0, 0, 1);
   }
@@ -245,7 +272,13 @@ export function cmdSession(
       receipts: nodes.map(toReceipt),
       reason,
     };
-    console.log(JSON.stringify(report));
+    // `session id --json | head` closes stdout. A thrown EPIPE is not a
+    // session failure. The bin wrapper swallows the async stream error.
+    try {
+      console.log(JSON.stringify(report));
+    } catch (err) {
+      if (!isBrokenPipe(err)) throw err;
+    }
     return exitCode;
   }
 
@@ -254,6 +287,14 @@ export function cmdSession(
     return 1;
   }
 
-  writeSessionTree(session, nodes, aliasToId, provenanceForNodes(cwd, nodes), writeStdoutChunk);
+  // Lookup still uses the raw id. Only the printed tree is masked, same helper
+  // as share and the signed report (AKIA and the other secret patterns).
+  writeSessionTree(
+    redactSecretsInText(session),
+    nodes,
+    aliasToId,
+    provenanceForNodes(cwd, nodes),
+    writeStdoutChunk,
+  );
   return exitCode;
 }

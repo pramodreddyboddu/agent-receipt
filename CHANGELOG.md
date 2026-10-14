@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.45] — 2026-10-13
+
+### Fixed
+
+- The signed report masks `--agent` before the page is written. The label is free text. Share's markdown pipeline already masked it, but the report payload and the session tree copied the raw label. `ghp_` tokens and the other patterns that pipeline already knows are replaced there. `--no-redact` still keeps the original text. A receipt that never went through share still verifies as captured.
+- `--message` already went through that same mask on share and on the report, so a `ghp_` token in the message was already hidden. A JWT (`eyJ` header.payload.signature) was not one of those patterns. It is now masked in the share `receipt.md`, the share `receipt.html`, and the signed report payload. `--no-redact` still keeps the original text.
+- A session id that looks like a secret (for example an id containing an AWS access key, `AKIA` plus 16 uppercase letters or digits) is masked in the signed report and in the human `session` tree. Looking up receipts still uses the original id. `--no-redact` on `report` still prints the original id. `session --json` still returns the original id.
+- `report` and `report verify` of a session package check every member hash, including the recorded hash of `session-manifest.json`. A mismatch exits 2 with an integrity error and does not print VERIFIED.
+- `session <id>` piped to a short reader (`head`) exits 0 when the only failure is EPIPE on stdout.
+- Any command that fails to write to a full disk (`/dev/full`) exits 1 with one clean error line and no stack trace from the bin wrapper.
+- A package with two or more receipts still loads `session-manifest.json` once for otlp, attest, and report.
+
+### Notes
+
+- Package version bumped to `1.0.45`. Pin comments that track the current cut are `v1.0.45`. The action default pin is `1.0.45`.
+- 1.0.30 said the signed report uses the share redaction pipeline. The page still copied the raw `--agent` label into the payload, so a token there survived. Share already masked `ghp_` and the same patterns inside `--message`. This cut adds JWT masking on that message text and masks a secret-looking session id. 1.0.41 checked session-package member hashes on export and import. `report` on a package whose `session-manifest.json` hash did not match still printed VERIFIED. This cut corrects that too.
+- `verify --json` does not grow a hash-cut index. `docs/gate.schema.json` rejects unknown keys, and the required gate keys stay the same. The cut index stays internal.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.44] — 2026-10-13
 
 ### Fixed
