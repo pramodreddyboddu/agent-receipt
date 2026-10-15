@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.51] — 2026-10-14
+
+### Fixed
+
+- A padded standard-base64 JWT followed directly by `+`, `/`, `_`, or `=` and more text is masked. The example `eyJhbGciOiJub25lIn0=.+//v+w==.+y8=+hello` no longer leaves the header, payload, or signature in the clear. The joiner and the text after it stay. The same mask runs on the receipt (when redacted), attest, history, show, compare, and JSON listings. The scan stays linear. The `-`, `_`, `=`, `+`, and `/` joins of two tokens from 1.0.47–1.0.50 are unchanged.
+- A path glued after a JWT with `/` or `+` is not eaten when the boundary is clear. A base64url token keeps `/src/app.ts` and `+src/app.ts`. A padded token keeps the path after the padding. The JWT itself is still masked.
+- A filename that contains a backtick is included in the receipt files table and as an `attest` subject. The cell stores it git-quoted (`"has\140tick.txt"`) so the markdown span stays one span. A secret-shaped name is still stamped, and the raw token is not in the statement.
+- Plain `history`, `show`, and `compare` mask secret-shaped text the same way `history --json` does. A `ghp_` token that was only in the git commit message, or in `--message`, is not printed. The stored receipt and index stay as captured.
+- An old receipt that stored a literal git-quoted name (`"caf\303\251.txt"`) still decodes once with `unquoteGitPath`. The decode does not run twice, does not truncate the name, and does not turn `\400` into a NUL. A cell that was never quoted, including a backslash, stays as it was stored.
+
+### Notes
+
+- These are v1.0.50 Release QA follow-ups.
+- A path glued with `/` or `+` onto an unpadded standard-base64 signature, or onto an empty signature, is still masked through the path. Eating the path is preferred over leaving signature bytes in the clear. The padding `=` boundary and a base64url signature followed by `/` or `+` and a real path are the cases that keep the path.
+- Package version bumped to `1.0.51`. Pin comments that track the current cut are `v1.0.51`. The action default pin is `1.0.51`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.50] — 2026-10-14
 
 ### Fixed

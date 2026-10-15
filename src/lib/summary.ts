@@ -104,7 +104,9 @@ export function formatDiffStatTable(files: FileStat[]): string[] {
   );
   lines.push('```');
   for (const f of files) {
-    const raw = quoteReceiptTablePath(f.path);
+    // A ``` fence already shields a leading fence. Leave backticks raw
+    // here so ```odd.js stays a visible name inside the block.
+    const raw = quoteReceiptTablePath(f.path, { escapeBacktick: false });
     const shown = raw.length > maxPath ? '…' + raw.slice(-(maxPath - 1)) : raw;
     const path = shieldDiffStatPath(shown);
     const pad = ' '.repeat(Math.max(1, maxPath - path.length + 1));

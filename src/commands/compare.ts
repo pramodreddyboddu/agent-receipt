@@ -12,6 +12,7 @@ import {
 import { resolveReceiptPath, findLatestReceipt } from './show.js';
 import { color } from '../lib/color.js';
 import { decodeReceiptTablePath } from '../lib/git.js';
+import { redactSecretsInText } from '../lib/redact.js';
 
 export interface ReceiptGlance {
   path: string;
@@ -147,6 +148,12 @@ function riskKey(r: { severity: string; code: string; detail: string }): string 
   return `${r.severity}:${r.code}:${r.detail}`;
 }
 
+/** Printed text. The stored receipt is unchanged. */
+function shown(value: string | undefined): string {
+  if (value === undefined) return color.dim('(none)');
+  return redactSecretsInText(value);
+}
+
 export interface CompareOptions {
   /** When true, print machine-friendly minimal output */
   quiet?: boolean;
@@ -215,11 +222,11 @@ export function cmdCompare(
   ];
   for (const [label, a, b] of rows) {
     if (a === b) {
-      console.log(`  ${label}: ${a ?? color.dim('(none)')}`);
+      console.log(`  ${label}: ${shown(a)}`);
     } else {
       console.log(`  ${label}:`);
-      console.log(`    A: ${a ?? color.dim('(none)')}`);
-      console.log(`    B: ${b ?? color.dim('(none)')}`);
+      console.log(`    A: ${shown(a)}`);
+      console.log(`    B: ${shown(b)}`);
     }
   }
   console.log('');
@@ -253,8 +260,8 @@ export function cmdCompare(
   if (!files.onlyA.length && !files.onlyB.length) {
     console.log(color.dim('  (same file set)'));
   } else {
-    for (const f of files.onlyA) console.log(color.green(`  + ${f}`) + color.dim('  (only in A)'));
-    for (const f of files.onlyB) console.log(color.red(`  − ${f}`) + color.dim('  (only in B)'));
+    for (const f of files.onlyA) console.log(color.green(`  + ${redactSecretsInText(f)}`) + color.dim('  (only in A)'));
+    for (const f of files.onlyB) console.log(color.red(`  − ${redactSecretsInText(f)}`) + color.dim('  (only in B)'));
     if (files.both.length) {
       console.log(color.dim(`  = ${files.both.length} file(s) in both`));
     }
@@ -274,10 +281,10 @@ export function cmdCompare(
     console.log(color.dim('  (same risk set)'));
   } else {
     for (const r of onlyRiskA) {
-      console.log(color.green(`  + [${r.severity}] ${r.code}`) + ` — ${r.detail}`);
+      console.log(color.green(`  + [${r.severity}] ${r.code}`) + ` — ${redactSecretsInText(r.detail)}`);
     }
     for (const r of onlyRiskB) {
-      console.log(color.red(`  − [${r.severity}] ${r.code}`) + ` — ${r.detail}`);
+      console.log(color.red(`  − [${r.severity}] ${r.code}`) + ` — ${redactSecretsInText(r.detail)}`);
     }
   }
 

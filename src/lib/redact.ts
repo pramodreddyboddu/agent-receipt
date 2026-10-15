@@ -647,6 +647,132 @@ function lastJoinedEyJ(text: string, from: number, end: number): number {
   return -1;
 }
 
+/** `+` `/` `_` `=`. These glue a trailer onto a token that already ended. */
+function isPadJoinerCode(code: number): boolean {
+  return code === 43 || code === 47 || code === 95 || code === 61;
+}
+
+/** Base64url alphabet, including `-`. Standard-base64 `+` `/` `=` are not included. */
+function isBase64UrlChar(code: number): boolean {
+  return isAsciiAlnum(code) || code === 95 || code === 45;
+}
+
+/**
+ * A short filename extension after the segment dot. A longer base64url run
+ * is another token segment, not `.ts`.
+ */
+function extensionAfter(text: string, segEnd: number): boolean {
+  if (segEnd >= text.length || text.charCodeAt(segEnd) !== JWT_DOT) return false;
+  let i = segEnd + 1;
+  let n = 0;
+  while (i < text.length && n < 8) {
+    if (!isAsciiAlnum(text.charCodeAt(i))) break;
+    i += 1;
+    n += 1;
+  }
+  if (n < 1) return false;
+  if (i < text.length && isBase64UrlChar(text.charCodeAt(i))) return false;
+  return true;
+}
+
+/**
+ * True when [at, segEnd) is a path glued with `/` or `+`, not more signature.
+ * A clear path has a second slash, or one slash plus a file extension after
+ * the segment dot. A `+` joiner needs a slash or that extension. A `+`
+ * inside the tail is still signature alphabet, so it is not a path.
+ */
+function isClearGluedPath(text: string, at: number, segEnd: number): boolean {
+  const next = text.charCodeAt(at);
+  if (next !== 47 && next !== 43) return false;
+  let slashes = 0;
+  for (let k = at; k < segEnd; k += 1) {
+    const code = text.charCodeAt(k);
+    if (code === 47) {
+      slashes += 1;
+      continue;
+    }
+    // The leading '+' is the joiner. Another '+' is still signature alphabet.
+    if (code === 43) {
+      if (k !== at) return false;
+      continue;
+    }
+    if (!isBase64UrlChar(code)) return false;
+  }
+  const ext = extensionAfter(text, segEnd);
+  if (next === 43) return slashes >= 1 || ext;
+  return slashes >= 2 || (slashes >= 1 && ext);
+}
+
+/**
+ * Index where a base64url JWT ends and a glued path begins.
+ * The signature is the longest base64url run. `/` and `+` are not in that
+ * alphabet, so the path is outside the token. A header or payload that
+ * already uses `+`, `/`, or `=` is standard base64; the signature may use
+ * those too, and this split stays out so signature bytes are not left behind.
+ * Returns -1 when the boundary is not clear.
+ */
+function clearPathSplit(
+  text: string,
+  cursor: number,
+  dot1: number,
+  end: number,
+  mode: JwtMaskMode,
+): number {
+  const dot2 = text.indexOf('.', dot1 + 1);
+  if (dot2 < 0 || dot2 >= end) return -1;
+  const header = text.slice(cursor, dot1);
+  const payload = text.slice(dot1 + 1, dot2);
+  if (
+    header.includes('+') || header.includes('/') || header.includes('=') ||
+    payload.includes('+') || payload.includes('/') || payload.includes('=')
+  ) {
+    return -1;
+  }
+  let i = dot2 + 1;
+  while (i < end && isBase64UrlChar(text.charCodeAt(i))) i += 1;
+  if (i === dot2 + 1 || i >= end) return -1;
+  if (!isClearGluedPath(text, i, end)) return -1;
+  if (!isJwtToken(text.slice(cursor, i), mode)) return -1;
+  return i;
+}
+
+/**
+ * Index where a padded JWT ends and a `+` `/` `_` `=` trailer begins.
+ * Padding `=` cannot sit in the middle of a segment, so text after a valid
+ * pad is not signature. `-then` and `-suffix` are not this trailer; the
+ * hyphen rule still owns those. Returns -1 when the pad is the end of the
+ * span or the next character is not one of those four joiners.
+ */
+function paddedTrailerEnd(
+  text: string,
+  cursor: number,
+  dot1: number,
+  end: number,
+  mode: JwtMaskMode,
+): number {
+  const dot2 = text.indexOf('.', dot1 + 1);
+  if (dot2 < 0 || dot2 >= end) return -1;
+  const sigStart = dot2 + 1;
+  const eq = text.indexOf('=', sigStart);
+  if (eq <= sigStart || eq >= end) return -1;
+  for (const pads of [1, 2]) {
+    const total = eq + pads;
+    if (total > end) continue;
+    let padsOk = true;
+    for (let k = 0; k < pads; k += 1) {
+      if (text.charCodeAt(eq + k) !== 61) padsOk = false;
+    }
+    if (!padsOk) continue;
+    const segLen = total - sigStart;
+    if (segLen % 4 !== 0) continue;
+    if (total >= end) continue;
+    if (!isPadJoinerCode(text.charCodeAt(total))) continue;
+    if (!isJwtToken(text.slice(cursor, total), mode)) continue;
+    return total;
+  }
+  return -1;
+}
+
 /**
  * Index of a second compact JWT glued onto this one with a single `-`,
  * `_`, `=`, `+`, or `/`. The joiner stays between the two masks.
@@ -711,12 +837,15 @@ function isPureEyJPrefixRun(text: string, start: number, end: number): boolean {
  * capped. After the cap, the last `eyJ` before the header dot is tried
  * once, so a real token after a long glued prefix is still masked.
  * Two JWTs joined by one `-`, `_`, `=`, `+`, or `/` are masked separately.
- * The joiner stays. Dotted text whose header does not decode as a JWT
- * (`eyJsee.the.docs`, versions, filenames) is left alone. `_x`, a lone `_`
- * or `-`, and a whole-word suffix such as `-then`, `-Then`, or
- * `-config-file` stay. A token tail, a short stopword, and a mixed tail
- * are consumed. A header that is only `eyJ-` / `eyJ_` / `eyJ=` / `eyJ+` /
- * `eyJ/` chunks is skipped in one pass.
+ * The joiner stays. A padded token followed by one of `+` `/` `_` `=` and
+ * more text is masked only through the padding, so the trailer stays and
+ * the token does not. A base64url token keeps a path glued on with `/` or
+ * `+` when that path is clearly a path. Dotted text whose header does not
+ * decode as a JWT (`eyJsee.the.docs`, versions, filenames) is left alone.
+ * `_x`, a lone `_` or `-`, and a whole-word suffix such as `-then`,
+ * `-Then`, or `-config-file` stay. A token tail, a short stopword, and a
+ * mixed tail are consumed. A header that is only `eyJ-` / `eyJ_` / `eyJ=` /
+ * `eyJ+` / `eyJ/` chunks is skipped in one pass.
  */
 export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): string {
   const n = text.length;
@@ -755,6 +884,21 @@ export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): stri
           matched = true;
           break;
         }
+      }
+      // Padding, then a base64url path. Both cut only the JWT. A joined
+      // second token was already taken above, so this trailer is not a JWT.
+      const trailer = paddedTrailerEnd(text, cursor, structure.dot1, structure.end, mode);
+      const pathAt = trailer > cursor
+        ? -1
+        : clearPathSplit(text, cursor, structure.dot1, structure.end, mode);
+      const boundary = trailer > cursor ? trailer : pathAt;
+      if (boundary > cursor && isJwtToken(text.slice(cursor, boundary), mode)) {
+        out += text.slice(last, cursor);
+        out += '[REDACTED]';
+        last = boundary;
+        i = boundary;
+        matched = true;
+        break;
       }
       const span = text.slice(cursor, structure.end);
       const decided = jwtMaskCut(span, mode);

@@ -86,7 +86,9 @@ function indexJsonRow(entry: ReceiptIndexEntry): ReceiptIndexEntry {
 
 function shortSummary(g: { message?: string; fileCount?: number; files: string[] }): string {
   if (g.message) {
-    const m = g.message.replace(/\s+/g, ' ').trim();
+    // Mask before the width cut. A cut through the middle of a token would
+    // leave a prefix the patterns no longer match.
+    const m = redactSecretsInText(g.message).replace(/\s+/g, ' ').trim();
     return m.length > 56 ? m.slice(0, 55) + '…' : m;
   }
   const n = g.fileCount ?? g.files.length;
