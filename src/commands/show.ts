@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../lib/config.js';
 import { extractEmbeddedHash } from '../lib/hash.js';
+import { redactSecretsInText } from '../lib/redact.js';
 import {
   isInsideSessionPackage,
   isInsideSharePackage,
@@ -54,8 +55,9 @@ export function cmdShow(cwd: string, pathArg?: string): void {
   const text = readFileSync(path, 'utf8');
   const hash = extractEmbeddedHash(text);
 
-  console.log(`── ${path} ──`);
+  // Display only. The file on disk stays as captured so verify still matches.
+  console.log(`── ${redactSecretsInText(path)} ──`);
   if (hash) console.log(`integrity: sha256:${hash.slice(0, 16)}…`);
   console.log('');
-  console.log(text);
+  console.log(redactSecretsInText(text));
 }

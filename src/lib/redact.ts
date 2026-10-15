@@ -406,11 +406,20 @@ function isBase64Segment(segment: string, allowEmpty: boolean): boolean {
  * Header decodes to a JSON object. `general` accepts a non-empty string
  * `alg` or `typ` exactly `JWT`. `strict` accepts only a non-empty `alg`.
  * A valid header is at least 15 characters (`{"alg":"a"}`).
+ * `alg` is that string when it is non-empty, otherwise null. The path
+ * split uses it and does not guess a signature length.
  */
-function headerIsJwtUncached(header: string, mode: JwtMaskMode): boolean {
-  if (header.length < 15 || !header.startsWith('eyJ')) return false;
+interface JwtHeaderInfo {
+  ok: boolean;
+  alg: string | null;
+}
+
+const JWT_HEADER_MISS: JwtHeaderInfo = { ok: false, alg: null };
+
+function jwtHeaderInfoUncached(header: string, mode: JwtMaskMode): JwtHeaderInfo {
+  if (header.length < 15 || !header.startsWith('eyJ')) return JWT_HEADER_MISS;
   const decoded = decodeBase64Segment(header);
-  if (!decoded) return false;
+  if (!decoded) return JWT_HEADER_MISS;
   // Compact JWT headers are one JSON object. Reject anything that does
   // not end at `}` before JSON.parse. A near-miss such as `eyJ-` repeated,
   // or a real header with `-eyJ` glued on, decodes to text that still
@@ -418,19 +427,21 @@ function headerIsJwtUncached(header: string, mode: JwtMaskMode): boolean {
   // a 1MB run of those shapes used to spend seconds on it.
   const trimmed = decoded.trimEnd();
   if (trimmed.charCodeAt(0) !== 123 || trimmed.charCodeAt(trimmed.length - 1) !== 125) {
-    return false;
+    return JWT_HEADER_MISS;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
   } catch {
-    return false;
+    return JWT_HEADER_MISS;
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return JWT_HEADER_MISS;
   const record = parsed as Record<string, unknown>;
-  if (typeof record.alg === 'string' && record.alg.length > 0) return true;
-  if (mode === 'strict') return false;
-  return record.typ === 'JWT';
+  const alg = typeof record.alg === 'string' && record.alg.length > 0 ? record.alg : null;
+  if (alg) return { ok: true, alg };
+  if (mode === 'strict') return JWT_HEADER_MISS;
+  if (record.typ === 'JWT') return { ok: true, alg: null };
+  return JWT_HEADER_MISS;
 }
 
 /**
@@ -440,16 +451,20 @@ function headerIsJwtUncached(header: string, mode: JwtMaskMode): boolean {
  */
 let cachedHeader = '';
 let cachedMode: JwtMaskMode | null = null;
-let cachedHeaderOk = false;
+let cachedHeaderInfo: JwtHeaderInfo = JWT_HEADER_MISS;
 
-function headerIsJwt(header: string, mode: JwtMaskMode): boolean {
-  if (header.length > 256) return headerIsJwtUncached(header, mode);
-  if (header === cachedHeader && mode === cachedMode) return cachedHeaderOk;
-  const ok = headerIsJwtUncached(header, mode);
+function jwtHeaderInfo(header: string, mode: JwtMaskMode): JwtHeaderInfo {
+  if (header.length > 256) return jwtHeaderInfoUncached(header, mode);
+  if (header === cachedHeader && mode === cachedMode) return cachedHeaderInfo;
+  const info = jwtHeaderInfoUncached(header, mode);
   cachedHeader = header;
   cachedMode = mode;
-  cachedHeaderOk = ok;
-  return ok;
+  cachedHeaderInfo = info;
+  return info;
+}
+
+function headerIsJwt(header: string, mode: JwtMaskMode): boolean {
+  return jwtHeaderInfo(header, mode).ok;
 }
 
 /**
@@ -648,6 +663,226 @@ function lastJoinedEyJ(text: string, from: number, end: number): number {
 }
 
 /**
+ * Unpadded base64url length of a JWS signature for that header's own `alg`.
+ * HS256 43; HS384 64; HS512, ES256, and EdDSA 86; ES384 128; ES512 176.
+ * RS* and PS* are the RSA modulus size, any of 342, 512, or 683
+ * (2048, 3072, or 4096). A shorter run that then hits `+` or `/` is still
+ * inside a longer signature. An alg with no row here never splits.
+ */
+const SIG_LEN_HS256 = new Set([43]);
+const SIG_LEN_HS384 = new Set([64]);
+const SIG_LEN_86 = new Set([86]);
+const SIG_LEN_ES384 = new Set([128]);
+const SIG_LEN_ES512 = new Set([176]);
+const SIG_LEN_RSA = new Set([342, 512, 683]);
+/** Fast reject before a header decode. Unknown lengths never split. */
+const SPLITTABLE_SIGNATURE_LENGTHS = new Set([43, 64, 86, 128, 176, 342, 512, 683]);
+
+function signatureLengthsForAlg(alg: string | null): Set<number> | null {
+  switch (alg) {
+    case 'HS256':
+      return SIG_LEN_HS256;
+    case 'HS384':
+      return SIG_LEN_HS384;
+    case 'HS512':
+    case 'ES256':
+    case 'EdDSA':
+      return SIG_LEN_86;
+    case 'ES384':
+      return SIG_LEN_ES384;
+    case 'ES512':
+      return SIG_LEN_ES512;
+    case 'RS256':
+    case 'RS384':
+    case 'RS512':
+    case 'PS256':
+    case 'PS384':
+    case 'PS512':
+      return SIG_LEN_RSA;
+    default:
+      return null;
+  }
+}
+
+/**
+ * First `=` at or after `from`, and before `end`. Stops at the first
+ * character that cannot be signature or padding, so a token with no `=`
+ * does not scan the rest of the buffer. `String.indexOf` has no end index;
+ * using it here made every candidate walk to EOF.
+ */
+function indexOfPaddingEquals(text: string, from: number, end: number): number {
+  const stop = Math.min(end, text.length);
+  for (let i = from; i < stop; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code === 61) return i;
+    if (!isJwtTokenCode(code)) return -1;
+  }
+  return -1;
+}
+
+/** Base64url alphabet, including `-`. Standard-base64 `+` `/` `=` are not included. */
+function isBase64UrlChar(code: number): boolean {
+  return isAsciiAlnum(code) || code === 95 || code === 45;
+}
+
+/**
+ * A short filename extension after the segment dot. A longer base64url run
+ * is another token segment, not `.ts`.
+ */
+function extensionAfter(text: string, segEnd: number): boolean {
+  if (segEnd >= text.length || text.charCodeAt(segEnd) !== JWT_DOT) return false;
+  let i = segEnd + 1;
+  let n = 0;
+  while (i < text.length && n < 8) {
+    if (!isAsciiAlnum(text.charCodeAt(i))) break;
+    i += 1;
+    n += 1;
+  }
+  if (n < 1) return false;
+  if (i < text.length && isBase64UrlChar(text.charCodeAt(i))) return false;
+  return true;
+}
+
+/**
+ * True when [at, segEnd) is a path glued with `/` or `+`, not more signature.
+ * A clear path has a second slash, or one slash plus a file extension after
+ * the segment dot. A `+` joiner needs a slash or that extension. A `+`
+ * inside the tail is still signature alphabet, so it is not a path.
+ */
+function isClearGluedPath(text: string, at: number, segEnd: number): boolean {
+  const next = text.charCodeAt(at);
+  if (next !== 47 && next !== 43) return false;
+  let slashes = 0;
+  for (let k = at; k < segEnd; k += 1) {
+    const code = text.charCodeAt(k);
+    if (code === 47) {
+      slashes += 1;
+      continue;
+    }
+    // The leading '+' is the joiner. Another '+' is still signature alphabet.
+    if (code === 43) {
+      if (k !== at) return false;
+      continue;
+    }
+    if (!isBase64UrlChar(code)) return false;
+  }
+  const ext = extensionAfter(text, segEnd);
+  if (next === 43) return slashes >= 1 || ext;
+  return slashes >= 2 || (slashes >= 1 && ext);
+}
+
+/**
+ * Index where a base64url JWT ends and a glued path begins.
+ * The signature is the longest base64url run. `/` and `+` are not in that
+ * alphabet, so a path can sit outside the token. A header or payload that
+ * already uses `+`, `/`, or `=` is standard base64; the signature may use
+ * those too, and this split stays out so signature bytes are not left behind.
+ * An unpadded standard-base64 signature also contains `+` or `/`. Splitting
+ * at the first one leaves the rest of the signature in the clear. The split
+ * is allowed only when that run's length is the signature length for this
+ * token's own `alg` (from the decoded header). A `+` or `/` at 43, 64, or
+ * 86 inside a longer signature stays inside the mask. An unknown or
+ * undecodable `alg` never splits. Returns -1 when the boundary is not clear.
+ */
+function clearPathSplit(
+  text: string,
+  cursor: number,
+  dot1: number,
+  end: number,
+  mode: JwtMaskMode,
+): number {
+  const dot2 = text.indexOf('.', dot1 + 1);
+  if (dot2 < 0 || dot2 >= end) return -1;
+  const header = text.slice(cursor, dot1);
+  const payload = text.slice(dot1 + 1, dot2);
+  if (
+    header.includes('+') || header.includes('/') || header.includes('=') ||
+    payload.includes('+') || payload.includes('/') || payload.includes('=')
+  ) {
+    return -1;
+  }
+  let i = dot2 + 1;
+  while (i < end && isBase64UrlChar(text.charCodeAt(i))) i += 1;
+  if (i === dot2 + 1 || i >= end) return -1;
+  const sigLen = i - (dot2 + 1);
+  // Reject before decoding. A space-separated token ends on base64url, so
+  // this returns without reading the header.
+  if (!SPLITTABLE_SIGNATURE_LENGTHS.has(sigLen)) return -1;
+  const allowed = signatureLengthsForAlg(jwtHeaderInfo(header, mode).alg);
+  if (!allowed || !allowed.has(sigLen)) return -1;
+  if (!isClearGluedPath(text, i, end)) return -1;
+  if (!isJwtToken(text.slice(cursor, i), mode)) return -1;
+  return i;
+}
+
+/**
+ * Index where a padded JWT ends and the text after the padding begins.
+ * Padding `=` cannot sit in the middle of a segment, so text after a valid
+ * pad is not signature. The `=` search stops at the end of this token.
+ * One `=` is padding when the signature length is 3 mod 4 (43, 683).
+ * `==` is padding when the length is 2 mod 4 (86, 342). A length that is
+ * 0 mod 4 (64, 128, 176, 512) takes no padding. `-then` and `-suffix` are
+ * not this trailer; the hyphen rule still owns those. A joiner (`+` `/`
+ * `_` `=`) after the padding stays. Plain text glued on after the padding
+ * stays too. Returns -1 when the pad is the end of the span, the next
+ * character is a hyphen, or the `=` is not valid padding.
+ */
+function paddedTrailerEnd(
+  text: string,
+  cursor: number,
+  dot1: number,
+  end: number,
+  mode: JwtMaskMode,
+): number {
+  const dot2 = text.indexOf('.', dot1 + 1);
+  if (dot2 < 0 || dot2 >= end) return -1;
+  const sigStart = dot2 + 1;
+  const eq = indexOfPaddingEquals(text, sigStart, end);
+  if (eq <= sigStart) return -1;
+  for (const pads of [1, 2]) {
+    const total = eq + pads;
+    if (total > end) continue;
+    let padsOk = true;
+    for (let k = 0; k < pads; k += 1) {
+      if (text.charCodeAt(eq + k) !== 61) padsOk = false;
+    }
+    if (!padsOk) continue;
+    const segLen = total - sigStart;
+    if (segLen % 4 !== 0) continue;
+    if (total >= end) continue;
+    // Hyphen suffixes stay with jwtMaskCut (`-then` kept, `-suffix` consumed).
+    if (text.charCodeAt(total) === 45) continue;
+    if (!isJwtToken(text.slice(cursor, total), mode)) continue;
+    return total;
+  }
+  return -1;
+}
+
+/**
+ * Index of a `=` that follows a valid JWT when that `=` is not valid
+ * padding. The JWT is the text before the `=`. The `=` and the trailing
+ * text stay. The search stops at the end of this token, same as the
+ * padding scan, so a buffer with no `=` is not walked to EOF. Returns -1
+ * when the prefix is not a JWT. Callers try real padding first, and they
+ * try the hyphen rule before this, so `-then` and a real `=` / `==` pad
+ * stay on those paths.
+ */
+function equalsJwtBoundary(
+  text: string,
+  cursor: number,
+  dot1: number,
+  end: number,
+  mode: JwtMaskMode,
+): number {
+  const dot2 = text.indexOf('.', dot1 + 1);
+  if (dot2 < 0 || dot2 >= end) return -1;
+  const eq = indexOfPaddingEquals(text, dot2 + 1, end);
+  if (eq < dot2 + 1) return -1;
+  if (!isJwtToken(text.slice(cursor, eq), mode)) return -1;
+  return eq;
+}
+
+/**
  * Index of a second compact JWT glued onto this one with a single `-`,
  * `_`, `=`, `+`, or `/`. The joiner stays between the two masks.
  */
@@ -711,12 +946,21 @@ function isPureEyJPrefixRun(text: string, start: number, end: number): boolean {
  * capped. After the cap, the last `eyJ` before the header dot is tried
  * once, so a real token after a long glued prefix is still masked.
  * Two JWTs joined by one `-`, `_`, `=`, `+`, or `/` are masked separately.
- * The joiner stays. Dotted text whose header does not decode as a JWT
- * (`eyJsee.the.docs`, versions, filenames) is left alone. `_x`, a lone `_`
- * or `-`, and a whole-word suffix such as `-then`, `-Then`, or
- * `-config-file` stay. A token tail, a short stopword, and a mixed tail
- * are consumed. A header that is only `eyJ-` / `eyJ_` / `eyJ=` / `eyJ+` /
- * `eyJ/` chunks is skipped in one pass.
+ * The joiner stays. A padded token followed by one of `+` `/` `_` `=` and
+ * more text, or by plain text after valid padding, is masked only through
+ * that padding, so the trailer stays. A `=` after any valid JWT is a
+ * boundary even when it is not valid padding: the JWT is masked and the
+ * `=` plus the trailing text stay. The search for that `=` stops at the
+ * end of the token. A base64url token keeps a path glued on with `/` or
+ * `+` only when the signature length matches that token's own `alg` and
+ * the tail is clearly a path. A `+` or `/` earlier than that length stays
+ * inside the mask. An unknown or undecodable `alg` never splits. Dotted
+ * text whose header does not decode as a JWT (`eyJsee.the.docs`, versions,
+ * filenames) is left alone.
+ * `_x`, a lone `_` or `-`, and a whole-word suffix such as `-then`,
+ * `-Then`, or `-config-file` stay. A token tail, a short stopword, and a
+ * mixed tail are consumed. A header that is only `eyJ-` / `eyJ_` / `eyJ=` /
+ * `eyJ+` / `eyJ/` chunks is skipped in one pass.
  */
 export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): string {
   const n = text.length;
@@ -756,6 +1000,21 @@ export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): stri
           break;
         }
       }
+      // Padding, then a base64url path. Both cut only the JWT. A joined
+      // second token was already taken above, so this trailer is not a JWT.
+      const trailer = paddedTrailerEnd(text, cursor, structure.dot1, structure.end, mode);
+      const pathAt = trailer > cursor
+        ? -1
+        : clearPathSplit(text, cursor, structure.dot1, structure.end, mode);
+      const boundary = trailer > cursor ? trailer : pathAt;
+      if (boundary > cursor && isJwtToken(text.slice(cursor, boundary), mode)) {
+        out += text.slice(last, cursor);
+        out += '[REDACTED]';
+        last = boundary;
+        i = boundary;
+        matched = true;
+        break;
+      }
       const span = text.slice(cursor, structure.end);
       const decided = jwtMaskCut(span, mode);
       if (decided && decided.cut + decided.keep > 0) {
@@ -763,6 +1022,17 @@ export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): stri
         out += `[REDACTED]${span.slice(decided.cut, decided.cut + decided.keep)}`;
         last = cursor + decided.cut + decided.keep;
         i = last;
+        matched = true;
+        break;
+      }
+      // Padding and hyphen suffixes already missed. A `=` whose prefix is
+      // a valid JWT still ends the token, for every signature length.
+      const eqAt = equalsJwtBoundary(text, cursor, structure.dot1, structure.end, mode);
+      if (eqAt > cursor) {
+        out += text.slice(last, cursor);
+        out += '[REDACTED]';
+        last = eqAt;
+        i = eqAt;
         matched = true;
         break;
       }

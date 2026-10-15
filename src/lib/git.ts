@@ -97,28 +97,42 @@ export function unquoteGitPath(path: string): string {
 
 /**
  * True when a receipt table cell must be one physical line. A newline in
- * the cell splits the row, so the file drops out of every parser. A name
+ * the cell splits the row, so the file drops out of every parser. A
+ * backtick ends the markdown span (`` `name` ``) and the row no longer
+ * matches, so that name drops out of the table and out of attest. A name
  * that already looks quoted is quoted again so a later decode does not
  * strip characters that belong to the name.
+ * `escapeBacktick` is false for the diff-stat fence. That block already
+ * shields a leading ``` with a space, and octal-escaping it would hide
+ * the name.
  */
-function needsReceiptQuoting(path: string): boolean {
+function needsReceiptQuoting(path: string, escapeBacktick = true): boolean {
   if (/[\u0000-\u001f\u007f\u2028\u2029]/.test(path)) return true;
+  if (escapeBacktick && path.includes('`')) return true;
   return path.length >= 2 && path.startsWith('"') && path.endsWith('"');
 }
 
 /**
  * One-line form of a path for a markdown table cell. Names that fit on
- * one line, including a backslash, are unchanged. A newline or other
- * control is git-quoted (`"has\nnewline.txt"`) and round-trips through
- * `decodeReceiptTablePath`.
+ * one line, including a backslash, are unchanged. A newline, other
+ * control, or backtick is git-quoted (`"has\nnewline.txt"`,
+ * `"has\140tick.txt"`) and round-trips through `decodeReceiptTablePath`.
+ * The backtick is octal so the markdown span stays one span.
+ * Pass `{ escapeBacktick: false }` inside a ``` fence, where a raw
+ * backtick must stay visible and a leading fence is shielded separately.
  */
-export function quoteReceiptTablePath(path: string): string {
-  if (!needsReceiptQuoting(path)) return path;
+export function quoteReceiptTablePath(
+  path: string,
+  opts?: { escapeBacktick?: boolean },
+): string {
+  const escapeBacktick = opts?.escapeBacktick !== false;
+  if (!needsReceiptQuoting(path, escapeBacktick)) return path;
   let out = '"';
   for (const ch of path) {
     const code = ch.codePointAt(0) ?? 0;
     if (ch === '\\') out += '\\\\';
     else if (ch === '"') out += '\\"';
+    else if (ch === '`' && escapeBacktick) out += '\\140';
     else if (ch === '\n') out += '\\n';
     else if (ch === '\r') out += '\\r';
     else if (ch === '\t') out += '\\t';
