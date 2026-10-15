@@ -3,6 +3,8 @@
  * The padding "=" search stays inside the current token, an unpadded
  * standard-base64 signature that contains + or / is fully masked, last
  * redacts commit-message secrets, and a JWT glued to "=text" is masked.
+ * The re-gate splits a glued path only at the signature length for the
+ * token's own alg, and treats "=" as a boundary after every valid JWT.
  */
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -262,5 +264,187 @@ describe('v1.0.51 QA last redacts commit-message secrets', () => {
     assert.equal(body.message.includes('AKIA[REDACTED:'), true, body.message);
     assert.equal(body.message.includes(GHP), false);
     assert.equal(body.message.includes(AKIA), false);
+  });
+});
+
+const MARK = 'Qxsigrest';
+
+function b64url(value) {
+  return Buffer.from(value).toString('base64url');
+}
+
+function jwtFor(alg, signature) {
+  const header = b64url(JSON.stringify({ alg, typ: 'JWT' }));
+  const payload = b64url(JSON.stringify({ sub: 'qa' }));
+  return `${header}.${payload}.${signature}`;
+}
+
+/** `marker` at `at` inside a signature of `length`, with a path-shaped tail. */
+function sigMarked(length, at, marker) {
+  const glued = `${marker}src/${MARK}`;
+  assert.ok(at + glued.length <= length, `marker does not fit in ${length}`);
+  return `${'A'.repeat(at)}${glued}${'B'.repeat(length - at - glued.length)}`;
+}
+
+function assertFullyMasked(raw, label) {
+  for (const mode of ['general', 'strict']) {
+    const out = maskJwtTokens(raw, mode);
+    assert.equal(out, '[REDACTED]', `${label} ${mode} ${out}`);
+    assert.equal(out.includes(MARK), false, `${label} ${mode} marker`);
+    assert.equal(out.includes('/src/'), false, `${label} ${mode} path`);
+  }
+  const text = redactSecretsInText(`see ${raw} later`);
+  assert.equal(text, 'see [REDACTED] later', `${label} ${text}`);
+  assert.equal(text.includes(MARK), false, label);
+  assertJwtGone(text, raw, label);
+}
+
+function assertPathKept(raw, expect, label) {
+  for (const mode of ['general', 'strict']) {
+    assert.equal(maskJwtTokens(raw, mode), expect, `${label} ${mode}`);
+  }
+  const text = redactSecretsInText(raw);
+  assert.equal(text, expect, `${label} ${text}`);
+  assert.equal(text.includes(MARK), false, label);
+}
+
+describe('v1.0.51 QA signature split matches the token alg', () => {
+  it('masks a + or / at 43, 64, or 86 inside a longer signature', () => {
+    const cases = [
+      ['HS512', 86, 43, '/'],
+      ['HS512', 86, 64, '+'],
+      ['HS384', 64, 43, '/'],
+      ['ES512', 176, 86, '/'],
+      ['ES512', 176, 43, '+'],
+      ['ES512', 176, 64, '/'],
+      ['RS256', 342, 64, '+'],
+      ['RS256', 342, 86, '+'],
+      ['RS256', 342, 43, '/'],
+      ['PS256', 342, 64, '+'],
+      ['PS512', 683, 86, '/'],
+    ];
+    for (const [alg, length, at, marker] of cases) {
+      const raw = jwtFor(alg, sigMarked(length, at, marker));
+      assertFullyMasked(raw, `${alg} ${marker} at ${at}`);
+    }
+  });
+
+  it('keeps a clear path when the signature length matches that alg', () => {
+    const cases = [
+      ['HS256', 43],
+      ['HS384', 64],
+      ['HS512', 86],
+      ['ES256', 86],
+      ['EdDSA', 86],
+      ['ES384', 128],
+      ['ES512', 176],
+      ['RS256', 342],
+      ['PS256', 342],
+      ['RS384', 512],
+      ['PS384', 512],
+      ['RS512', 683],
+      ['PS512', 683],
+    ];
+    for (const [alg, length] of cases) {
+      const token = jwtFor(alg, 'A'.repeat(length));
+      assertPathKept(`${token}/src/app.ts`, '[REDACTED]/src/app.ts', `${alg} slash`);
+      if (alg === 'ES384' || alg === 'ES512' || alg === 'HS256' || alg === 'RS256') {
+        assertPathKept(`${token}+src/app.ts`, '[REDACTED]+src/app.ts', `${alg} plus`);
+        assertPathKept(`${token}+/src/app.ts`, '[REDACTED]+/src/app.ts', `${alg} plus-slash`);
+      }
+    }
+  });
+
+  it('masks the whole run when the alg does not allow that length', () => {
+    const mismatched = [
+      ['HS256', 64],
+      ['HS256', 86],
+      ['HS256', 128],
+      ['HS384', 43],
+      ['HS384', 86],
+      ['HS512', 43],
+      ['ES384', 86],
+      ['ES512', 128],
+      ['RS256', 86],
+      ['none', 43],
+      ['none', 86],
+      ['HS999', 43],
+      ['ES256K', 86],
+    ];
+    for (const [alg, length] of mismatched) {
+      const raw = `${jwtFor(alg, 'A'.repeat(length))}/src/app.ts`;
+      for (const mode of ['general', 'strict']) {
+        const out = maskJwtTokens(raw, mode);
+        assert.equal(out, '[REDACTED].ts', `${alg} ${length} ${mode} ${out}`);
+        assert.equal(out.includes('/src/app'), false, `${alg} ${mode}`);
+        assert.equal(out.includes('A'.repeat(20)), false, `${alg} ${mode} sig`);
+      }
+    }
+
+    const header = b64url(JSON.stringify({ typ: 'JWT' }));
+    const payload = b64url(JSON.stringify({ sub: 'qa' }));
+    const typOnly = `${header}.${payload}.${'A'.repeat(43)}/src/app.ts`;
+    assert.equal(maskJwtTokens(typOnly, 'general'), '[REDACTED].ts');
+    assert.equal(maskJwtTokens(typOnly, 'strict'), typOnly);
+  });
+});
+
+describe('v1.0.51 QA = boundary after every JWT length', () => {
+  const cases = [
+    ['HS384', 64, '=text', '=text'],
+    ['HS384', 64, '==text', '==text'],
+    ['ES384', 128, '=text', '=text'],
+    ['ES384', 128, '==text', '==text'],
+    ['ES512', 176, '=text', '=text'],
+    ['ES512', 176, '==text', '==text'],
+    ['RS384', 512, '=text', '=text'],
+    ['RS384', 512, '==text', '==text'],
+    ['HS512', 86, '=text', '=text'],
+    ['HS512', 86, '==text', 'text'],
+    ['ES256', 86, '=text', '=text'],
+    ['EdDSA', 86, '==text', 'text'],
+    ['RS256', 342, '=text', '=text'],
+    ['RS256', 342, '==text', 'text'],
+    ['PS256', 342, '=text', '=text'],
+    ['RS512', 683, '=text', 'text'],
+    ['RS512', 683, '==text', '=text'],
+    ['PS512', 683, '=text', 'text'],
+  ];
+
+  for (const [alg, length, trailer, suffix] of cases) {
+    it(`masks ${alg} (${length}) before ${trailer}`, () => {
+      const token = jwtFor(alg, 'A'.repeat(length));
+      const raw = `${token}${trailer}`;
+      const expect = `[REDACTED]${suffix}`;
+      for (const mode of ['general', 'strict']) {
+        const out = maskJwtTokens(raw, mode);
+        assert.equal(out, expect, `${mode} ${out}`);
+        assertJwtGone(out, token, `${alg} ${mode}`);
+      }
+      const text = redactSecretsInText(`see ${raw} later`);
+      assert.equal(text, `see ${expect} later`, text);
+      assert.equal(text.includes('text'), true);
+      assertJwtGone(text, token, alg);
+    });
+  }
+
+  it('keeps =text after an empty signature and after a signature that contains /', () => {
+    assert.equal(redactSecretsInText(`${JWT_DIR}=text`), '[REDACTED]=text');
+    assert.equal(redactSecretsInText(`${JWT_DIR}==text`), '[REDACTED]==text');
+    assertJwtGone(redactSecretsInText(`${JWT_DIR}=text`), JWT_DIR, 'empty =text');
+
+    const hs = jwtFor('HS512', sigMarked(86, 43, '/'));
+    assert.equal(redactSecretsInText(`${hs}=text`), '[REDACTED]=text');
+    assert.equal(redactSecretsInText(`${hs}=text`).includes(MARK), false);
+    assert.equal(redactSecretsInText(`${hs}==text`), '[REDACTED]text');
+    assert.equal(redactSecretsInText(`${hs}==text`).includes(MARK), false);
+
+    const rs = jwtFor('RS256', sigMarked(342, 64, '+'));
+    assert.equal(redactSecretsInText(`${rs}=text`), '[REDACTED]=text');
+    assert.equal(redactSecretsInText(`${rs}=text`).includes(MARK), false);
+    assert.equal(redactSecretsInText(`${rs}==text`), '[REDACTED]text');
+    assert.equal(redactSecretsInText(`${rs}==text`).includes(MARK), false);
+    assert.equal(redactSecretsInText(`see ${jwtFor('ES384', 'A'.repeat(128))}=text later`), 'see [REDACTED]=text later');
+    assert.equal(redactSecretsInText(`see ${jwtFor('RS384', 'B'.repeat(512))}==text later`), 'see [REDACTED]==text later');
   });
 });
