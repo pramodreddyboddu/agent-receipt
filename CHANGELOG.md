@@ -11,11 +11,15 @@ All notable changes to this project will be documented in this file.
 - A filename that contains a backtick is included in the receipt files table and as an `attest` subject. The cell stores it git-quoted (`"has\140tick.txt"`) so the markdown span stays one span. A secret-shaped name is still stamped, and the raw token is not in the statement.
 - Plain `history`, `show`, and `compare` mask secret-shaped text the same way `history --json` does. A `ghp_` token that was only in the git commit message, or in `--message`, is not printed. The stored receipt and index stay as captured.
 - An old receipt that stored a literal git-quoted name (`"caf\303\251.txt"`) still decodes once with `unquoteGitPath`. The decode does not run twice, does not truncate the name, and does not turn `\400` into a NUL. A cell that was never quoted, including a backslash, stays as it was stored.
+- The padding `=` search stops at the end of the current token (the first character that cannot be signature or padding). A multi-megabyte buffer with many JWTs and no `=` after them stays linear. The same shapes that were fast on 1.0.50 — space-separated tokens, `9xeyJ-` plus a JWT, a repeated `J/x/y.ts`, and a header plus `-eyJ-eyJ` — stay fast.
+- An unpadded standard-base64 signature that contains `+` or `/` is fully masked. It is not split into a path at the first `+` or `/`. A glued path stays visible only when the base64url signature is a standard JWS length (43, 64, 86, 342, 512, or 683) and the tail is clearly a path. The 1.0.51 path cases (`/src/app.ts`, `+src/app.ts`, and a padded token plus a path) are unchanged.
+- `last` and `last --json` mask secret-shaped text the same way `history`, `show`, and `compare` do. A `ghp_` token or an `AKIA` key that was only in the git commit message, or in `--message`, is not printed. The stored receipt and index stay as captured. `--path` still prints the raw path.
+- A JWT followed directly by `=text` is masked through the padding. `text` stays. The token is not left in the clear.
 
 ### Notes
 
 - These are v1.0.50 Release QA follow-ups.
-- A path glued with `/` or `+` onto an unpadded standard-base64 signature, or onto an empty signature, is still masked through the path. Eating the path is preferred over leaving signature bytes in the clear. The padding `=` boundary and a base64url signature followed by `/` or `+` and a real path are the cases that keep the path.
+- A path glued with `/` or `+` onto an unpadded standard-base64 signature, or onto an empty signature, is still masked through the path. Eating the path is preferred over leaving signature bytes in the clear. The padding `=` boundary, and a base64url signature of a standard JWS length followed by `/` or `+` and a real path, are the cases that keep the path. A `+` or `/` inside an unpadded standard-base64 signature does not start that path.
 - Package version bumped to `1.0.51`. Pin comments that track the current cut are `v1.0.51`. The action default pin is `1.0.51`.
 - Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
 - No new runtime dependencies. This is not a certificate authority.

@@ -647,9 +647,28 @@ function lastJoinedEyJ(text: string, from: number, end: number): number {
   return -1;
 }
 
-/** `+` `/` `_` `=`. These glue a trailer onto a token that already ended. */
-function isPadJoinerCode(code: number): boolean {
-  return code === 43 || code === 47 || code === 95 || code === 61;
+/**
+ * Unpadded base64url length of a JWS signature:
+ * HS256 43, HS384 64, HS512 86, RS/PS256 342, RS/PS384 512, RS/PS512 683.
+ * A shorter base64url run that then hits `+` or `/` is still inside an
+ * unpadded standard-base64 signature, not a path boundary.
+ */
+const JWS_SIGNATURE_LENGTHS = new Set([43, 64, 86, 342, 512, 683]);
+
+/**
+ * First `=` at or after `from`, and before `end`. Stops at the first
+ * character that cannot be signature or padding, so a token with no `=`
+ * does not scan the rest of the buffer. `String.indexOf` has no end index;
+ * using it here made every candidate walk to EOF.
+ */
+function indexOfPaddingEquals(text: string, from: number, end: number): number {
+  const stop = Math.min(end, text.length);
+  for (let i = from; i < stop; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code === 61) return i;
+    if (!isJwtTokenCode(code)) return -1;
+  }
+  return -1;
 }
 
 /** Base64url alphabet, including `-`. Standard-base64 `+` `/` `=` are not included. */
@@ -706,9 +725,13 @@ function isClearGluedPath(text: string, at: number, segEnd: number): boolean {
 /**
  * Index where a base64url JWT ends and a glued path begins.
  * The signature is the longest base64url run. `/` and `+` are not in that
- * alphabet, so the path is outside the token. A header or payload that
+ * alphabet, so a path can sit outside the token. A header or payload that
  * already uses `+`, `/`, or `=` is standard base64; the signature may use
  * those too, and this split stays out so signature bytes are not left behind.
+ * An unpadded standard-base64 signature also contains `+` or `/`. Splitting
+ * at the first one leaves the rest of the signature in the clear. The split
+ * is allowed only when the base64url signature is a standard JWS length
+ * (43/64/86/342/512/683). A `+` or `/` earlier than that is still signature.
  * Returns -1 when the boundary is not clear.
  */
 function clearPathSplit(
@@ -731,17 +754,21 @@ function clearPathSplit(
   let i = dot2 + 1;
   while (i < end && isBase64UrlChar(text.charCodeAt(i))) i += 1;
   if (i === dot2 + 1 || i >= end) return -1;
+  if (!JWS_SIGNATURE_LENGTHS.has(i - (dot2 + 1))) return -1;
   if (!isClearGluedPath(text, i, end)) return -1;
   if (!isJwtToken(text.slice(cursor, i), mode)) return -1;
   return i;
 }
 
 /**
- * Index where a padded JWT ends and a `+` `/` `_` `=` trailer begins.
+ * Index where a padded JWT ends and the text after the padding begins.
  * Padding `=` cannot sit in the middle of a segment, so text after a valid
- * pad is not signature. `-then` and `-suffix` are not this trailer; the
- * hyphen rule still owns those. Returns -1 when the pad is the end of the
- * span or the next character is not one of those four joiners.
+ * pad is not signature. The `=` search stops at the end of this token.
+ * `-then` and `-suffix` are not this trailer; the hyphen rule still owns
+ * those. A joiner (`+` `/` `_` `=`) after the padding stays. Plain text
+ * glued on after the padding stays too, so `=text` on an unpadded token
+ * is masked through that pad and `text` remains. Returns -1 when the pad
+ * is the end of the span or the next character is a hyphen.
  */
 function paddedTrailerEnd(
   text: string,
@@ -753,8 +780,8 @@ function paddedTrailerEnd(
   const dot2 = text.indexOf('.', dot1 + 1);
   if (dot2 < 0 || dot2 >= end) return -1;
   const sigStart = dot2 + 1;
-  const eq = text.indexOf('=', sigStart);
-  if (eq <= sigStart || eq >= end) return -1;
+  const eq = indexOfPaddingEquals(text, sigStart, end);
+  if (eq <= sigStart) return -1;
   for (const pads of [1, 2]) {
     const total = eq + pads;
     if (total > end) continue;
@@ -766,7 +793,8 @@ function paddedTrailerEnd(
     const segLen = total - sigStart;
     if (segLen % 4 !== 0) continue;
     if (total >= end) continue;
-    if (!isPadJoinerCode(text.charCodeAt(total))) continue;
+    // Hyphen suffixes stay with jwtMaskCut (`-then` kept, `-suffix` consumed).
+    if (text.charCodeAt(total) === 45) continue;
     if (!isJwtToken(text.slice(cursor, total), mode)) continue;
     return total;
   }
@@ -838,9 +866,12 @@ function isPureEyJPrefixRun(text: string, start: number, end: number): boolean {
  * once, so a real token after a long glued prefix is still masked.
  * Two JWTs joined by one `-`, `_`, `=`, `+`, or `/` are masked separately.
  * The joiner stays. A padded token followed by one of `+` `/` `_` `=` and
- * more text is masked only through the padding, so the trailer stays and
- * the token does not. A base64url token keeps a path glued on with `/` or
- * `+` when that path is clearly a path. Dotted text whose header does not
+ * more text, or by plain text (`=text`), is masked only through the padding,
+ * so the trailer stays and the token does not. The search for that padding
+ * stops at the end of the token. A base64url token keeps a path glued on
+ * with `/` or `+` when the signature is a standard JWS length and that path
+ * is clearly a path. An unpadded standard-base64 signature that contains
+ * `+` or `/` is not split there. Dotted text whose header does not
  * decode as a JWT (`eyJsee.the.docs`, versions, filenames) is left alone.
  * `_x`, a lone `_` or `-`, and a whole-word suffix such as `-then`,
  * `-Then`, or `-config-file` stay. A token tail, a short stopword, and a
