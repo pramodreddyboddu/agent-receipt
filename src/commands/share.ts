@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync, statSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { cmdExport } from './export.js';
 import { cmdVerify, reportVerify } from './verify.js';
 import { resolveReceiptPath } from './show.js';
@@ -157,6 +157,35 @@ function agentFromReceipt(markdown: string): string | null {
 }
 
 /**
+ * Repo-relative receipt path for `share --json`. Null when the file is
+ * outside cwd, or when displaying it would mask a secret. The displayed
+ * `path` stays masked either way.
+ */
+function shareRelativePath(cwd: string, filePath: string): string | null {
+  let rel: string;
+  try {
+    rel = relative(cwd, filePath);
+  } catch {
+    return null;
+  }
+  if (!rel) return null;
+  const normalized = rel.split(sep).join('/');
+  if (
+    normalized === '.' ||
+    isAbsolute(rel) ||
+    normalized.startsWith('/') ||
+    normalized === '..' ||
+    normalized.startsWith('../') ||
+    normalized.includes('/../')
+  ) {
+    return null;
+  }
+  if (redactSecretsInText(normalized) !== normalized) return null;
+  if (normalized.includes('[REDACTED]')) return null;
+  return normalized;
+}
+
+/**
  * One-shot share: verify the source receipt, apply redact (default on),
  * write HTML and optional Markdown, verify the published body, print
  * paths + TL;DR.
@@ -220,6 +249,7 @@ export function cmdShare(
           redacted: redact,
           uncommitted: null,
           path: source,
+          relativePath: shareRelativePath(cwd, source),
           jsonPath: null,
           htmlPath: partial.htmlPath,
           markdownPath: partial.markdownPath,

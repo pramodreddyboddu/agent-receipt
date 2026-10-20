@@ -2,6 +2,7 @@ import { existsSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { color } from '../lib/color.js';
 import { finalizeGate, printGate, riskToGate, type GateReport } from '../lib/gate.js';
+import { maskDisplayedJson, redactSecretsInText } from '../lib/redact.js';
 import type { FailOnThreshold } from '../lib/risk.js';
 import {
   RECEIPT_HTML_NAME,
@@ -297,13 +298,14 @@ export function packageGate(report: PackageVerifyReport): GateReport {
 
 export function emitPackageReport(report: PackageVerifyReport, opts: { json?: boolean }): void {
   if (opts.json) {
-    printGate(packageGate(report));
+    printGate(maskDisplayedJson(packageGate(report)));
     return;
   }
+  const show = (value: string | null | undefined) => redactSecretsInText(value ?? '');
   const banner = report.exitCode === 0 ? color.green('VERIFIED') : color.red('FAILED');
   const fp = report.fingerprint ?? '(none)';
   const lines = [
-    `${banner}  ${report.packagePath}`,
+    `${banner}  ${show(report.packagePath)}`,
     `  sha256: ${report.sha256 ?? ''}`,
     `  signed: ${report.signed ? 'true' : 'false'}`,
     `  fingerprint: ${fp}`,
@@ -312,17 +314,17 @@ export function emitPackageReport(report: PackageVerifyReport, opts: { json?: bo
     `  signature: ${formatSignature(report.signature)}`,
     `  manifestSig: ${formatManifestSig(report.manifestSig)}`,
   ];
-  if (report.reason) lines.push(`  reason: ${report.reason}`);
+  if (report.reason) lines.push(`  reason: ${show(report.reason)}`);
   if (report.command === 'import') {
     if (report.exitCode === 0 && report.importPath) {
       const label = report.dryRun ? 'dry-run' : 'imported';
-      lines.push(`  ${label}: ${report.importPath}`);
-      if (report.importSigPath) lines.push(`  ${label} sig: ${report.importSigPath}`);
+      lines.push(`  ${label}: ${show(report.importPath)}`);
+      if (report.importSigPath) lines.push(`  ${label} sig: ${show(report.importSigPath)}`);
     } else if (report.exitCode !== 0) {
       lines.push('  import: refused');
     }
   }
-  lines.push(`  tip: open ${report.htmlPath}`);
+  lines.push(`  tip: open ${show(report.htmlPath)}`);
   console.log(lines.join('\n'));
 }
 

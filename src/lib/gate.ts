@@ -18,7 +18,13 @@ import type { PolicyPackHit } from './policy.js';
  *
  * `trailingIgnored` is a boolean when this command hashed a body (verify,
  * and wrap/share after they verify). It is null when trailing content was
- * not evaluated (capture, and usage errors).
+ * not evaluated (capture, and usage errors). Non-whitespace bytes after
+ * the last chained record fail `verify` (exit 2) even when the hash still
+ * matches. A whitespace-only trailing newline still passes.
+ *
+ * `relativePath` is set by `share --json` only. It is a repo-relative
+ * receipt path when that path stays inside the working directory and is
+ * not secret-shaped, otherwise null. The displayed `path` stays masked.
  *
  * `signature` is set only by `verify --json --require-sig` after the hash
  * check passes. Other commands omit it. `sigPath` is set by `share --json`
@@ -56,6 +62,13 @@ export interface GateReport {
   redacted: boolean;
   uncommitted: boolean | null;
   path: string | null;
+  /**
+   * Set by `share --json`. Repo-relative receipt path when it stays inside
+   * the working directory and is not secret-shaped. Null when it would
+   * escape or would be masked. Omitted on other commands. Displayed `path`
+   * stays masked.
+   */
+  relativePath?: string | null;
   jsonPath: string | null;
   htmlPath: string | null;
   markdownPath: string | null;
@@ -64,8 +77,10 @@ export interface GateReport {
   risk: GateRisk | null;
   ignored: number | null;
   /**
-   * True when content after `## Integrity` was ignored by the hash.
-   * Null when this command did not evaluate trailing content.
+   * True when non-whitespace content after `## Integrity` was not covered
+   * by the hash. `verify` fails closed on that content. A whitespace-only
+   * trailing newline is not trailing content. Null when this command did
+   * not evaluate trailing content.
    */
   trailingIgnored: boolean | null;
   reason: string | null;
@@ -163,6 +178,7 @@ export function finalizeGate(fields: GateFields): GateReport {
     redacted: fields.redacted,
     uncommitted: fields.uncommitted,
     path: fields.path,
+    ...(fields.relativePath !== undefined ? { relativePath: fields.relativePath } : {}),
     jsonPath: fields.jsonPath,
     htmlPath: fields.htmlPath,
     markdownPath: fields.markdownPath,

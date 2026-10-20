@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/pramodreddyboddu/agent-receipt/docs/gate.schema.json",
   "title": "GateReport",
-  "description": "One JSON object printed on stdout by `agent-receipt capture|wrap|share|verify|import --json`. Human progress stays on stderr. This is the CI gate, not the companion receipt file (docs/receipt.schema.json). `ok` is true only when `exitCode` is 0. Exit 0 passes. Exit 2 is a --fail-on match and/or a verify failure (the artifact is still written when capture/wrap/share got that far). Exit 1 is a usage or runtime error (`reason` is set); it is not a policy failure. `verified` is null when the command did not run verify (capture, and usage errors). `trailingIgnored` is a boolean when a body was hashed (verify, and wrap/share after they verify) and null when trailing content was not evaluated (capture, and usage errors). Config `failOn` is not applied by verify unless `--fail-on` is explicit. Optional `signature` is present on verify --json only when --require-sig ran after a passing hash, and always on verify --package / import. Optional `sigPath` is present on share --json (string or null). Optional `packagePath` is present on share --json when --package wrote a directory, and on verify --package / import (the package directory). htmlPath and markdownPath then point at receipt.html and receipt.md. verify --package and import also add signed, fingerprint, filesOk, manifestOk, and manifestSig. import adds importPath, importSigPath, and dryRun. Those optional keys are omitted on a plain receipt verify. capture and wrap --json add optional autoPrune, pruned, and pruneReason only when that run attempted auto-prune. They are omitted when auto-prune was off. pruneReason is null when trusted prune ran, or failed-run (the run exited 2 on fail-on or verify, so nothing was deleted), retention-off, chain-broken, or error. A chain skip does not change exitCode. Required keys are unchanged.",
+  "description": "One JSON object printed on stdout by `agent-receipt capture|wrap|share|verify|import --json`. Human progress stays on stderr. This is the CI gate, not the companion receipt file (docs/receipt.schema.json). `ok` is true only when `exitCode` is 0. Exit 0 passes. Exit 2 is a --fail-on match and/or a verify failure (the artifact is still written when capture/wrap/share got that far). Exit 1 is a usage or runtime error (`reason` is set); it is not a policy failure. `verified` is null when the command did not run verify (capture, and usage errors). `trailingIgnored` is a boolean when a body was hashed (verify, and wrap/share after they verify) and null when trailing content was not evaluated (capture, and usage errors). Config `failOn` is not applied by verify unless `--fail-on` is explicit. Optional `signature` is present on verify --json only when --require-sig ran after a passing hash, and always on verify --package / import. Optional `sigPath` is present on share --json (string or null). Optional `packagePath` is present on share --json when --package wrote a directory, and on verify --package / import (the package directory). htmlPath and markdownPath then point at receipt.html and receipt.md. verify --package and import also add signed, fingerprint, filesOk, manifestOk, and manifestSig. import adds importPath, importSigPath, and dryRun. Those optional keys are omitted on a plain receipt verify. capture and wrap --json add optional autoPrune, pruned, and pruneReason only when that run attempted auto-prune. They are omitted when auto-prune was off. pruneReason is null when trusted prune ran, or failed-run (the run exited 2 on fail-on or verify, so nothing was deleted), retention-off, chain-broken, or error. A chain skip does not change exitCode. Required keys are unchanged. Optional relativePath is present on share --json (string or null) and omitted otherwise. It is a repo-relative receipt path when that path stays inside the working directory and is not secret-shaped; null when it would escape or would be masked. The displayed path stays masked. Non-whitespace content after the last chained record fails verify (exit 2) even when the hash still matches. A whitespace-only trailing newline still passes.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -68,7 +68,11 @@
     },
     "path": {
       "type": ["string", "null"],
-      "description": "Absolute Markdown receipt path, the share package directory for verify --package and import, or null on a usage error."
+      "description": "Absolute Markdown receipt path, the share package directory for verify --package and import, or null on a usage error. Displayed to the user with secret-shaped segments masked."
+    },
+    "relativePath": {
+      "type": ["string", "null"],
+      "description": "Optional. share --json only. Repo-relative receipt path when it stays inside the working directory and is not secret-shaped. Null when it would escape or would be masked. Omitted on other commands. Use this when path contains [REDACTED]."
     },
     "jsonPath": {
       "type": ["string", "null"],
@@ -113,7 +117,7 @@
     },
     "trailingIgnored": {
       "type": ["boolean", "null"],
-      "description": "True when content after ## Integrity was ignored by the hash. Boolean when a body was hashed. Null on capture and on usage errors."
+      "description": "True when non-whitespace content after ## Integrity was not covered by the hash. verify fails closed on that content (exit 2). A whitespace-only trailing newline is not trailing content. Boolean when a body was hashed. Null on capture and on usage errors."
     },
     "reason": {
       "type": ["string", "null"],

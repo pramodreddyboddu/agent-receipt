@@ -112,8 +112,9 @@ export function integrityCutIndex(lines: string[]): number {
  * (or any unfenced line containing the hash marker). A marker inside a
  * fence stays in the body. Trailing blank lines are normalized.
  *
- * By design, anything after `## Integrity` / the hash marker is ignored by
- * verify — appends after the Integrity footer do not affect the hash.
+ * The hash covers this body only. Bytes after the Integrity footer are not
+ * hashed. `verify` fails closed when that trailing content is non-whitespace.
+ * A whitespace-only trailing newline still passes.
  */
 export function canonicalBody(markdown: string): string {
   const normalized = markdown.replace(/\r\n/g, '\n');
@@ -140,8 +141,10 @@ export function extractEmbeddedHash(markdown: string): string | null {
 
 /**
  * True when the file has non-empty content after the Integrity section that
- * is not part of the standard hash footer. Such appends are ignored by
- * canonicalBody / verify by design.
+ * is not part of the standard hash footer. Blank lines are not content.
+ * `verify` fails closed when this is true. The hash itself still ignores
+ * those bytes, so a matching body with a trailing note is a verify failure,
+ * not a hash mismatch.
  */
 export function hasTrailingAfterIntegrity(markdown: string): boolean {
   const normalized = markdown.replace(/\r\n/g, '\n');
@@ -167,7 +170,7 @@ export function verifyMarkdown(markdown: string): {
   expected: string | null;
   actual: string;
   reason: string;
-  /** Content after Integrity exists and is ignored by the hash (by design). */
+  /** Content after Integrity exists. The hash ignores it. `verify` fails closed. */
   trailingIgnored?: boolean;
 } {
   const expected = extractEmbeddedHash(markdown);

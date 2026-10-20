@@ -360,6 +360,10 @@ Markdown sidecar handoff (HTML is never signed):
   - \`--json\` adds \`packagePath\` and points \`htmlPath\` / \`markdownPath\` / \`sigPath\`
     at the files inside the package. Without \`--package\`, those fields stay
     as they are today and \`packagePath\` is omitted.
+  - \`--json\` also adds \`relativePath\`: the receipt path relative to the
+    working directory when that path stays inside it and is not secret-shaped,
+    otherwise null. Displayed \`path\` stays masked. Use \`relativePath\` when
+    \`path\` contains \`[REDACTED]\`.
   - Peers check the directory with \`verify --package\` (alias \`--pack\`) or
     copy the proved Markdown with \`import\`. See \`help verify\` and \`help import\`.
 
@@ -381,6 +385,8 @@ Options:
   --json                 One CI gate object on stdout (progress on stderr).
                          Adds sigPath (string or null) when Markdown was written.
                          Adds packagePath when --package wrote a directory.
+                         Adds relativePath (repo-relative string, or null).
+                         Displayed path stays masked.
   --include-host         Keep the Host label. Default share masks it as
                          [REDACTED]. Session, parent, and agent always stay.
                          --no-redact skips masking, so host remains too.
@@ -1163,8 +1169,11 @@ unchanged. Plain \`verify --json\` on a \`.md\` file omits those fields.
 Exit 2 is an integrity or signature-policy failure. Exit 1 is usage,
 missing, or malformed.
 
-By design, trailing appends after ## Integrity are ignored by the hash (they
-do not affect verify). A note is printed when such trailing content is present.
+The hash does not cover bytes after ## Integrity. verify fails closed
+(exit 2) when any non-whitespace line follows the last chained record.
+Plain output and --json both name that error: "trailing content after the
+last chained record". A whitespace-only trailing newline still passes.
+Hash mismatch stays the reason when the body itself was edited.
 
 --fail-on is opt-in here. Config failOn does NOT change plain verify, so
 existing hooks stay integrity-only. Pass the flag to also exit 2 when the
@@ -1172,9 +1181,11 @@ receipt Summary risk meets the threshold.
 
 --json prints one CI gate object on stdout (ok, exitCode, verified, failedOn,
 sha256, risk, trailingIgnored). trailingIgnored is a boolean: true when
-content after ## Integrity was ignored by the hash. Exit codes are unchanged.
-Wrap and share set the same field when they verified a body. Capture leaves
-it null (capture does not report a verify result).
+non-whitespace content after ## Integrity was not covered by the hash.
+That case is exit 2 with verified false. Displayed path fields are masked
+the same way show and last mask them. Wrap and share set trailingIgnored
+when they verified a body. Capture leaves it null (capture does not report
+a verify result). share --json also adds relativePath.
 
 Default verify of a Markdown receipt stays hash-only. It does not require
 or check a signature sidecar. On a plain \`.md\` path, unsigned receipts

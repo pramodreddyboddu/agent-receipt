@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.53] — 2026-10-20
+
+### Fixed
+
+- `verify --json` masks a secret-shaped repo or receipt path the same way `show`, `last`, `compare`, and `prove` already do. `attest` masks the path on `wrote <path>`, on `bundle <path>`, and on `OK` / `FAILED`, in plain output and in JSON. `verify --package` and `import` mask those displayed paths too. `last --path` stays raw. The stored receipt and the audit log stay as captured.
+- An RS* or PS* signature whose standard-base64 run is longer than a known RSA length, and does not end on one, is not split at 342 or 512. Lengths such as 511, 600, and 682, with `/` or `+` at 342 or 512, are redacted as a whole run. A run that ends on 342, 344, 512, 683, or 684 still splits only at that length. A short glued path after an exact signature (`/src/app.ts`) still stays. The check is one length compare on the segment that was already read.
+- `share --json` adds `relativePath`: the receipt path relative to the working directory when that path stays inside it and is not secret-shaped, otherwise null. Displayed `path` stays masked. `examples/github/action.yml` and `examples/github/pr-gate.yml` use `relativePath` when it is usable, and do not pass a masked path to `sign` or `verify`.
+- `verify` fails closed when any non-whitespace line follows the last chained record. Plain output and `--json` both report `trailing content after the last chained record`, with exit 2, `verified` false, and `ok` false. `prove` follows that result. A whitespace-only trailing newline still passes. The hash still covers only the canonical body, so a hash mismatch stays the reason when the body was edited.
+
+### Notes
+
+- These are v1.0.52 Release QA follow-ups.
+- A path longer than 48 characters glued after a non-exact RSA run is masked with the signature. Eating that path is preferred over leaving signature bytes in the clear. An exact RSA length followed by `/src/app.ts` is unchanged.
+- Package version bumped to `1.0.53`. Pin comments that track the current cut are `v1.0.53`. The action default pin is `1.0.53`. That pin needs an npm publish, which is on hold.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.52] — 2026-10-20
 
 ### Fixed
