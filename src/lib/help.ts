@@ -365,6 +365,9 @@ Markdown sidecar handoff (HTML is never signed):
     With no git toplevel, the base is the working directory. Null when
     the path leaves that base or is secret-shaped. Displayed \`path\` stays
     masked. Use \`relativePath\` when \`path\` contains \`[REDACTED]\`.
+    \`verify\`, \`show\`, \`prove\`, and the other path openers resolve that
+    string against the git toplevel, or the receipts root when the
+    directory is not a git checkout.
   - Peers check the directory with \`verify --package\` (alias \`--pack\`) or
     copy the proved Markdown with \`import\`. See \`help verify\` and \`help import\`.
 
@@ -1193,6 +1196,11 @@ exit 2 with verified false. Displayed path fields are masked the same way
 show and last mask them. Wrap and share set trailingIgnored when they
 verified a body. Capture leaves it null (capture does not report a verify
 result). share --json also adds relativePath, relative to the git repo root.
+Commands that open a receipt resolve that path against the git toplevel,
+or the receipts root when the directory is not a git checkout.
+A CR-only receipt verifies the same way as LF. CRLF already did. A lone
+CR inside an otherwise LF body stays in the hash. The footer rule is
+unchanged.
 
 Default verify of a Markdown receipt stays hash-only. It does not require
 or check a signature sidecar. On a plain \`.md\` path, unsigned receipts

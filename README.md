@@ -42,7 +42,7 @@ npm install -D @pramodreddyboddu/agent-receipt
 ## GitHub Action
 
 Gate a pull request with one `uses:` line. The action runs a pinned
-`agent-receipt` (`1.0.53` by default, never `latest`) and posts a sticky
+`agent-receipt` (`1.0.54` by default, never `latest`) and posts a sticky
 summary comment.
 
 ```yaml
@@ -505,7 +505,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.53`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.54`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -607,6 +607,15 @@ Editing the body still fails the hash. Re-capture when you need a new sealed art
 leaves it null. `share --json` also includes `relativePath` (the receipt
 path relative to the git repo root, including when share runs from a
 subdirectory, or null) so a masked `path` is not the only way to name the file.
+`verify` and the other commands that open a receipt resolve that path
+against the git toplevel, or against the receipts root when the directory
+is not a git checkout. Displayed `path` stays masked.
+A strict validator pinned to the v1.0.52 gate schema (`additionalProperties`
+false, no `relativePath`) rejects `share --json` until it allows `relativePath`
+as an optional string or null. The shipped [`docs/gate.schema.json`](docs/gate.schema.json)
+declares that field. Other gate commands omit it.
+A receipt saved with CR-only line endings verifies the same way as LF.
+CRLF already did. A lone CR inside an otherwise LF body stays in the hash.
 
 `prove` is the prove-this-run report: the same hash check, plus trailing
 content, risk, TL;DR, agent, stored `failedOn` / `uncommitted`, whether

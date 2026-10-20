@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.54] — 2026-10-20
+
+### Fixed
+
+- `share` then `verify` from a subdirectory resolves `relativePath` against the git toplevel when that path is not already under the working directory. The same resolution is used by every command that opens a receipt by path, including the receipt picker. When the directory is not a git checkout, the base is the receipts root: the nearest parent that contains `.agent-receipt` or `.agent-receipt.yml`. The value `share --json` prints stays relative to the git toplevel (or the share working directory when there is no toplevel). Displayed `path` stays masked. `examples/github/action.yml` and `examples/github/pr-gate.yml` resolve that path the same way before `sign`, `verify`, or the artifact stage.
+- `docs/gate.schema.json` declares optional `relativePath` (`string` or `null`, omitted except on `share --json`). A strict consumer pinned to the v1.0.52 schema (`additionalProperties: false`, no `relativePath`) rejects current `share --json` until it allows that field.
+- An RS* or PS* signature run with `/` or `+` at 342, 512, or 683 is redacted as a whole run when the length is not an exact RSA end (342, 344, 512, 683, or 684) and the in-segment tail is signature material. A tail of 1 to 48 characters stays only when it is a clear path: no uppercase letter, and every alphanumeric run is shorter than 8 characters, or the tail is one run of a single repeated character. `/src/app.ts`, `+src/app.ts`, and `+/src/app.ts` stay. A 48-character repeated-character path stays. A mixed run of 8 or more, an uppercase marker, or a tail longer than 48 is masked with the signature. The extra check is one pass over that tail.
+- `verify` accepts a CR-only receipt the same way it accepts LF. CRLF was already accepted. A lone CR inside an otherwise LF or CRLF body stays in the hash. The writer-footer rule is unchanged: only the exact footer passes, and only ASCII space, tab, CR, and LF are ignorable trailing whitespace. NBSP, BOM, U+3000, and U+2028 still fail.
+
+### Notes
+
+- These are v1.0.53 Release QA follow-ups.
+- `relativePath` is still computed from the git toplevel. This cut fixes consumers that joined that string to a subdirectory cwd, including the example action picker.
+- Strict v1.0.52 gate schemas reject `share --json` because `relativePath` is a new property and `additionalProperties` is false. The shipped schema allows it. Other gate commands still omit the key.
+- After an exact RSA base64url length, a glued path of 1 to 48 in-segment characters stays only when the tail has no uppercase letter and no mixed alphanumeric run of 8 or more. Eating a signature-like tail is preferred over leaving up to 48 raw signature characters in the clear. `/src/app.ts` stays because that tail is `/src/app`.
+- Package version bumped to `1.0.54`. Pin comments that track the current cut are `v1.0.54`. The action default pin is `1.0.54`. That pin needs an npm publish, which is on hold.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.53] — 2026-10-20
 
 ### Fixed

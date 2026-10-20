@@ -723,8 +723,10 @@ const SIG_RSA: SigSize[] = [
 /**
  * Longest in-segment tail still treated as a glued path after an exact RSA
  * signature (`/src/app` is 7). A longer tail is the rest of the signature.
- * 48 is under the shortest non-standard remainder called out for this cut
- * (600 − 512 = 88) and under 511 − 342. One comparison, no second scan.
+ * 48 is under the shortest non-standard remainder called out for 1.0.53
+ * (600 − 512 = 88) and under 511 − 342. The tail itself is one bounded
+ * scan: an uppercase letter, or a mixed alphanumeric run of 8 or more,
+ * is signature and the whole run stays masked.
  */
 const RSA_GLUED_PATH_MAX = 48;
 /** Fast reject before a header decode. Unknown lengths never split. */
@@ -874,6 +876,51 @@ function isClearGluedPath(text: string, at: number, segEnd: number): boolean {
 }
 
 /**
+ * RSA short tail that is a path, not the rest of the signature.
+ * One pass over [at, segEnd). The caller already caps that span at
+ * `RSA_GLUED_PATH_MAX`.
+ *
+ * A clear path has no uppercase letter. Each alphanumeric run is shorter
+ * than 8 characters, or the tail has exactly one run and that run is a
+ * single repeated character (`/${'a'.repeat(46)}/` is 48). `/src/app`,
+ * `+src/app`, and `+/src/app` stay. A mixed run of 8 or more, two long
+ * runs, or an uppercase marker is signature material.
+ */
+function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): boolean {
+  if (!isClearGluedPath(text, at, segEnd)) return false;
+  let runStart = -1;
+  let runs = 0;
+  let longRun = false;
+  const finish = (end: number): boolean => {
+    const len = end - runStart;
+    if (len >= 8) {
+      const first = text.charCodeAt(runStart);
+      for (let i = runStart + 1; i < end; i += 1) {
+        if (text.charCodeAt(i) !== first) return false;
+      }
+      longRun = true;
+    }
+    runs += 1;
+    return true;
+  };
+  for (let k = at; k < segEnd; k += 1) {
+    const code = text.charCodeAt(k);
+    if (code >= 65 && code <= 90) return false;
+    if (isAsciiAlnum(code)) {
+      if (runStart < 0) runStart = k;
+      continue;
+    }
+    if (runStart >= 0) {
+      if (!finish(k)) return false;
+      runStart = -1;
+    }
+  }
+  if (runStart >= 0 && !finish(segEnd)) return false;
+  if (longRun && runs !== 1) return false;
+  return true;
+}
+
+/**
  * Index where a base64url JWT ends and a glued path begins.
  * The signature is the longest base64url run. `/` and `+` are not in that
  * alphabet, so a path can sit outside the token. A header or payload that
@@ -888,8 +935,12 @@ function isClearGluedPath(text: string, at: number, segEnd: number): boolean {
  * length (86). An RS* or PS* run that is longer than a known RSA length
  * and does not end on one (511, 600, 682, and any other non-exact length)
  * is not split at 342 or 512. The whole run is redacted. A short glued
- * path after an exact RSA signature still splits. An unknown or
- * undecodable `alg` never splits. Returns -1 when the boundary is not clear.
+ * path after an exact RSA base64url length still splits when the tail is
+ * a clear path (no uppercase, no mixed run of 8 or more). An odd run whose
+ * tail only looks like a path is redacted whole, so a `/` or `+` at 342,
+ * 512, or 683 cannot leave up to 48 signature characters in the clear.
+ * An unknown or undecodable `alg` never splits. Returns -1 when the
+ * boundary is not clear.
  */
 function clearPathSplit(
   text: string,
@@ -923,9 +974,16 @@ function clearPathSplit(
   let measure = runLen;
   if (signatureSizesForAlg(alg) === SIG_RSA && !rsaRunEndsExactly(runLen)) {
     const tailLen = runLen - sigLen;
-    // Exact signature plus a short path. Measure the signature, not the path.
-    // A longer non-exact run (511, 600, 682) stays the whole segment.
-    if (isRsaUrlLength(sigLen) && tailLen > 0 && tailLen <= RSA_GLUED_PATH_MAX && clearPath) {
+    // Exact signature plus a short clear path. Measure the signature.
+    // A tail that is still signature alphabet (uppercase, or a mixed run
+    // of 8 or more) stays the whole segment, including odd lengths whose
+    // tail is 1 to 48 characters. One pass over that tail.
+    if (
+      isRsaUrlLength(sigLen) &&
+      tailLen > 0 &&
+      tailLen <= RSA_GLUED_PATH_MAX &&
+      rsaShortTailIsClearPath(text, i, end)
+    ) {
       measure = sigLen;
     }
   }
