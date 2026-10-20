@@ -61,6 +61,8 @@
 # RSA longest-length splits, ES256K and Ed448 lengths, kid-only and whitespace JWT headers, and secret-shaped repo paths are local redaction. This smoke still does not listen and does not push.
 # v1.0.53 left that live file unchanged for the same reason.
 # Verify and attest path masking, non-standard RSA lengths, the example action path, and trailing-content verify are local. This smoke still does not listen and does not push.
+# v1.0.54 left that live file unchanged for the same reason.
+# Subdirectory relativePath, the gate schema relativePath field, odd RSA run redaction, and CR-only verify are local. This smoke still does not listen and does not push.
 name: CI
 
 on:

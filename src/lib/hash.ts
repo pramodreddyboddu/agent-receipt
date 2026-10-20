@@ -84,6 +84,21 @@ function isIgnorableWsCode(code: number): boolean {
   return code === 0x20 || code === 0x09 || code === 0x0d || code === 0x0a;
 }
 
+/**
+ * Line endings for the hash and the footer check.
+ *
+ * CRLF becomes LF. A file that is entirely CR-only is the same document,
+ * so those CR bytes become LF too. A lone CR inside an LF or CRLF body
+ * stays: that is the `## What to review\r` message, and it is part of the
+ * hash. This does not touch the audit chain.
+ */
+function normalizeReceiptNewlines(markdown: string): string {
+  if (markdown.includes('\r') && !markdown.includes('\n')) {
+    return markdown.replace(/\r/g, '\n');
+  }
+  return markdown.replace(/\r\n/g, '\n');
+}
+
 function isIgnorableWsLine(line: string): boolean {
   for (let i = 0; i < line.length; i++) {
     if (!isIgnorableWsCode(line.charCodeAt(i))) return false;
@@ -149,7 +164,7 @@ export function integrityCutIndex(lines: string[]): number {
  * ignorable trailing whitespace.
  */
 export function canonicalBody(markdown: string): string {
-  const normalized = markdown.replace(/\r\n/g, '\n');
+  const normalized = normalizeReceiptNewlines(markdown);
   const lines = normalized.split('\n');
   return bodyAt(lines, integrityCutIndex(lines));
 }
@@ -166,7 +181,7 @@ export function appendHashFooter(markdown: string): string {
 }
 
 export function extractEmbeddedHash(markdown: string): string | null {
-  const normalized = markdown.replace(/\r\n/g, '\n');
+  const normalized = normalizeReceiptNewlines(markdown);
   const lines = normalized.split('\n');
   return embeddedHashAfter(lines, integrityCutIndex(lines));
 }
@@ -191,7 +206,7 @@ const FOOTER_MARKER = /^<!-- agent-receipt-sha256:([0-9a-f]{64}) -->$/;
  * trailing note is a verify failure, not a hash mismatch.
  */
 export function hasTrailingAfterIntegrity(markdown: string): boolean {
-  const normalized = markdown.replace(/\r\n/g, '\n');
+  const normalized = normalizeReceiptNewlines(markdown);
   const lines = normalized.split('\n');
   const start = integrityCutIndex(lines);
   if (start >= lines.length) return false;
