@@ -312,7 +312,7 @@ describe('v1.0.44 chunked session tree', () => {
     assert.equal(jsonLines.length, 1);
     const body = JSON.parse(jsonLines[0]);
     assert.equal(body.command, 'session');
-    assert.equal(body.version, '1.0.54');
+    assert.equal(body.version, '1.0.55');
     assert.equal(body.ok, true);
     assert.equal(body.exitCode, 0);
     assert.equal(body.receipts.length, 3);
@@ -336,7 +336,7 @@ describe('v1.0.44 chunked session tree', () => {
     assert.match(changelog, /## \[1\.0\.44\]/);
     assert.doesNotMatch(changelog, /Chunked output is left for a later cut/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.54');
+    assert.equal(pkg.version, '1.0.55');
     assert.equal(pkg.dependencies, undefined);
   });
 });

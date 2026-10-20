@@ -27,7 +27,8 @@ import type { PolicyPackHit } from './policy.js';
  *
  * `relativePath` is set by `share --json` only. It is the receipt path
  * relative to the git repository root, including when share runs from a
- * subdirectory. With no git toplevel, the base is the working directory.
+ * subdirectory. With no git toplevel, the base is the receipts root of
+ * the file, so a secret-shaped parent of that root is not included.
  * It is null when the path leaves that base or is secret-shaped. The
  * displayed `path` stays masked.
  *
@@ -69,10 +70,12 @@ export interface GateReport {
   path: string | null;
   /**
    * Set by `share --json`. Receipt path relative to the git repository
-   * root (the working directory when git has no toplevel). Null when it
-   * would leave that base or would be masked. Omitted on other commands.
-   * Displayed `path` stays masked. A share from a subdirectory still
-   * names the file from the repo root.
+   * root. With no git toplevel, the base is the receipts root of the
+   * file, so a secret-shaped parent of that root is not included. Null
+   * when it would leave that base or would be masked. Omitted on other
+   * commands. Displayed `path` stays masked. A share from a subdirectory
+   * still names the file from the repo root, or from the receipts root
+   * when the directory is not a git checkout.
    */
   relativePath?: string | null;
   jsonPath: string | null;

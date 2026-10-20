@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.55] — 2026-10-20
+
+### Fixed
+
+- An RS* or PS* signature run with `/` or `+` at 342, 512, or 683 is redacted as a whole run when the length is not an exact RSA end (342, 344, 512, 683, or 684) and the in-segment tail is 3 to 7 characters with no filename extension. A short lowercase tail such as `/ab/c`, `/abc/de`, or `+/mn` no longer stays in the clear. The extra check is one pass over that tail. The tail scan was already capped at 48 characters.
+- A filename glued on after an exact RSA signature stays when the in-segment tail is a path and a 2-to-4 letter extension follows the segment dot (`.ts`, `.tsx`, `.md`, `.js`, `.json`). Mixed case stays in that case. `/src/App.tsx` and `/docs/README.md` stay. The signature itself stays masked. `/src/app.ts`, `+src/app.ts`, `+/src/app.ts`, and a 48-character repeated-character path stay. An uppercase tail with no filename extension, a mixed alphanumeric run of 8 or more, and a tail longer than 48 stay masked with the signature.
+- `share --json` `relativePath` uses the receipts root of the receipt file when the working directory is not a git checkout. A secret-shaped parent of that root is not part of the value. The value is set when the receipt file exists under that root, including when share runs from a parent of that root or from a nested directory. Displayed `path` stays masked. A git checkout still uses the git toplevel.
+- `verify` and `show` mask a secret-shaped path in the not-found error the same way other displayed paths are masked. Plain output and `verify --json` both mask it.
+
+### Notes
+
+- These are v1.0.54 Release QA follow-ups.
+- A tail of 3 to 7 characters stays only when a filename extension follows the segment. A longer clear path of 8 to 48 characters is unchanged, except that uppercase is allowed when that filename extension follows. Eating a short extension-less tail is preferred over leaving raw signature characters in the clear.
+- `relativePath` in a git checkout is still computed from the git toplevel. With no toplevel, the base is the receipts root of the file, not the working directory.
+- Package version bumped to `1.0.55`. Pin comments that track the current cut are `v1.0.55`. The action default pin is `1.0.55`. That pin needs an npm publish, which is on hold.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.54] — 2026-10-20
 
 ### Fixed

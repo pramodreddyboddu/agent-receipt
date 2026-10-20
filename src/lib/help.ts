@@ -362,8 +362,9 @@ Markdown sidecar handoff (HTML is never signed):
     as they are today and \`packagePath\` is omitted.
   - \`--json\` also adds \`relativePath\`: the receipt path relative to the
     git repository root, including when share runs from a subdirectory.
-    With no git toplevel, the base is the working directory. Null when
-    the path leaves that base or is secret-shaped. Displayed \`path\` stays
+    With no git toplevel, the base is the receipts root of the file, so
+    a secret-shaped parent of that root is not included. Null when the
+    path leaves that base or is secret-shaped. Displayed \`path\` stays
     masked. Use \`relativePath\` when \`path\` contains \`[REDACTED]\`.
     \`verify\`, \`show\`, \`prove\`, and the other path openers resolve that
     string against the git toplevel, or the receipts root when the
@@ -390,7 +391,8 @@ Options:
                          Adds sigPath (string or null) when Markdown was written.
                          Adds packagePath when --package wrote a directory.
                          Adds relativePath (path relative to the git
-                         repo root, or null). Displayed path stays masked.
+                         repo root, or the receipts root when not in git,
+                         or null). Displayed path stays masked.
   --include-host         Keep the Host label. Default share masks it as
                          [REDACTED]. Session, parent, and agent always stay.
                          --no-redact skips masking, so host remains too.
@@ -1195,7 +1197,8 @@ bytes after the integrity cut are not the writer footer. That case is
 exit 2 with verified false. Displayed path fields are masked the same way
 show and last mask them. Wrap and share set trailingIgnored when they
 verified a body. Capture leaves it null (capture does not report a verify
-result). share --json also adds relativePath, relative to the git repo root.
+result). share --json also adds relativePath, relative to the git repo root,
+or the receipts root when the directory is not a git checkout.
 Commands that open a receipt resolve that path against the git toplevel,
 or the receipts root when the directory is not a git checkout.
 A CR-only receipt verifies the same way as LF. CRLF already did. A lone
