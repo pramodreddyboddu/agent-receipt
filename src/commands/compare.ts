@@ -207,8 +207,8 @@ export function cmdCompare(
   const older = parseReceiptGlance(pathB);
 
   console.log(color.bold('Receipt compare'));
-  console.log(color.dim('A (newer/first):') + ` ${newer.path}`);
-  console.log(color.dim('B (older/second):') + ` ${older.path}`);
+  console.log(color.dim('A (newer/first):') + ` ${redactSecretsInText(newer.path)}`);
+  console.log(color.dim('B (older/second):') + ` ${redactSecretsInText(older.path)}`);
   console.log('');
 
   // Session delta

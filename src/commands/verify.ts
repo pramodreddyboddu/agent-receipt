@@ -3,6 +3,7 @@ import { verifyMarkdown } from '../lib/hash.js';
 import { linkMetaTamperReason } from '../lib/link.js';
 import { resolveReceiptPath } from './show.js';
 import { color } from '../lib/color.js';
+import { redactSecretsInText } from '../lib/redact.js';
 import {
   meetsFailOn,
   parseRiskSummaryMarkdown,
@@ -77,7 +78,7 @@ export function reportVerify(
   const ok = result.ok && !tamper;
   const reason = tamper ?? result.reason;
   if (!opts?.quiet) {
-    console.log(`Verifying: ${label}`);
+    console.log(`Verifying: ${redactSecretsInText(label)}`);
     if (ok) {
       console.log('✓ OK — receipt integrity verified');
       console.log(`  sha256: ${result.actual}`);

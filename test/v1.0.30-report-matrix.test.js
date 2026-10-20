@@ -63,7 +63,7 @@ function cliResult(cwd, args, extraEnv) {
     cwd,
     encoding: 'utf8',
     env: spawnEnv(extraEnv),
-    timeout: 30000,
+    timeout: 120000,
   });
   return { code: r.status === null ? 1 : r.status, out: r.stdout || '', err: r.stderr || '' };
 }

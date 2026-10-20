@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { color } from '../lib/color.js';
+import { maskDisplayedJson, redactSecretsInText } from '../lib/redact.js';
 import { VERSION } from '../lib/version.js';
 import { extractTldr } from '../lib/receipt.js';
 import {
@@ -347,7 +348,7 @@ function renderProvePage(report: ProveReport, toolCalls?: string): string {
     '',
     `**Verdict:** ${verdict}`,
     '',
-    line('path', report.path ?? '(none)'),
+    line('path', report.path ? redactSecretsInText(report.path) : '(none)'),
     line('sha256', report.sha256 ?? '(none)'),
     line('verified', tri(report.verified)),
     line('trailingIgnored', tri(report.trailingIgnored)),
@@ -392,9 +393,9 @@ function writeProvePage(cwd: string, report: ProveReport, out?: string): string 
 function htmlSummary(cwd: string, receiptPath: string): ProveHtmlSummary {
   const glance = parseReceiptGlance(receiptPath);
   const rel = relative(cwd, receiptPath);
-  const displayPath = rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : basename(receiptPath);
+  const rawDisplay = rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : basename(receiptPath);
   return {
-    displayPath,
+    displayPath: redactSecretsInText(rawDisplay),
     timestamp: glance.timestamp,
     branch: glance.branch,
     head: glance.head,
@@ -423,7 +424,7 @@ function printHuman(report: ProveReport): void {
   const banner =
     report.exitCode === 0 ? color.green('PROVED') : color.red('FAILED');
   const lines = [
-    `${banner}  ${report.path ?? ''}`,
+    `${banner}  ${report.path ? redactSecretsInText(report.path) : ''}`,
     `  sha256: ${report.sha256 ?? ''}`,
     `  verified: ${report.verified ? 'yes' : 'no'}`,
     `  trailingIgnored: ${report.trailingIgnored ? 'yes' : 'no'}`,
@@ -443,8 +444,8 @@ function printHuman(report: ProveReport): void {
     lines.push(`  parent: ${report.parent ?? '(none)'}`);
     lines.push(`  parent verify: ${parentVerifyLabel(report)}`);
   }
-  if (report.pagePath) lines.push(`  page: ${report.pagePath}`);
-  if (report.htmlPath) lines.push(`  html: ${report.htmlPath}`);
+  if (report.pagePath) lines.push(`  page: ${redactSecretsInText(report.pagePath)}`);
+  if (report.htmlPath) lines.push(`  html: ${redactSecretsInText(report.htmlPath)}`);
   console.log(lines.join('\n'));
   console.log('');
   console.log(
@@ -484,7 +485,7 @@ function lookupParentVerified(
 }
 
 export function printProve(report: ProveReport): void {
-  console.log(JSON.stringify(report));
+  console.log(JSON.stringify(maskDisplayedJson(report)));
 }
 
 /** Usage / runtime error as the prove JSON object. stdout stays one object. */

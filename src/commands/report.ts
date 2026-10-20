@@ -39,7 +39,7 @@ import {
   type SessionNode,
 } from '../lib/link.js';
 import { defangUrls } from '../lib/prove-html.js';
-import { isHighSecretRiskCode, maskSessionId, publishRedactedReceipt, redactSecretsInText } from '../lib/redact.js';
+import { isHighSecretRiskCode, maskDisplayedJson, maskSessionId, publishRedactedReceipt, redactSecretsInText } from '../lib/redact.js';
 import { readIndexStrict, receiptsDir } from '../lib/receipt-index.js';
 import { loadResignProvenance, type ResignClaim } from '../lib/resign-provenance.js';
 import {
@@ -485,13 +485,20 @@ function emptyResult(exitCode: 0 | 1 | 2, reason: string): ReportCommandResult {
   };
 }
 
+function displayedReport(result: ReportCommandResult): ReportCommandResult {
+  const shown = maskDisplayedJson(result);
+  if (shown.reason) shown.reason = redactSecretsInText(shown.reason);
+  return shown;
+}
+
 function emitReport(result: ReportCommandResult, json: boolean): number {
+  const shown = displayedReport(result);
   if (json) {
-    console.log(JSON.stringify(result));
+    console.log(JSON.stringify(shown));
     return result.exitCode;
   }
   if (result.exitCode === 1 || !result.htmlPath || !result.verdict) {
-    console.error(color.red('Error:') + ` ${result.reason ?? 'report failed'}`);
+    console.error(color.red('Error:') + ` ${shown.reason ?? 'report failed'}`);
     return result.exitCode;
   }
   const paint =
@@ -500,12 +507,12 @@ function emitReport(result: ReportCommandResult, json: boolean): number {
       : result.verdict === 'FAILED'
         ? color.red
         : color.yellow;
-  console.log(`${paint(result.verdict)}  ${result.htmlPath}`);
-  console.log(`  signature: ${result.fingerprint ?? 'unsigned'}`);
-  if (result.exposure && result.exposure !== 'redacted') {
+  console.log(`${paint(result.verdict)}  ${shown.htmlPath ?? ''}`);
+  console.log(`  signature: ${shown.fingerprint ?? 'unsigned'}`);
+  if (shown.exposure && shown.exposure !== 'redacted') {
     console.log('  UNREDACTED');
   }
-  if (result.reason) console.error(result.reason);
+  if (shown.reason) console.error(shown.reason);
   return result.exitCode;
 }
 

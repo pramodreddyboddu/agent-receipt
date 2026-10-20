@@ -403,11 +403,33 @@ function isBase64Segment(segment: string, allowEmpty: boolean): boolean {
 }
 
 /**
- * Header decodes to a JSON object. `general` accepts a non-empty string
- * `alg` or `typ` exactly `JWT`. `strict` accepts only a non-empty `alg`.
- * A valid header is at least 15 characters (`{"alg":"a"}`).
+ * First three base64 chars of a JSON object header.
+ * `{"` is `eyJ`. `{` plus space (or another byte whose top bits are 00,
+ * which `"` and JSON whitespace have) is `eyA`. `{\n` is `ewo`, `{\r` is
+ * `ew0`, `{\t` is `ewk`, when the next byte is `"` or whitespace.
+ * A header that does not start with one of these (a UTF-8 BOM, or any
+ * other leading byte) is not scanned. Scanning every base64 run would
+ * mask ordinary base64.
+ */
+function isJwtHeaderPrefixAt(text: string, i: number): boolean {
+  if (i < 0 || i + 2 >= text.length) return false;
+  if (text.charCodeAt(i) !== 101) return false;
+  const second = text.charCodeAt(i + 1);
+  const third = text.charCodeAt(i + 2);
+  if (second === 121) return third === 74 || third === 65;
+  if (second === 119) return third === 111 || third === 48 || third === 107;
+  return false;
+}
+
+/**
+ * Header decodes to a JSON object. `general` and `strict` accept a
+ * non-empty string `alg` or a non-empty string `kid` (kid-only, or `alg`
+ * after `kid`). `general` also accepts `typ` exactly `JWT`. `strict` still
+ * rejects `typ: JWT` with no `alg` and no string `kid`. A non-string `kid`
+ * is not a header. A valid header is at least 15 characters (`{"alg":"a"}`).
  * `alg` is that string when it is non-empty, otherwise null. The path
- * split uses it and does not guess a signature length.
+ * split uses it and does not guess a signature length. A kid-only token
+ * has no alg, so a glued path stays inside the mask.
  */
 interface JwtHeaderInfo {
   ok: boolean;
@@ -417,7 +439,7 @@ interface JwtHeaderInfo {
 const JWT_HEADER_MISS: JwtHeaderInfo = { ok: false, alg: null };
 
 function jwtHeaderInfoUncached(header: string, mode: JwtMaskMode): JwtHeaderInfo {
-  if (header.length < 15 || !header.startsWith('eyJ')) return JWT_HEADER_MISS;
+  if (header.length < 15 || !isJwtHeaderPrefixAt(header, 0)) return JWT_HEADER_MISS;
   const decoded = decodeBase64Segment(header);
   if (!decoded) return JWT_HEADER_MISS;
   // Compact JWT headers are one JSON object. Reject anything that does
@@ -439,6 +461,7 @@ function jwtHeaderInfoUncached(header: string, mode: JwtMaskMode): JwtHeaderInfo
   const record = parsed as Record<string, unknown>;
   const alg = typeof record.alg === 'string' && record.alg.length > 0 ? record.alg : null;
   if (alg) return { ok: true, alg };
+  if (typeof record.kid === 'string' && record.kid.length > 0) return { ok: true, alg: null };
   if (mode === 'strict') return JWT_HEADER_MISS;
   if (record.typ === 'JWT') return { ok: true, alg: null };
   return JWT_HEADER_MISS;
@@ -604,40 +627,47 @@ function readJwtStructure(text: string, start: number): JwtStructure | { resume:
   return { end: seg3.end, dot1 };
 }
 
+/**
+ * Next header prefix at or after `from`, not after an alphanumeric.
+ * One `indexOf('e')` plus a 3-char check. Separate searches for `eyJ`,
+ * `eyA`, `ewo`, `ew0`, and `ewk` would each walk the rest of the buffer.
+ */
 function nextBoundaryEyJ(text: string, from: number): number {
   const n = text.length;
   let i = from;
   while (i < n) {
-    const found = text.indexOf('eyJ', i);
+    const found = text.indexOf('e', i);
     if (found < 0) return -1;
-    if (found === 0 || !isAsciiAlnum(text.charCodeAt(found - 1))) return found;
-    i = found + 3;
+    if ((found === 0 || !isAsciiAlnum(text.charCodeAt(found - 1))) && isJwtHeaderPrefixAt(text, found)) {
+      return found;
+    }
+    i = found + 1;
   }
   return -1;
 }
 
 function nextInteriorEyJ(text: string, from: number, dot: number): number {
-  let i = from + 3;
+  let i = from + 1;
   while (i < dot) {
-    const found = text.indexOf('eyJ', i);
+    const found = text.indexOf('e', i);
     if (found < 0 || found >= dot) return -1;
-    if (!isAsciiAlnum(text.charCodeAt(found - 1))) return found;
-    i = found + 3;
+    if (!isAsciiAlnum(text.charCodeAt(found - 1)) && isJwtHeaderPrefixAt(text, found)) return found;
+    i = found + 1;
   }
   return -1;
 }
 
 /**
- * Last `eyJ` that starts at or after `from` and before `end`, not after an
- * alphanumeric. One backward pass. Repeating `lastIndexOf` is quadratic when
- * every `eyJ` sits after a letter.
+ * Last header prefix that starts at or after `from` and before `end`, not
+ * after an alphanumeric. One backward pass. Repeating `lastIndexOf` is
+ * quadratic when every prefix sits after a letter. The same prefixes as
+ * the forward scan, so a spaced header after a long `eyA-` / `eyJ-` run
+ * is still found.
  */
 function lastBoundaryEyJ(text: string, from: number, end: number): number {
   const stop = Math.min(end, text.length);
   for (let i = stop - 3; i >= from; i -= 1) {
-    if (text.charCodeAt(i) !== 101 || text.charCodeAt(i + 1) !== 121 || text.charCodeAt(i + 2) !== 74) {
-      continue;
-    }
+    if (!isJwtHeaderPrefixAt(text, i)) continue;
     if (i === 0 || !isAsciiAlnum(text.charCodeAt(i - 1))) return i;
   }
   return -1;
@@ -652,9 +682,7 @@ function lastBoundaryEyJ(text: string, from: number, end: number): number {
 function lastJoinedEyJ(text: string, from: number, end: number): number {
   const stop = Math.min(end, text.length);
   for (let i = stop - 3; i >= from; i -= 1) {
-    if (text.charCodeAt(i) !== 101 || text.charCodeAt(i + 1) !== 121 || text.charCodeAt(i + 2) !== 74) {
-      continue;
-    }
+    if (!isJwtHeaderPrefixAt(text, i)) continue;
     const prev = i > 0 ? text.charCodeAt(i - 1) : 0;
     if (prev !== 45 && prev !== 95 && prev !== 61 && prev !== 43 && prev !== 47) continue;
     return i;
@@ -663,45 +691,84 @@ function lastJoinedEyJ(text: string, from: number, end: number): number {
 }
 
 /**
- * Unpadded base64url length of a JWS signature for that header's own `alg`.
- * HS256 43; HS384 64; HS512, ES256, and EdDSA 86; ES384 128; ES512 176.
- * RS* and PS* are the RSA modulus size, any of 342, 512, or 683
- * (2048, 3072, or 4096). A shorter run that then hits `+` or `/` is still
- * inside a longer signature. An alg with no row here never splits.
+ * Unpadded base64url length (`url`) and padded standard-base64 length
+ * (`std`) of a JWS signature for that header's own `alg`.
+ * HS256 43/44; HS384 64/64; HS512 and ES256 86/88; ES256K 86/88;
+ * EdDSA is Ed25519 86/88 or Ed448 152/152; ES384 128/128; ES512 176/176.
+ * RS* and PS* are the RSA modulus size: 342/344, 512/512, or 683/684
+ * (2048, 3072, or 4096). The path split uses `url` only. `std` is at
+ * least `url`, so a run that reaches the padded form has reached that
+ * size. An alg with no row here never splits.
  */
-const SIG_LEN_HS256 = new Set([43]);
-const SIG_LEN_HS384 = new Set([64]);
-const SIG_LEN_86 = new Set([86]);
-const SIG_LEN_ES384 = new Set([128]);
-const SIG_LEN_ES512 = new Set([176]);
-const SIG_LEN_RSA = new Set([342, 512, 683]);
-/** Fast reject before a header decode. Unknown lengths never split. */
-const SPLITTABLE_SIGNATURE_LENGTHS = new Set([43, 64, 86, 128, 176, 342, 512, 683]);
+interface SigSize {
+  url: number;
+  std: number;
+}
 
-function signatureLengthsForAlg(alg: string | null): Set<number> | null {
+const SIG_HS256: SigSize[] = [{ url: 43, std: 44 }];
+const SIG_HS384: SigSize[] = [{ url: 64, std: 64 }];
+const SIG_86_88: SigSize[] = [{ url: 86, std: 88 }];
+const SIG_ES384: SigSize[] = [{ url: 128, std: 128 }];
+const SIG_ES512: SigSize[] = [{ url: 176, std: 176 }];
+/** Ed25519 (86) and Ed448 (152). Both use alg EdDSA. */
+const SIG_EDDSA: SigSize[] = [
+  { url: 86, std: 88 },
+  { url: 152, std: 152 },
+];
+const SIG_RSA: SigSize[] = [
+  { url: 342, std: 344 },
+  { url: 512, std: 512 },
+  { url: 683, std: 684 },
+];
+/** Fast reject before a header decode. Unknown lengths never split. */
+const SPLITTABLE_SIGNATURE_LENGTHS = new Set([43, 64, 86, 128, 152, 176, 342, 512, 683]);
+
+function signatureSizesForAlg(alg: string | null): SigSize[] | null {
   switch (alg) {
     case 'HS256':
-      return SIG_LEN_HS256;
+      return SIG_HS256;
     case 'HS384':
-      return SIG_LEN_HS384;
+      return SIG_HS384;
     case 'HS512':
     case 'ES256':
+    case 'ES256K':
+      return SIG_86_88;
     case 'EdDSA':
-      return SIG_LEN_86;
+      return SIG_EDDSA;
     case 'ES384':
-      return SIG_LEN_ES384;
+      return SIG_ES384;
     case 'ES512':
-      return SIG_LEN_ES512;
+      return SIG_ES512;
     case 'RS256':
     case 'RS384':
     case 'RS512':
     case 'PS256':
     case 'PS384':
     case 'PS512':
-      return SIG_LEN_RSA;
+      return SIG_RSA;
     default:
       return null;
   }
+}
+
+/**
+ * Longest unpadded signature length this third segment has reached.
+ * A 684-char RSA-4096 run reaches 683, so it must not split at 342 or
+ * 512. A 342-char signature plus a short path stays under 512, so it
+ * still splits at 342. One pass over a fixed table.
+ */
+function longestSignatureLength(alg: string | null, runLen: number): number | null {
+  const sizes = signatureSizesForAlg(alg);
+  if (!sizes) return null;
+  let best: number | null = null;
+  for (const size of sizes) {
+    // `std` is the padded length and is never shorter than `url`. A run
+    // that reaches the padded form has reached that size. 88 and 684 are
+    // not split points; the base64url scan stops at `=`.
+    if (size.std < size.url) continue;
+    if (runLen >= size.url && (best === null || size.url > best)) best = size.url;
+  }
+  return best;
 }
 
 /**
@@ -779,10 +846,12 @@ function isClearGluedPath(text: string, at: number, segEnd: number): boolean {
  * those too, and this split stays out so signature bytes are not left behind.
  * An unpadded standard-base64 signature also contains `+` or `/`. Splitting
  * at the first one leaves the rest of the signature in the clear. The split
- * is allowed only when that run's length is the signature length for this
- * token's own `alg` (from the decoded header). A `+` or `/` at 43, 64, or
- * 86 inside a longer signature stays inside the mask. An unknown or
- * undecodable `alg` never splits. Returns -1 when the boundary is not clear.
+ * is allowed only when the base64url prefix is the longest unpadded length
+ * for this token's own `alg` that the third segment actually reaches.
+ * A `+` or `/` at 342 inside a 512 or 683 RSA signature stays inside the
+ * mask. The same rule keeps Ed448 (152) from splitting at the Ed25519
+ * length (86). An unknown or undecodable `alg` never splits. Returns -1
+ * when the boundary is not clear.
  */
 function clearPathSplit(
   text: string,
@@ -808,8 +877,11 @@ function clearPathSplit(
   // Reject before decoding. A space-separated token ends on base64url, so
   // this returns without reading the header.
   if (!SPLITTABLE_SIGNATURE_LENGTHS.has(sigLen)) return -1;
-  const allowed = signatureLengthsForAlg(jwtHeaderInfo(header, mode).alg);
-  if (!allowed || !allowed.has(sigLen)) return -1;
+  // The third segment is already the std-base64 run (`+` `/` `=` included).
+  // No second scan. Only the longest reached unpadded length may split.
+  const runLen = end - (dot2 + 1);
+  const wanted = longestSignatureLength(jwtHeaderInfo(header, mode).alg, runLen);
+  if (wanted === null || sigLen !== wanted) return -1;
   if (!isClearGluedPath(text, i, end)) return -1;
   if (!isJwtToken(text.slice(cursor, i), mode)) return -1;
   return i;
@@ -943,8 +1015,9 @@ function isPureEyJPrefixRun(text: string, start: number, end: number): boolean {
  * Mask compact JWTs. One left-to-right scan, no nested quantifier, so a
  * long run of `eyJ.` cannot backtrack. A failed candidate does not restart
  * at every interior `eyJ` after `-`, `_`, or `=`. Those restarts are
- * capped. After the cap, the last `eyJ` before the header dot is tried
- * once, so a real token after a long glued prefix is still masked.
+ * capped. After the cap, the last header prefix (`eyJ`, `eyA`, `ewo`,
+ * `ew0`, or `ewk`) before the header dot is tried once, so a real token
+ * after a long glued prefix is still masked.
  * Two JWTs joined by one `-`, `_`, `=`, `+`, or `/` are masked separately.
  * The joiner stays. A padded token followed by one of `+` `/` `_` `=` and
  * more text, or by plain text after valid padding, is masked only through
@@ -952,8 +1025,9 @@ function isPureEyJPrefixRun(text: string, start: number, end: number): boolean {
  * boundary even when it is not valid padding: the JWT is masked and the
  * `=` plus the trailing text stay. The search for that `=` stops at the
  * end of the token. A base64url token keeps a path glued on with `/` or
- * `+` only when the signature length matches that token's own `alg` and
- * the tail is clearly a path. A `+` or `/` earlier than that length stays
+ * `+` only when that prefix is the longest unpadded signature length for
+ * the token's own `alg` that the third segment reaches, and the tail is
+ * clearly a path. A `+` or `/` at a shorter RSA or EdDSA length stays
  * inside the mask. An unknown or undecodable `alg` never splits. Dotted
  * text whose header does not decode as a JWT (`eyJsee.the.docs`, versions,
  * filenames) is left alone.
@@ -1066,6 +1140,43 @@ export function redactSecretsInText(text: string): string {
       : out.replace(re, replacement);
   }
   return out;
+}
+
+/**
+ * Path fields printed to the user. Display only. The same strings passed
+ * to the filesystem stay raw. Other strings (verdict, fingerprint, tldr)
+ * are left as they are.
+ */
+const DISPLAYED_PATH_KEYS = new Set([
+  'path',
+  'jsonPath',
+  'htmlPath',
+  'markdownPath',
+  'sigPath',
+  'packagePath',
+  'importPath',
+  'importSigPath',
+  'pagePath',
+]);
+
+function maskDisplayedValue(value: unknown, key: string | undefined): unknown {
+  if (typeof value === 'string') {
+    return key !== undefined && DISPLAYED_PATH_KEYS.has(key) ? redactSecretsInText(value) : value;
+  }
+  if (Array.isArray(value)) return value.map((item) => maskDisplayedValue(item, undefined));
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [childKey, child] of Object.entries(value)) {
+      out[childKey] = maskDisplayedValue(child, childKey);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** Copy of a JSON value with displayed path fields run through secret redaction. */
+export function maskDisplayedJson<T>(value: T): T {
+  return maskDisplayedValue(value, undefined) as T;
 }
 
 /**

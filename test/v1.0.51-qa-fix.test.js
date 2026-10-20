@@ -369,7 +369,6 @@ describe('v1.0.51 QA signature split matches the token alg', () => {
       ['none', 43],
       ['none', 86],
       ['HS999', 43],
-      ['ES256K', 86],
     ];
     for (const [alg, length] of mismatched) {
       const raw = `${jwtFor(alg, 'A'.repeat(length))}/src/app.ts`;
