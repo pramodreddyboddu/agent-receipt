@@ -24,7 +24,7 @@ import {
   receiptDisplayPath,
 } from '../lib/policy.js';
 
-/** Non-whitespace bytes after the last integrity record. Hash still matches. */
+/** Bytes after the integrity cut are not the writer footer. Hash still matches. */
 export const TRAILING_CONTENT_REASON = 'trailing content after the last chained record';
 
 export interface VerifyCommandOptions {

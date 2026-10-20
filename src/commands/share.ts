@@ -20,6 +20,7 @@ import {
   riskToGate,
 } from '../lib/gate.js';
 import { recordAuditEvent } from '../lib/audit.js';
+import { runGit } from '../lib/git.js';
 import {
   assertNotDirectoryPath,
   assertWritableOutFile,
@@ -157,14 +158,30 @@ function agentFromReceipt(markdown: string): string | null {
 }
 
 /**
- * Repo-relative receipt path for `share --json`. Null when the file is
- * outside cwd, or when displaying it would mask a secret. The displayed
- * `path` stays masked either way.
+ * Directory `relativePath` is computed against. The git toplevel, so a
+ * share started in a subdirectory still names the receipt from the repo
+ * root. When this directory is not a git checkout, the working directory.
+ */
+function sharePathBase(cwd: string): string {
+  try {
+    const top = runGit(['rev-parse', '--show-toplevel'], cwd);
+    if (top) return top;
+  } catch {
+    /* not a git checkout */
+  }
+  return resolve(cwd);
+}
+
+/**
+ * Receipt path relative to the git repo root for `share --json`.
+ * Null when the file leaves that root, or when displaying it would mask
+ * a secret. With no git toplevel, the base is the working directory.
+ * The displayed `path` stays masked either way.
  */
 function shareRelativePath(cwd: string, filePath: string): string | null {
   let rel: string;
   try {
-    rel = relative(cwd, filePath);
+    rel = relative(sharePathBase(cwd), filePath);
   } catch {
     return null;
   }

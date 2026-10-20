@@ -18,13 +18,18 @@ import type { PolicyPackHit } from './policy.js';
  *
  * `trailingIgnored` is a boolean when this command hashed a body (verify,
  * and wrap/share after they verify). It is null when trailing content was
- * not evaluated (capture, and usage errors). Non-whitespace bytes after
- * the last chained record fail `verify` (exit 2) even when the hash still
- * matches. A whitespace-only trailing newline still passes.
+ * not evaluated (capture, and usage errors). Bytes after the integrity cut
+ * must be the writer footer: one heading, one blank, one 64-lowercase-hex
+ * marker, one blank, and one prose line with that same hash. Anything else
+ * fails `verify` (exit 2) even when the hash still matches, including with
+ * `--require-sig`. Only ASCII space, tab, CR, and LF are ignorable trailing
+ * whitespace. A trailing line of those characters still passes.
  *
- * `relativePath` is set by `share --json` only. It is a repo-relative
- * receipt path when that path stays inside the working directory and is
- * not secret-shaped, otherwise null. The displayed `path` stays masked.
+ * `relativePath` is set by `share --json` only. It is the receipt path
+ * relative to the git repository root, including when share runs from a
+ * subdirectory. With no git toplevel, the base is the working directory.
+ * It is null when the path leaves that base or is secret-shaped. The
+ * displayed `path` stays masked.
  *
  * `signature` is set only by `verify --json --require-sig` after the hash
  * check passes. Other commands omit it. `sigPath` is set by `share --json`
@@ -63,10 +68,11 @@ export interface GateReport {
   uncommitted: boolean | null;
   path: string | null;
   /**
-   * Set by `share --json`. Repo-relative receipt path when it stays inside
-   * the working directory and is not secret-shaped. Null when it would
-   * escape or would be masked. Omitted on other commands. Displayed `path`
-   * stays masked.
+   * Set by `share --json`. Receipt path relative to the git repository
+   * root (the working directory when git has no toplevel). Null when it
+   * would leave that base or would be masked. Omitted on other commands.
+   * Displayed `path` stays masked. A share from a subdirectory still
+   * names the file from the repo root.
    */
   relativePath?: string | null;
   jsonPath: string | null;
@@ -77,10 +83,10 @@ export interface GateReport {
   risk: GateRisk | null;
   ignored: number | null;
   /**
-   * True when non-whitespace content after `## Integrity` was not covered
-   * by the hash. `verify` fails closed on that content. A whitespace-only
-   * trailing newline is not trailing content. Null when this command did
-   * not evaluate trailing content.
+   * True when bytes after the integrity cut are not the writer footer.
+   * `verify` fails closed on that content. Only ASCII space, tab, CR, and
+   * LF are ignorable trailing whitespace. Null when this command did not
+   * evaluate trailing content.
    */
   trailingIgnored: boolean | null;
   reason: string | null;

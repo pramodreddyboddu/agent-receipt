@@ -38,6 +38,7 @@ import {
   signaturePathFor,
 } from '../lib/sign.js';
 import { applyTrust, loadTrustedFingerprints } from '../lib/trust.js';
+import { redactSecretsInText } from '../lib/redact.js';
 import { VERSION } from '../lib/version.js';
 import { cmdVerify } from './verify.js';
 
@@ -1117,13 +1118,35 @@ function publishExclusive(from: string, to: string): void {
   unlinkSync(from);
 }
 
+/**
+ * Failed import only. A secret-shaped path in the error is masked the
+ * same way other commands mask displayed paths. A successful import is
+ * left as recorded so a caller can still open `packagePath`.
+ */
+function displayedImport(report: SessionImportReport): SessionImportReport {
+  if (report.exitCode === 0) return report;
+  const show = (value: string) => redactSecretsInText(value);
+  return {
+    ...report,
+    packagePath: report.packagePath === null ? null : show(report.packagePath),
+    reason: report.reason === null ? null : show(report.reason),
+    files: report.files.map((file) => ({
+      ...file,
+      from: show(file.from),
+      to: show(file.to),
+      reason: file.reason === null ? null : show(file.reason),
+    })),
+  };
+}
+
 function emitImport(report: SessionImportReport, json: boolean): void {
+  const shown = displayedImport(report);
   if (json) {
-    console.log(JSON.stringify(report));
+    console.log(JSON.stringify(shown));
     return;
   }
-  const banner = report.exitCode === 0 ? color.green('VERIFIED') : color.red('FAILED');
-  const where = report.packagePath ?? '(none)';
+  const banner = shown.exitCode === 0 ? color.green('VERIFIED') : color.red('FAILED');
+  const where = shown.packagePath ?? '(none)';
   const lines = [
     `${banner}  ${where}`,
     `  session: ${report.session ?? '(none)'}`,
@@ -1132,9 +1155,9 @@ function emitImport(report: SessionImportReport, json: boolean): void {
     `  conflicts: ${report.conflicts}`,
     `  manifestSig: ${formatManifestSig(report.manifestSig)}`,
   ];
-  if (report.dryRun) lines.push('  dry-run: true');
-  const verb = report.exitCode === 0 && !report.dryRun && report.written ? 'wrote' : 'plan';
-  for (const file of report.files) {
+  if (shown.dryRun) lines.push('  dry-run: true');
+  const verb = shown.exitCode === 0 && !shown.dryRun && shown.written ? 'wrote' : 'plan';
+  for (const file of shown.files) {
     if (file.action === 'copy') lines.push(`  ${verb}: ${file.to}`);
     else if (file.action === 'skip') lines.push(`  skip: ${file.to}`);
     else if (file.action === 'symlink') lines.push(`  symlink: ${file.reason || file.to}`);
@@ -1147,8 +1170,8 @@ function emitImport(report: SessionImportReport, json: boolean): void {
       );
     }
   }
-  if (report.reason) lines.push(`  reason: ${report.reason}`);
-  if (report.exitCode !== 0) lines.push('  import: refused');
+  if (shown.reason) lines.push(`  reason: ${shown.reason}`);
+  if (shown.exitCode !== 0) lines.push('  import: refused');
   console.log(lines.join('\n'));
 }
 

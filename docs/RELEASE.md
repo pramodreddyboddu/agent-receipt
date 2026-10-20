@@ -10,7 +10,7 @@ want a public release. This checklist is the playbook when you are ready.
 - [ ] Version bump consistent across:
   - [ ] `package.json` → `"version"` + scoped name `@pramodreddyboddu/agent-receipt`
   - [ ] `src/lib/version.ts` → `VERSION`
-  - [ ] Integrity docs note: non-whitespace trailing content after `## Integrity` fails verify; a whitespace-only trailing newline still passes
+  - [ ] Integrity docs note: bytes after the integrity cut must be the writer footer (one heading, one 64-lowercase-hex marker, one prose line with that same hash). Anything else fails verify, including with `--require-sig`. Only ASCII space, tab, CR, and LF are ignorable trailing whitespace.
   - [ ] `CHANGELOG.md` → dated section
 - [ ] `npm run pack:check` — **automated** (`npm pack --dry-run` asserts `bin` + `dist`, and bin path has no leading `./`)
 - [ ] README 60-second path still works from a fresh clone / GitHub install
