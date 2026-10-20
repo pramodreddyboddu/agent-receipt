@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.52] — 2026-10-20
+
+### Fixed
+
+- An RS* or PS* signature is no longer split at a shorter RSA length when the third segment reaches a longer one. The lengths are 342 (RSA-2048, standard-base64 344), 512 (RSA-3072, 512), and 683 (RSA-4096, 684 with one `=`). A `+` or `/` at 342 inside a 512- or 683-character signature stays masked, including when that signature is followed by `+`, `/`, `_`, or `=` and more text. A 342-character signature followed by a short path still keeps the path. The same rule applies to EdDSA, so an Ed448 signature (152) is not split at the Ed25519 length (86). The scan is still one pass over the segment that was already read.
+- ES256K signatures use the ES256 length: unpadded base64url 86, standard-base64 88 with `==`. Ed448, which is EdDSA with a 114-byte signature, uses 152 in both forms. A clear glued path stays when the base64url run is that length. `=` after an Ed448 signature stays with the trailing text, because 152 is 0 mod 4.
+- A JWT header that is only a non-empty string `kid`, or that puts `alg` after `kid`, is masked in both general and strict mode. A header that is still a JSON object but does not start with the usual `eyJ` is masked when it starts with `eyA` (`{` plus space), `ewo` (`{\n`), `ew0` (`{\r`), or `ewk` (`{\t`). `typ: JWT` with no `alg` and no string `kid` stays general-only. A kid-only token has no `alg`, so a glued path stays inside the mask.
+- A secret-shaped directory name in the local repo path is masked on `compare`, `prove`, `doctor`, `audit`, `share`, `html`, `report`, and `log`, in plain output and in JSON where that command prints JSON. The mask is the same one `show` and `last` already use. `compare` has no JSON mode. `last --path` still prints the raw path. The stored receipt and the audit log stay as captured.
+
+### Notes
+
+- These are v1.0.51 Release QA follow-ups.
+- A header that does not start with `eyJ`, `eyA`, `ewo`, `ew0`, or `ewk` is not scanned. That includes a UTF-8 BOM before `{`. Scanning every base64 run would mask ordinary base64 text.
+- A path glued onto a signature whose base64url length is not the longest length that run reached, or onto an unknown `alg`, is still masked through the path. Eating the path is preferred over leaving signature bytes in the clear.
+- Package version bumped to `1.0.52`. Pin comments that track the current cut are `v1.0.52`. The action default pin is `1.0.52`.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.51] — 2026-10-14
 
 ### Fixed

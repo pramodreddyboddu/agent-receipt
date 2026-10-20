@@ -11,6 +11,7 @@ import {
   type FailOnThreshold,
 } from '../lib/risk.js';
 import { color } from '../lib/color.js';
+import { maskDisplayedJson, redactSecretsInText } from '../lib/redact.js';
 import {
   emitLine,
   failOnReason,
@@ -137,13 +138,15 @@ function guardShareFile(cwd: string, source: string, abs: string, ownMessage: st
 }
 
 function peerPackageTip(packageDir: string, markdownPath: string): string[] {
+  const pack = redactSecretsInText(packageDir);
+  const md = redactSecretsInText(markdownPath);
   return [
     'Peers: open the HTML (unsigned). Check the package, then the Markdown:',
-    `  agent-receipt verify --package ${packageDir}`,
-    `  agent-receipt import ${packageDir}`,
-    `  agent-receipt verify ${markdownPath}`,
-    `  agent-receipt prove ${markdownPath}`,
-    `  agent-receipt verify --require-sig ${markdownPath}`,
+    `  agent-receipt verify --package ${pack}`,
+    `  agent-receipt import ${pack}`,
+    `  agent-receipt verify ${md}`,
+    `  agent-receipt prove ${md}`,
+    `  agent-receipt verify --require-sig ${md}`,
   ];
 }
 
@@ -208,7 +211,7 @@ export function cmdShare(
     const exitCode: 0 | 2 = !partial.verified || failedOn ? 2 : 0;
     if (opts.json) {
       printGate(
-        finalizeGate({
+        maskDisplayedJson(finalizeGate({
           command: 'share',
           exitCode,
           verified: partial.verified,
@@ -232,7 +235,7 @@ export function cmdShare(
           sigPath: partial.sigPath,
           ...policyGateFields(policy),
           ...(partial.packagePath ? { packagePath: partial.packagePath } : {}),
-        }),
+        })),
       );
     } else if (partial.verified && riskFailed && opts.failOn) {
       console.error(
@@ -377,11 +380,11 @@ export function cmdShare(
   if (signatureTip) say(color.yellow(signatureTip));
   if (!quiet) {
     say(color.bold('TL;DR') + `  ${publishedTldr}`);
-    if (packageDir) say(color.bold('package:') + ` ${packageDir}`);
-    say(color.bold('html') + `   ${html.path}`);
-    if (markdownPath) say(color.bold('md') + `     ${markdownPath}`);
-    if (sigPath) say(color.bold('sig') + `    ${sigPath}`);
-    say(color.bold('source') + ` ${source}`);
+    if (packageDir) say(color.bold('package:') + ` ${redactSecretsInText(packageDir)}`);
+    say(color.bold('html') + `   ${redactSecretsInText(html.path)}`);
+    if (markdownPath) say(color.bold('md') + `     ${redactSecretsInText(markdownPath)}`);
+    if (sigPath) say(color.bold('sig') + `    ${redactSecretsInText(sigPath)}`);
+    say(color.bold('source') + ` ${redactSecretsInText(source)}`);
     if (packageDir && markdownPath) {
       say('');
       for (const line of peerPackageTip(packageDir, markdownPath)) say(line);

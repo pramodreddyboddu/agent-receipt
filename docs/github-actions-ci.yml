@@ -57,6 +57,8 @@
 # UTF-8 git paths, +/ JWT joins, backslash and newline filenames, and history redaction are local. This smoke still does not listen and does not push.
 # v1.0.51 left that live file unchanged for the same reason.
 # Padded JWT joiners, glued path masking, backtick filenames, and plain history/show/compare redaction are local. This smoke still does not listen and does not push.
+# v1.0.52 left that live file unchanged for the same reason.
+# RSA longest-length splits, ES256K and Ed448 lengths, kid-only and whitespace JWT headers, and secret-shaped repo paths are local redaction. This smoke still does not listen and does not push.
 name: CI
 
 on:

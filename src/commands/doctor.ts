@@ -24,6 +24,7 @@ import { retentionCheck } from '../lib/retention.js';
 import { loadKeys, privateKeyPath, publicKeyPath } from '../lib/sign.js';
 import { inspectTrustForDoctor } from '../lib/trust.js';
 import { policyDoctorDetail } from '../lib/policy.js';
+import { redactSecretsInText } from '../lib/redact.js';
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'info';
 
@@ -719,8 +720,17 @@ function checksInDisplayOrder(checks: DoctorCheck[]): DoctorCheck[] {
   return ordered;
 }
 
-function printCheck(c: DoctorCheck): void {
-  console.log(`  [${icon(c.status)}] ${c.name.padEnd(10)} ${c.detail}`);
+/**
+ * Display-only. A secret-shaped directory name in the repo path is masked.
+ * Other check text (fingerprints, versions, relative paths) stays as written.
+ */
+function maskRepoPath(text: string, cwd: string): string {
+  if (!cwd || !text.includes(cwd)) return text;
+  return text.split(cwd).join(redactSecretsInText(cwd));
+}
+
+function printCheck(c: DoctorCheck, cwd: string): void {
+  console.log(`  [${icon(c.status)}] ${c.name.padEnd(10)} ${maskRepoPath(c.detail, cwd)}`);
 }
 
 /**
@@ -755,7 +765,7 @@ export function cmdDoctor(cwd: string, opts: DoctorOptions = {}): number {
         checks: ordered.map((c) => ({
           id: c.name,
           status: c.status,
-          detail: c.detail,
+          detail: maskRepoPath(c.detail, cwd),
         })),
       }),
     );
@@ -763,7 +773,7 @@ export function cmdDoctor(cwd: string, opts: DoctorOptions = {}): number {
   }
 
   console.log(color.bold(`agent-receipt doctor`) + color.dim(` (${VERSION})`));
-  console.log(color.dim(`cwd: ${cwd}`));
+  console.log(color.dim(`cwd: ${redactSecretsInText(cwd)}`));
   if (opts.strict) {
     console.log(
       color.dim(
@@ -775,13 +785,13 @@ export function cmdDoctor(cwd: string, opts: DoctorOptions = {}): number {
 
   console.log(color.bold('Environment'));
   for (const c of ordered) {
-    if (ENV_CHECKS.has(c.name)) printCheck(c);
+    if (ENV_CHECKS.has(c.name)) printCheck(c, cwd);
   }
 
   console.log('');
   console.log(color.bold('Prod ready'));
   for (const c of ordered) {
-    if (PROD_CHECKS.includes(c.name)) printCheck(c);
+    if (PROD_CHECKS.includes(c.name)) printCheck(c, cwd);
   }
 
   console.log('');

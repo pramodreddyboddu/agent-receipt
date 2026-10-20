@@ -8,6 +8,7 @@ import {
   type AuditKind,
 } from '../lib/audit.js';
 import { color } from '../lib/color.js';
+import { maskDisplayedJson, redactSecretsInText } from '../lib/redact.js';
 import { VERSION } from '../lib/version.js';
 
 export interface AuditOptions {
@@ -119,7 +120,7 @@ function formatEvent(ev: AuditEvent): string {
   const agent = ev.agent ? `  agent=${ev.agent}` : '';
   return (
     `${ev.ts}  ${ev.event.padEnd(7)}  exit=${ev.exitCode}  ${verified}  ${redacted}` +
-    `  ${shortHash(ev.sha256)}  ${ev.path}${agent}`
+    `  ${shortHash(ev.sha256)}  ${redactSecretsInText(ev.path)}${agent}`
   );
 }
 
@@ -144,7 +145,7 @@ export function cmdAudit(cwd: string, opts: AuditOptions = {}): number {
     const chain = verifyAuditChain(cwd);
     if (opts.json) {
       console.log(
-        JSON.stringify({
+        JSON.stringify(maskDisplayedJson({
           ok: chain.ok,
           command: 'audit',
           version: VERSION,
@@ -153,12 +154,12 @@ export function cmdAudit(cwd: string, opts: AuditOptions = {}): number {
           reason: chain.reason,
           experimental: true,
           path: auditLogPath(cwd),
-        }),
+        })),
       );
     } else if (chain.ok) {
       console.log(
         color.green('audit chain OK') +
-          ` — ${chain.events} event${chain.events === 1 ? '' : 's'} in ${auditLogPath(cwd)}`,
+          ` — ${chain.events} event${chain.events === 1 ? '' : 's'} in ${redactSecretsInText(auditLogPath(cwd))}`,
       );
       console.log(
         color.dim(
@@ -177,12 +178,12 @@ export function cmdAudit(cwd: string, opts: AuditOptions = {}): number {
   const shown = applyAuditListingFilters(events, { event, agent, failed, limit });
 
   if (opts.json) {
-    console.log(JSON.stringify(shown));
+    console.log(JSON.stringify(maskDisplayedJson(shown)));
     return 0;
   }
 
   console.log(color.bold('agent-receipt audit') + color.dim('  (experimental — not a signature)'));
-  console.log(color.dim(auditLogPath(cwd)));
+  console.log(color.dim(redactSecretsInText(auditLogPath(cwd))));
   if (event) {
     console.log(
       color.dim(`event filter: ${event} (listing only; --verify checks the whole chain)`),

@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, basename } from 'node:path';
 import { resolveReceiptPath } from './show.js';
 import { markdownToHtml } from '../lib/html.js';
-import { publishRedactedReceipt } from '../lib/redact.js';
+import { publishRedactedReceipt, redactSecretsInText } from '../lib/redact.js';
 import { verifyMarkdown } from '../lib/hash.js';
 import { recordAuditEvent } from '../lib/audit.js';
 import { color } from '../lib/color.js';
@@ -155,8 +155,8 @@ export function cmdExport(
     signatureAction = handoff.action;
   }
 
-  log(color.green('✓') + ` Wrote ${format}: ${outPath}`);
-  log(color.dim(`  source: ${source}`));
+  log(color.green('✓') + ` Wrote ${format}: ${redactSecretsInText(outPath)}`);
+  log(color.dim(`  source: ${redactSecretsInText(source)}`));
   if (redacted) {
     log(color.yellow('  ⚠ Redacted — high/secret findings masked.'));
   }
@@ -164,7 +164,7 @@ export function cmdExport(
     log(color.yellow(`  ${signatureTip}`));
   } else if (sigPath) {
     const how = signatureAction === 'copied' ? 'copied' : 're-signed';
-    log(color.dim(`  sig: ${sigPath} (${how})`));
+    log(color.dim(`  sig: ${redactSecretsInText(sigPath)} (${how})`));
   }
   log(color.dim('  Open in a browser (HTML) or share the file as-is.'));
   if (format === 'html') {
