@@ -10,7 +10,7 @@ want a public release. This checklist is the playbook when you are ready.
 - [ ] Version bump consistent across:
   - [ ] `package.json` → `"version"` + scoped name `@pramodreddyboddu/agent-receipt`
   - [ ] `src/lib/version.ts` → `VERSION`
-  - [ ] Integrity docs note: trailing appends after `## Integrity` ignored by verify
+  - [ ] Integrity docs note: bytes after the integrity cut must be the writer footer (one heading, one 64-lowercase-hex marker, one prose line with that same hash). Anything else fails verify, including with `--require-sig`. Only ASCII space, tab, CR, and LF are ignorable trailing whitespace.
   - [ ] `CHANGELOG.md` → dated section
 - [ ] `npm run pack:check` — **automated** (`npm pack --dry-run` asserts `bin` + `dist`, and bin path has no leading `./`)
 - [ ] README 60-second path still works from a fresh clone / GitHub install
@@ -36,7 +36,7 @@ gh auth refresh -h github.com -s workflow
 
 Fine-grained PAT: **Actions: Read and write**. GitHub App: **Workflows**.
 A token whose `gh auth status` scopes are only `gist`, `read:org`, `repo`
-cannot push `.github/workflows/*`. v1.0.6 through v1.0.52 left
+cannot push `.github/workflows/*`. v1.0.6 through v1.0.53 left
 `.github/workflows/ci.yml` unchanged for that reason; the docs mirror has
 the `share --json` smoke, `prove --json`, `last --json`, a `prune --dry-run`
 check, a `docs/gate.schema.json` required-key check on `wrap.json`,

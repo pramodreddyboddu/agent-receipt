@@ -720,6 +720,13 @@ const SIG_RSA: SigSize[] = [
   { url: 512, std: 512 },
   { url: 683, std: 684 },
 ];
+/**
+ * Longest in-segment tail still treated as a glued path after an exact RSA
+ * signature (`/src/app` is 7). A longer tail is the rest of the signature.
+ * 48 is under the shortest non-standard remainder called out for this cut
+ * (600 − 512 = 88) and under 511 − 342. One comparison, no second scan.
+ */
+const RSA_GLUED_PATH_MAX = 48;
 /** Fast reject before a header decode. Unknown lengths never split. */
 const SPLITTABLE_SIGNATURE_LENGTHS = new Set([43, 64, 86, 128, 152, 176, 342, 512, 683]);
 
@@ -751,15 +758,43 @@ function signatureSizesForAlg(alg: string | null): SigSize[] | null {
   }
 }
 
+/** True when `runLen` is an RSA signature end: 342/344, 512, or 683/684. */
+function rsaRunEndsExactly(runLen: number): boolean {
+  for (const size of SIG_RSA) {
+    if (runLen === size.url || runLen === size.std) return true;
+  }
+  return false;
+}
+
+function isRsaUrlLength(len: number): boolean {
+  for (const size of SIG_RSA) {
+    if (len === size.url) return true;
+  }
+  return false;
+}
+
 /**
  * Longest unpadded signature length this third segment has reached.
- * A 684-char RSA-4096 run reaches 683, so it must not split at 342 or
- * 512. A 342-char signature plus a short path stays under 512, so it
- * still splits at 342. One pass over a fixed table.
+ * RSA splits only when the measured run ends on a known length. A run
+ * longer than 342 or 512 that does not end on 342/344, 512, or 683/684
+ * is not a split point, so a `/` or `+` at 342 or 512 inside a 511, 600,
+ * or 682 character signature stays inside the mask. A short glued path is
+ * measured as the base64url prefix by the caller, so `/src/app.ts` after
+ * an exact signature still splits. Other algs keep the reached-length
+ * rule: a 684-style padded run uses the unpadded length, and Ed448 (152)
+ * is not split at Ed25519 (86). One pass over a fixed table.
  */
 function longestSignatureLength(alg: string | null, runLen: number): number | null {
   const sizes = signatureSizesForAlg(alg);
   if (!sizes) return null;
+  if (sizes === SIG_RSA) {
+    let best: number | null = null;
+    for (const size of sizes) {
+      if (runLen !== size.url && runLen !== size.std) continue;
+      if (best === null || size.url > best) best = size.url;
+    }
+    return best;
+  }
   let best: number | null = null;
   for (const size of sizes) {
     // `std` is the padded length and is never shorter than `url`. A run
@@ -850,8 +885,11 @@ function isClearGluedPath(text: string, at: number, segEnd: number): boolean {
  * for this token's own `alg` that the third segment actually reaches.
  * A `+` or `/` at 342 inside a 512 or 683 RSA signature stays inside the
  * mask. The same rule keeps Ed448 (152) from splitting at the Ed25519
- * length (86). An unknown or undecodable `alg` never splits. Returns -1
- * when the boundary is not clear.
+ * length (86). An RS* or PS* run that is longer than a known RSA length
+ * and does not end on one (511, 600, 682, and any other non-exact length)
+ * is not split at 342 or 512. The whole run is redacted. A short glued
+ * path after an exact RSA signature still splits. An unknown or
+ * undecodable `alg` never splits. Returns -1 when the boundary is not clear.
  */
 function clearPathSplit(
   text: string,
@@ -878,11 +916,22 @@ function clearPathSplit(
   // this returns without reading the header.
   if (!SPLITTABLE_SIGNATURE_LENGTHS.has(sigLen)) return -1;
   // The third segment is already the std-base64 run (`+` `/` `=` included).
-  // No second scan. Only the longest reached unpadded length may split.
+  // No second scan of the buffer. RSA uses one length compare on that run.
   const runLen = end - (dot2 + 1);
-  const wanted = longestSignatureLength(jwtHeaderInfo(header, mode).alg, runLen);
+  const alg = jwtHeaderInfo(header, mode).alg;
+  const clearPath = isClearGluedPath(text, i, end);
+  let measure = runLen;
+  if (signatureSizesForAlg(alg) === SIG_RSA && !rsaRunEndsExactly(runLen)) {
+    const tailLen = runLen - sigLen;
+    // Exact signature plus a short path. Measure the signature, not the path.
+    // A longer non-exact run (511, 600, 682) stays the whole segment.
+    if (isRsaUrlLength(sigLen) && tailLen > 0 && tailLen <= RSA_GLUED_PATH_MAX && clearPath) {
+      measure = sigLen;
+    }
+  }
+  const wanted = longestSignatureLength(alg, measure);
   if (wanted === null || sigLen !== wanted) return -1;
-  if (!isClearGluedPath(text, i, end)) return -1;
+  if (!clearPath) return -1;
   if (!isJwtToken(text.slice(cursor, i), mode)) return -1;
   return i;
 }
@@ -1157,6 +1206,8 @@ const DISPLAYED_PATH_KEYS = new Set([
   'importPath',
   'importSigPath',
   'pagePath',
+  'bundlePath',
+  'relativePath',
 ]);
 
 function maskDisplayedValue(value: unknown, key: string | undefined): unknown {

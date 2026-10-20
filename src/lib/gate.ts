@@ -18,7 +18,18 @@ import type { PolicyPackHit } from './policy.js';
  *
  * `trailingIgnored` is a boolean when this command hashed a body (verify,
  * and wrap/share after they verify). It is null when trailing content was
- * not evaluated (capture, and usage errors).
+ * not evaluated (capture, and usage errors). Bytes after the integrity cut
+ * must be the writer footer: one heading, one blank, one 64-lowercase-hex
+ * marker, one blank, and one prose line with that same hash. Anything else
+ * fails `verify` (exit 2) even when the hash still matches, including with
+ * `--require-sig`. Only ASCII space, tab, CR, and LF are ignorable trailing
+ * whitespace. A trailing line of those characters still passes.
+ *
+ * `relativePath` is set by `share --json` only. It is the receipt path
+ * relative to the git repository root, including when share runs from a
+ * subdirectory. With no git toplevel, the base is the working directory.
+ * It is null when the path leaves that base or is secret-shaped. The
+ * displayed `path` stays masked.
  *
  * `signature` is set only by `verify --json --require-sig` after the hash
  * check passes. Other commands omit it. `sigPath` is set by `share --json`
@@ -56,6 +67,14 @@ export interface GateReport {
   redacted: boolean;
   uncommitted: boolean | null;
   path: string | null;
+  /**
+   * Set by `share --json`. Receipt path relative to the git repository
+   * root (the working directory when git has no toplevel). Null when it
+   * would leave that base or would be masked. Omitted on other commands.
+   * Displayed `path` stays masked. A share from a subdirectory still
+   * names the file from the repo root.
+   */
+  relativePath?: string | null;
   jsonPath: string | null;
   htmlPath: string | null;
   markdownPath: string | null;
@@ -64,8 +83,10 @@ export interface GateReport {
   risk: GateRisk | null;
   ignored: number | null;
   /**
-   * True when content after `## Integrity` was ignored by the hash.
-   * Null when this command did not evaluate trailing content.
+   * True when bytes after the integrity cut are not the writer footer.
+   * `verify` fails closed on that content. Only ASCII space, tab, CR, and
+   * LF are ignorable trailing whitespace. Null when this command did not
+   * evaluate trailing content.
    */
   trailingIgnored: boolean | null;
   reason: string | null;
@@ -163,6 +184,7 @@ export function finalizeGate(fields: GateFields): GateReport {
     redacted: fields.redacted,
     uncommitted: fields.uncommitted,
     path: fields.path,
+    ...(fields.relativePath !== undefined ? { relativePath: fields.relativePath } : {}),
     jsonPath: fields.jsonPath,
     htmlPath: fields.htmlPath,
     markdownPath: fields.markdownPath,

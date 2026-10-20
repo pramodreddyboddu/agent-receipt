@@ -4,7 +4,7 @@
 # Also reusable:
 #   jobs:
 #     receipt:
-#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.52
+#       uses: pramodreddyboddu/agent-receipt/.github/workflows/agent-receipt-gate.yml@v1.0.53
 #       with:
 #         base: main
 #         fail-on: high
@@ -15,7 +15,7 @@
 #         trusted-keys: ""
 #
 # Install pin: npm install -g github:pramodreddyboddu/agent-receipt
-# Or, once the tag exists: github:pramodreddyboddu/agent-receipt#v1.0.52
+# Or, once the tag exists: github:pramodreddyboddu/agent-receipt#v1.0.53
 # Always pass --fail-on (this job does; default high) so a missing
 # .agent-receipt.yml cannot silently weaken the gate.
 # After a successful wrap or share, trailingIgnored is a boolean when set.
@@ -118,7 +118,7 @@ jobs:
           set -eu
           if ! command -v agent-receipt >/dev/null 2>&1; then
             # Pin the GitHub install. Use a tag once it exists, for example:
-            #   npm install -g github:pramodreddyboddu/agent-receipt#v1.0.52
+            #   npm install -g github:pramodreddyboddu/agent-receipt#v1.0.53
             npm install -g github:pramodreddyboddu/agent-receipt
           fi
 
@@ -182,7 +182,8 @@ jobs:
           # (null on capture). A non-boolean value fails the job.
           node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (g.exitCode !== 0 || g.ok !== true) process.exit(g.exitCode || 1); if (g.trailingIgnored != null && typeof g.trailingIgnored !== "boolean") { console.error("trailingIgnored must be boolean when set"); process.exit(1); } if (typeof g.trailingIgnored === "boolean") console.log("trailingIgnored=" + g.trailingIgnored);' "$out"
           if [ "${SIGN:-false}" = "true" ]; then
-            receipt_path=$(node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (typeof g.path!=="string" || !g.path) { console.error("gate path missing"); process.exit(1); } process.stdout.write(g.path);' "$out")
+            # Prefer share relativePath. A masked path is not a file.
+            receipt_path=$(node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const rel=typeof g.relativePath==="string"?g.relativePath:""; const raw=typeof g.path==="string"?g.path:""; const picked=rel&&rel.indexOf("[REDACTED]")<0?rel:(raw&&raw.indexOf("[REDACTED]")<0?raw:""); if(!picked){console.error("gate path missing"); process.exit(1);} process.stdout.write(picked);' "$out")
             sig_path=$(node -e 'const p=process.argv[1]; process.stdout.write(/\.md$/i.test(p) ? p.replace(/\.md$/i, ".sig.json") : p + ".sig.json");' "$receipt_path")
             if [ ! -f "$sig_path" ]; then
               agent-receipt sign "$receipt_path"
@@ -274,7 +275,11 @@ jobs:
           const fs = require('fs');
           const path = require('path');
           const g = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          const src = g && typeof g.path === 'string' ? g.path : '';
+          const rel = g && typeof g.relativePath === 'string' ? g.relativePath : '';
+          const raw = g && typeof g.path === 'string' ? g.path : '';
+          const src = rel && rel.indexOf('[REDACTED]') < 0 && fs.existsSync(rel)
+            ? rel
+            : (raw && raw.indexOf('[REDACTED]') < 0 ? raw : '');
           if (!src || !fs.existsSync(src)) {
             console.log('receipt path missing; uploading gate JSON only');
             process.exit(0);

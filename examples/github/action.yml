@@ -14,7 +14,7 @@
 #       fail-on: high
 #       base: origin/main
 #       install: true
-#       from: github:pramodreddyboddu/agent-receipt#v1.0.52
+#       from: github:pramodreddyboddu/agent-receipt#v1.0.53
 #       prove: true
 #       sign: true
 #       require-sig: true
@@ -102,7 +102,7 @@ inputs:
     required: false
     default: "false"
   from:
-    description: npm spec used when install is true. Pin with #v1.0.52 once the tag exists.
+    description: npm spec used when install is true. Pin with #v1.0.53 once the tag exists.
     required: false
     default: github:pramodreddyboddu/agent-receipt
   prove:
@@ -239,7 +239,13 @@ runs:
         emit('ok', g.ok === true ? 'true' : g.ok === false ? 'false' : '');
         emit('exit-code', g.exitCode == null ? '' : String(g.exitCode));
         emit('sha256', typeof g.sha256 === 'string' ? g.sha256 : '');
-        emit('path', typeof g.path === 'string' ? g.path : '');
+        // Displayed path stays masked. relativePath is the repo-relative
+        // receipt from share --json when that path is not secret-shaped.
+        // Wrap JSON has no relativePath, so the raw path is used.
+        const rel = typeof g.relativePath === 'string' ? g.relativePath : '';
+        const raw = typeof g.path === 'string' ? g.path : '';
+        const picked = rel && rel.indexOf('[REDACTED]') < 0 ? rel : (raw && raw.indexOf('[REDACTED]') < 0 ? raw : '');
+        emit('path', picked);
         emit('gate-json', file);
         if (g.exitCode !== 0 || g.ok !== true) process.exit(g.exitCode || 1);
         if (g.trailingIgnored != null && typeof g.trailingIgnored !== 'boolean') {
@@ -254,7 +260,8 @@ runs:
           exit "$gate_ok"
         fi
         if [ "${SIGN:-false}" = "true" ]; then
-          receipt_path=$(node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (typeof g.path!=="string" || !g.path) { console.error("gate path missing"); process.exit(1); } process.stdout.write(g.path);' "$out")
+          # Prefer share relativePath. A masked path is not a file.
+          receipt_path=$(node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const rel=typeof g.relativePath==="string"?g.relativePath:""; const raw=typeof g.path==="string"?g.path:""; const picked=rel&&rel.indexOf("[REDACTED]")<0?rel:(raw&&raw.indexOf("[REDACTED]")<0?raw:""); if(!picked){console.error("gate path missing"); process.exit(1);} process.stdout.write(picked);' "$out")
           sig_path=$(node -e 'const p=process.argv[1]; process.stdout.write(/\.md$/i.test(p) ? p.replace(/\.md$/i, ".sig.json") : p + ".sig.json");' "$receipt_path")
           if [ ! -f "$sig_path" ]; then
             # wrap --sign writes this when keys load. share re-signs
@@ -300,7 +307,7 @@ runs:
           # This step does not create keys. trusted-keys, when set, was
           # installed above and verify --require-sig honors it.
           sig_out="${RUNNER_TEMP:-/tmp}/receipt-require-sig.json"
-          receipt_path=$(node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (typeof g.path!=="string" || !g.path) { console.error("gate path missing"); process.exit(1); } process.stdout.write(g.path);' "$out")
+          receipt_path=$(node -e 'const fs=require("fs"); const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const rel=typeof g.relativePath==="string"?g.relativePath:""; const raw=typeof g.path==="string"?g.path:""; const picked=rel&&rel.indexOf("[REDACTED]")<0?rel:(raw&&raw.indexOf("[REDACTED]")<0?raw:""); if(!picked){console.error("gate path missing"); process.exit(1);} process.stdout.write(picked);' "$out")
           set +e
           "$CLI" verify --require-sig --json "$receipt_path" > "$sig_out"
           scode=$?

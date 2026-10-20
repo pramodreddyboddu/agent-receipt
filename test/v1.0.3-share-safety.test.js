@@ -159,7 +159,7 @@ describe('risk: receipt/index high-entropy noise', () => {
 });
 
 describe('verify: trailing after Integrity', () => {
-  it('hasTrailingAfterIntegrity detects appends; verify still OK with warn flag', () => {
+  it('hasTrailingAfterIntegrity detects appends; the hash still matches', () => {
     const sealed = appendHashFooter(`# Agent Receipt
 
 ## Session
@@ -198,7 +198,7 @@ describe('index: out-of-outDir --out does not become newest', () => {
 
   it('version is 1.0.30', () => {
     const out = cli(dir, ['version']);
-    assert.match(out, /1\.0\.52/);
+    assert.match(out, /1\.0\.53/);
   });
 
   it('isInsideOutDir distinguishes --out paths', () => {
@@ -285,7 +285,7 @@ describe('index: out-of-outDir --out does not become newest', () => {
     assert.match(v, /OK/);
   });
 
-  it('verify warns when trailing content follows Integrity', () => {
+  it('verify fails closed when trailing content follows Integrity', () => {
     const sealed = appendHashFooter(`# Agent Receipt
 
 ## Session
@@ -297,8 +297,9 @@ describe('index: out-of-outDir --out does not become newest', () => {
       sealed + '\n\n## Extra\n\nappended note\n',
       'utf8',
     );
-    const out = cli(dir, ['verify', 'trail.md']);
-    assert.match(out, /OK/);
-    assert.match(out, /trailing content after ## Integrity is ignored/i);
+    const result = cliStatus(dir, ['verify', 'trail.md']);
+    assert.equal(result.code, 2, result.out + result.err);
+    assert.match(result.out + result.err, /trailing content after the last chained record/i);
+    assert.doesNotMatch(result.out, /\bOK\b/);
   });
 });

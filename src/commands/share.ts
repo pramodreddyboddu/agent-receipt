@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync, statSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { cmdExport } from './export.js';
 import { cmdVerify, reportVerify } from './verify.js';
 import { resolveReceiptPath } from './show.js';
@@ -20,6 +20,7 @@ import {
   riskToGate,
 } from '../lib/gate.js';
 import { recordAuditEvent } from '../lib/audit.js';
+import { runGit } from '../lib/git.js';
 import {
   assertNotDirectoryPath,
   assertWritableOutFile,
@@ -157,6 +158,51 @@ function agentFromReceipt(markdown: string): string | null {
 }
 
 /**
+ * Directory `relativePath` is computed against. The git toplevel, so a
+ * share started in a subdirectory still names the receipt from the repo
+ * root. When this directory is not a git checkout, the working directory.
+ */
+function sharePathBase(cwd: string): string {
+  try {
+    const top = runGit(['rev-parse', '--show-toplevel'], cwd);
+    if (top) return top;
+  } catch {
+    /* not a git checkout */
+  }
+  return resolve(cwd);
+}
+
+/**
+ * Receipt path relative to the git repo root for `share --json`.
+ * Null when the file leaves that root, or when displaying it would mask
+ * a secret. With no git toplevel, the base is the working directory.
+ * The displayed `path` stays masked either way.
+ */
+function shareRelativePath(cwd: string, filePath: string): string | null {
+  let rel: string;
+  try {
+    rel = relative(sharePathBase(cwd), filePath);
+  } catch {
+    return null;
+  }
+  if (!rel) return null;
+  const normalized = rel.split(sep).join('/');
+  if (
+    normalized === '.' ||
+    isAbsolute(rel) ||
+    normalized.startsWith('/') ||
+    normalized === '..' ||
+    normalized.startsWith('../') ||
+    normalized.includes('/../')
+  ) {
+    return null;
+  }
+  if (redactSecretsInText(normalized) !== normalized) return null;
+  if (normalized.includes('[REDACTED]')) return null;
+  return normalized;
+}
+
+/**
  * One-shot share: verify the source receipt, apply redact (default on),
  * write HTML and optional Markdown, verify the published body, print
  * paths + TL;DR.
@@ -220,6 +266,7 @@ export function cmdShare(
           redacted: redact,
           uncommitted: null,
           path: source,
+          relativePath: shareRelativePath(cwd, source),
           jsonPath: null,
           htmlPath: partial.htmlPath,
           markdownPath: partial.markdownPath,

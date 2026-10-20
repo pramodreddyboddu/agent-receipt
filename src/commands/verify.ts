@@ -3,7 +3,7 @@ import { verifyMarkdown } from '../lib/hash.js';
 import { linkMetaTamperReason } from '../lib/link.js';
 import { resolveReceiptPath } from './show.js';
 import { color } from '../lib/color.js';
-import { redactSecretsInText } from '../lib/redact.js';
+import { maskDisplayedJson, redactSecretsInText } from '../lib/redact.js';
 import {
   meetsFailOn,
   parseRiskSummaryMarkdown,
@@ -23,6 +23,9 @@ import {
   policyGateFields,
   receiptDisplayPath,
 } from '../lib/policy.js';
+
+/** Bytes after the integrity cut are not the writer footer. Hash still matches. */
+export const TRAILING_CONTENT_REASON = 'trailing content after the last chained record';
 
 export interface VerifyCommandOptions {
   /** Suppress human stdout (JSON gate commands, or a caller that prints its own summary). */
@@ -75,31 +78,24 @@ export function reportVerify(
 ): Pick<VerifyCommandResult, 'ok' | 'sha256' | 'expected' | 'reason' | 'trailingIgnored'> {
   const result = verifyMarkdown(markdown);
   const tamper = result.ok ? linkMetaTamperReason(markdown) : null;
-  const ok = result.ok && !tamper;
-  const reason = tamper ?? result.reason;
+  const trailing = Boolean(result.trailingIgnored);
+  const trailingFail = result.ok && !tamper && trailing;
+  const ok = result.ok && !tamper && !trailing;
+  const reason = trailingFail ? TRAILING_CONTENT_REASON : (tamper ?? result.reason);
   if (!opts?.quiet) {
     console.log(`Verifying: ${redactSecretsInText(label)}`);
     if (ok) {
       console.log('✓ OK — receipt integrity verified');
       console.log(`  sha256: ${result.actual}`);
-      if (result.trailingIgnored) {
-        console.log(
-          color.yellow(
-            '  note: trailing content after ## Integrity is ignored by design (not part of the hash)',
-          ),
-        );
-      }
+    } else if (trailingFail) {
+      console.error('✗ FAIL — ' + reason);
+      console.error(`  sha256: ${result.actual}`);
     } else {
       console.error('✗ FAIL — ' + reason);
       if (!tamper) {
         if (result.expected) console.error(`  expected: ${result.expected}`);
         console.error(`  actual:   ${result.actual}`);
         console.error('The Markdown body no longer matches the embedded hash.');
-        if (result.trailingIgnored) {
-          console.error(
-            '  note: trailing content after ## Integrity is ignored by design and did not cause this failure.',
-          );
-        }
       }
     }
   }
@@ -108,7 +104,7 @@ export function reportVerify(
     sha256: result.actual,
     expected: result.expected,
     reason,
-    trailingIgnored: Boolean(result.trailingIgnored),
+    trailingIgnored: trailing,
   };
 }
 
@@ -220,7 +216,7 @@ export function cmdVerify(
       ...(signature ? { signature } : {}),
       ...policyGateFields(policy),
     });
-    printGate(gate);
+    printGate(maskDisplayedJson(gate));
   }
 
   return {

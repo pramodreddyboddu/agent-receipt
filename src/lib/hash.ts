@@ -74,9 +74,40 @@ function modernCutIndex(lines: string[]): number {
   return lines.length;
 }
 
+/**
+ * Ignorable whitespace for the integrity footer and for lines compared
+ * around it. Only ASCII space, tab, CR, and LF. NBSP (U+00A0), BOM
+ * (U+FEFF), ideographic space (U+3000), and line separator (U+2028)
+ * are content. `String.prototype.trim` is not used here.
+ */
+function isIgnorableWsCode(code: number): boolean {
+  return code === 0x20 || code === 0x09 || code === 0x0d || code === 0x0a;
+}
+
+function isIgnorableWsLine(line: string): boolean {
+  for (let i = 0; i < line.length; i++) {
+    if (!isIgnorableWsCode(line.charCodeAt(i))) return false;
+  }
+  return true;
+}
+
+function stripIgnorableTrailingWs(line: string): string {
+  let end = line.length;
+  while (end > 0 && isIgnorableWsCode(line.charCodeAt(end - 1))) end -= 1;
+  return end === line.length ? line : line.slice(0, end);
+}
+
+function stripIgnorableEdgeWs(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && isIgnorableWsCode(text.charCodeAt(start))) start += 1;
+  while (end > start && isIgnorableWsCode(text.charCodeAt(end - 1))) end -= 1;
+  return text.slice(start, end);
+}
+
 function bodyAt(lines: string[], cut: number): string {
   const out = lines.slice(0, cut);
-  while (out.length > 0 && out[out.length - 1].trim() === '') out.pop();
+  while (out.length > 0 && isIgnorableWsLine(out[out.length - 1])) out.pop();
   return out.join('\n') + '\n';
 }
 
@@ -87,7 +118,7 @@ function embeddedHashAfter(lines: string[], cut: number): string | null {
   const start = idx + HASH_MARKER.length;
   const end = tail.indexOf(HASH_END, start);
   if (end < 0) return null;
-  return tail.slice(start, end).trim();
+  return stripIgnorableEdgeWs(tail.slice(start, end));
 }
 
 /**
@@ -112,8 +143,10 @@ export function integrityCutIndex(lines: string[]): number {
  * (or any unfenced line containing the hash marker). A marker inside a
  * fence stays in the body. Trailing blank lines are normalized.
  *
- * By design, anything after `## Integrity` / the hash marker is ignored by
- * verify — appends after the Integrity footer do not affect the hash.
+ * The hash covers this body only. Bytes after the Integrity footer are not
+ * hashed. `verify` fails closed unless those bytes are the footer
+ * `appendHashFooter` writes. Only ASCII space, tab, CR, and LF are
+ * ignorable trailing whitespace.
  */
 export function canonicalBody(markdown: string): string {
   const normalized = markdown.replace(/\r\n/g, '\n');
@@ -138,27 +171,44 @@ export function extractEmbeddedHash(markdown: string): string | null {
   return embeddedHashAfter(lines, integrityCutIndex(lines));
 }
 
+const FOOTER_HEADING = '## Integrity';
+/** Writer marker line: 64 lowercase hex, no extra text. */
+const FOOTER_MARKER = /^<!-- agent-receipt-sha256:([0-9a-f]{64}) -->$/;
+
 /**
- * True when the file has non-empty content after the Integrity section that
- * is not part of the standard hash footer. Such appends are ignored by
- * canonicalBody / verify by design.
+ * True when bytes after the integrity cut are not the footer
+ * `appendHashFooter` writes.
+ *
+ * The only accepted shape, after the cut, is one heading line, one
+ * ignorable-whitespace line, one marker line with 64 lowercase hex, one
+ * ignorable-whitespace line, and one prose line carrying that same hash.
+ * Trailing ignorable-whitespace lines after that prose still pass. A second
+ * footer, an extra line, a short or non-hex marker, a prose hash that
+ * differs from the marker, or any other text fails. NBSP, BOM, U+3000, and
+ * U+2028 are not ignorable.
+ *
+ * The hash itself still ignores those bytes, so a matching body with a
+ * trailing note is a verify failure, not a hash mismatch.
  */
 export function hasTrailingAfterIntegrity(markdown: string): boolean {
   const normalized = markdown.replace(/\r\n/g, '\n');
   const lines = normalized.split('\n');
   const start = integrityCutIndex(lines);
   if (start >= lines.length) return false;
-  let i = start;
 
-  // Skip the Integrity heading, blank lines, hash marker, and SHA-256 prose.
-  for (; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.trim() === '') continue;
-    if (line.startsWith('## Integrity')) continue;
-    if (line.includes('agent-receipt-sha256')) continue;
-    if (/^SHA-256 of canonical body:/.test(line)) continue;
-    return true;
-  }
+  let end = lines.length;
+  while (end > start && isIgnorableWsLine(lines[end - 1])) end -= 1;
+  // heading, blank, marker, blank, prose
+  if (end - start !== 5) return true;
+
+  const heading = stripIgnorableTrailingWs(lines[start]);
+  const marker = stripIgnorableTrailingWs(lines[start + 2]);
+  const prose = stripIgnorableTrailingWs(lines[start + 4]);
+  if (heading !== FOOTER_HEADING) return true;
+  if (!isIgnorableWsLine(lines[start + 1]) || !isIgnorableWsLine(lines[start + 3])) return true;
+  const matched = FOOTER_MARKER.exec(marker);
+  if (!matched) return true;
+  if (prose !== `SHA-256 of canonical body: \`${matched[1]}\``) return true;
   return false;
 }
 
@@ -167,7 +217,7 @@ export function verifyMarkdown(markdown: string): {
   expected: string | null;
   actual: string;
   reason: string;
-  /** Content after Integrity exists and is ignored by the hash (by design). */
+  /** Content after Integrity exists. The hash ignores it. `verify` fails closed. */
   trailingIgnored?: boolean;
 } {
   const expected = extractEmbeddedHash(markdown);

@@ -51,7 +51,7 @@ import {
   type ToolCallFact,
 } from '../lib/intoto.js';
 import { listOutDirReceipts, parseSessionHeader, receiptIntegrity } from '../lib/link.js';
-import { containsRedactionMark, maskJwtTokens, maskSecretPath, redactMarkdownBody, redactSecretsInText } from '../lib/redact.js';
+import { containsRedactionMark, maskDisplayedJson, maskJwtTokens, maskSecretPath, redactMarkdownBody, redactSecretsInText } from '../lib/redact.js';
 import { redactTranscriptText } from '../lib/adapters/redact-transcript.js';
 import {
   auditLogPath,
@@ -519,27 +519,43 @@ function receiptSource(cwd: string, pathArg: string | undefined, session: string
   };
 }
 
+/** Display copy. Path fields and reasons are masked. The file on disk stays raw. */
+function displayedAttest(report: Record<string, unknown>): Record<string, unknown> {
+  const shown = maskDisplayedJson(report) as Record<string, unknown>;
+  if (typeof shown.reason === 'string') shown.reason = redactSecretsInText(shown.reason);
+  if (Array.isArray(shown.results)) {
+    shown.results = shown.results.map((row) => {
+      if (!row || typeof row !== 'object') return row;
+      const copy = { ...(row as Record<string, unknown>) };
+      if (typeof copy.reason === 'string') copy.reason = redactSecretsInText(copy.reason);
+      return copy;
+    });
+  }
+  return shown;
+}
+
 function printCreate(report: Record<string, unknown>, json: boolean | undefined): void {
+  const shown = displayedAttest(report);
   if (json) {
-    console.log(JSON.stringify(report));
+    console.log(JSON.stringify(shown));
     return;
   }
-  if (report.ok !== true) {
-    console.error(color.red('FAILED') + ` ${report.reason}`);
+  if (shown.ok !== true) {
+    console.error(color.red('FAILED') + ` ${shown.reason}`);
     return;
   }
-  console.log(color.green('wrote') + ` ${report.path}`);
-  if (typeof report.bundlePath === 'string') {
-    console.log(color.green('bundle') + ` ${report.bundlePath}`);
+  console.log(color.green('wrote') + ` ${shown.path}`);
+  if (typeof shown.bundlePath === 'string') {
+    console.log(color.green('bundle') + ` ${shown.bundlePath}`);
   }
-  console.log(color.dim(`predicate ${report.predicateType}`));
-  console.log(color.dim(`envelopes ${report.envelopes}`));
-  console.log(color.dim(`subjects ${report.subjects}`));
-  if (report.keyless === true) {
-    console.log(color.dim(`keyless ${report.certificateIdentity || ''}`));
-    console.log(color.dim(`issuer ${report.certificateIssuer || ''}`));
-  } else if (report.signed === true) {
-    console.log(color.dim(`signed ${report.fingerprint}`));
+  console.log(color.dim(`predicate ${shown.predicateType}`));
+  console.log(color.dim(`envelopes ${shown.envelopes}`));
+  console.log(color.dim(`subjects ${shown.subjects}`));
+  if (shown.keyless === true) {
+    console.log(color.dim(`keyless ${shown.certificateIdentity || ''}`));
+    console.log(color.dim(`issuer ${shown.certificateIssuer || ''}`));
+  } else if (shown.signed === true) {
+    console.log(color.dim(`signed ${shown.fingerprint}`));
   } else {
     console.log(color.yellow('unsigned'));
   }
@@ -555,7 +571,7 @@ export function printAttestError(message: string, command: 'attest' | 'attest-ve
       path: null,
       signed: false,
       redacted: true,
-      reason: scrubJwt(message),
+      reason: redactSecretsInText(scrubJwt(message)),
     }),
   );
 }
@@ -900,17 +916,18 @@ function verifySigstoreBundle(cwd: string, abs: string, value: unknown, opts: At
     reason,
     warning: null,
   };
+  const shown = displayedAttest(report);
   if (opts.json) {
-    console.log(JSON.stringify(report));
+    console.log(JSON.stringify(shown));
   } else if (exitCode === 0 && checked.ok) {
-    console.log(color.green('OK') + ` ${abs}`);
+    console.log(color.green('OK') + ` ${shown.path}`);
     console.log(color.dim(`keyless ${checked.identity}`));
     console.log(color.dim(`issuer ${checked.issuer}`));
     console.log(color.dim(`subjects ${report.subjects} match`));
     console.log(color.dim('hash-chain head matches'));
   } else {
-    console.error(color.red('FAILED') + ` ${abs}`);
-    console.error(color.red(`  ${reason || 'failed'}`));
+    console.error(color.red('FAILED') + ` ${shown.path}`);
+    console.error(color.red(`  ${shown.reason || 'failed'}`));
   }
   return exitCode;
 }
@@ -1109,18 +1126,22 @@ export function cmdAttestVerify(
     reason,
     warning: note,
   };
+  const shown = displayedAttest(report);
   if (opts.json) {
-    console.log(JSON.stringify(report));
+    console.log(JSON.stringify(shown));
   } else if (exitCode === 0) {
-    console.log(color.green('OK') + ` ${abs}`);
+    console.log(color.green('OK') + ` ${shown.path}`);
     console.log(color.dim(`signed ${report.fingerprint}`));
     console.log(color.dim(`subjects ${report.subjects} match`));
     console.log(color.dim('hash-chain head matches'));
     if (results.length > 1) console.log(color.dim(`envelopes ${results.length}`));
   } else {
-    console.error(color.red('FAILED') + ` ${abs}`);
-    for (const row of failed) {
-      console.error(color.red('  ' + (row.reason || 'failed')));
+    console.error(color.red('FAILED') + ` ${shown.path}`);
+    const rows = Array.isArray(shown.results) ? shown.results : [];
+    for (const row of rows) {
+      if (!row || typeof row !== 'object' || (row as { ok?: boolean }).ok !== false) continue;
+      const why = (row as { reason?: string }).reason || 'failed';
+      console.error(color.red('  ' + why));
     }
   }
   return exitCode;

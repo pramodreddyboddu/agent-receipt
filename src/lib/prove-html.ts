@@ -105,8 +105,10 @@ function row(label: string, valueHtml: string): string {
 
 function hashRow(report: ProveHtmlReport): string {
   if (report.verified === true) {
-    const extra = report.trailingIgnored ? ' (trailing content after footer ignored)' : '';
-    return statusCell('pass', 'PASS') + ` embedded SHA-256 matches the body${escapeHtml(extra)}`;
+    return statusCell('pass', 'PASS') + ' embedded SHA-256 matches the body';
+  }
+  if (report.verified === false && report.trailingIgnored) {
+    return statusCell('fail', 'FAIL') + ' trailing content after the last chained record';
   }
   if (report.verified === false) {
     return statusCell('fail', 'FAIL') + ' embedded SHA-256 does not match (tampered or edited)';

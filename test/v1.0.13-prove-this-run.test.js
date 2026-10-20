@@ -118,7 +118,7 @@ describe('v1.0.13 prove-this-run', () => {
     assert.deepEqual(Object.keys(body).sort(), PROVE_KEYS);
     assert.equal(body.ok, true);
     assert.equal(body.command, 'prove');
-    assert.equal(body.version, '1.0.52');
+    assert.equal(body.version, '1.0.53');
     assert.equal(body.exitCode, 0);
     assert.equal(body.verified, true);
     assert.equal(body.trailingIgnored, false);
@@ -159,7 +159,7 @@ describe('v1.0.13 prove-this-run', () => {
     const last = parseJson(cli(dir, ['last', '--json']));
     assert.equal(last.ok, true);
     assert.equal(last.command, 'last');
-    assert.equal(last.version, '1.0.52');
+    assert.equal(last.version, '1.0.53');
     assert.equal(last.path, body.path);
     assert.equal(last.sha256, body.sha256);
     assert.equal(last.agent, 'ci');
@@ -222,7 +222,7 @@ describe('v1.0.13 prove-this-run', () => {
     assert.equal(body.verified, true);
   });
 
-  it('reports trailingIgnored and does not apply config failOn', () => {
+  it('fails closed on trailing content and does not apply config failOn', () => {
     const dir = initRepo('agent-receipt-prove-trail-');
     wrapClean(dir, 'trail-target');
     const before = parseJson(cli(dir, ['verify', '--json']));
@@ -234,18 +234,27 @@ describe('v1.0.13 prove-this-run', () => {
       readFileSync(path, 'utf8') + '\n\n## Notes\n\nappended after integrity\n',
     );
     const verify = cliResult(dir, ['verify', '--json']);
-    assert.equal(verify.code, 0, verify.err);
-    assert.equal(parseJson(verify.out).trailingIgnored, true);
+    assert.equal(verify.code, 2, verify.err);
+    const verifyBody = parseJson(verify.out);
+    assert.equal(verifyBody.ok, false);
+    assert.equal(verifyBody.verified, false);
+    assert.equal(verifyBody.exitCode, 2);
+    assert.equal(verifyBody.trailingIgnored, true);
+    assert.match(verifyBody.reason, /trailing content after the last chained record/);
     const proved = cliResult(dir, ['prove', '--json']);
-    assert.equal(proved.code, 0, proved.err);
-    assert.equal(parseJson(proved.out).trailingIgnored, true);
-    assert.equal(parseJson(proved.out).verified, true);
+    assert.equal(proved.code, 2, proved.err);
+    const provedBody = parseJson(proved.out);
+    assert.equal(provedBody.trailingIgnored, true);
+    assert.equal(provedBody.verified, false);
+    assert.equal(provedBody.failOn, null);
+    assert.match(provedBody.reason, /trailing content after the last chained record/);
 
     const yml = readFileSync(join(dir, '.agent-receipt.yml'), 'utf8');
     writeFileSync(join(dir, '.agent-receipt.yml'), `${yml}\nfailOn: high\n`);
     const ignored = cliResult(dir, ['prove', '--json']);
-    assert.equal(ignored.code, 0, ignored.out + ignored.err);
+    assert.equal(ignored.code, 2, ignored.out + ignored.err);
     assert.equal(parseJson(ignored.out).failOn, null);
+    assert.match(parseJson(ignored.out).reason, /trailing content after the last chained record/);
   });
 
   it('prove --fail-on high trips on a high-risk receipt; a stored false stays out otherwise', () => {
@@ -407,9 +416,9 @@ describe('v1.0.13 docs', () => {
     assert.equal(/^maxCount:/m.test(policy), false);
     assert.equal(/^maxAgeDays:/m.test(policy), false);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.52');
+    assert.equal(pkg.version, '1.0.53');
     const versionTs = readFileSync(join(root, 'src', 'lib', 'version.ts'), 'utf8');
-    assert.match(versionTs, /1\.0\.52/);
+    assert.match(versionTs, /1\.0\.53/);
     const help = cliResult(root, ['help', 'prove']);
     assert.equal(help.code, 0, help.err);
     assert.match(help.out, /prove-this-run/);
