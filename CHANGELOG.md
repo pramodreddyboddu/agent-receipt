@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.57] — 2026-10-21
+
+### Fixed
+
+- An ordinary path directly after an exact-length RSA signature stays visible. `/Users/x/repo/a.ts` and `/Users/pramod/repo/x.ts` stay. The signature itself stays fully redacted. The same keep is covered on plain and JSON output for `show`, `last`, `compare`, `share`, `prove`, `verify`, and `attest`.
+- Ordinary filenames stay visible: `UserProfile.tsx`, `HomeView.swift`, `MyClass.java`, `formatDate.ts`, `Dockerfile`, and `package.json`. A filename glued onto an exact RSA signature with no slash stays when it is one of those names, or a PascalCase or camelCase run of path words, and a filename extension follows (2 to 4 letters, or `.swift`). `Dockerfile` needs no extension. Secret-shaped segments stay masked: random mixed-case base64, and short uppercase tails such as `/Ahsqowx.ts`, `/OHALMQO.ts`, and `/QZXWVKT.md`. A seeded sweep leaves no raw signature substring of 3 or more characters.
+- The PEM linear-time check now has a size and a timing bound. A buffer of at least one million characters of repeated private-key headers stays linear, so a quadratic regression fails. The bound is loose enough for a slow, loaded host.
+- A PEM private-key header with no matching END line is redacted from the BEGIN header through the contiguous base64 body. The scan stops at the first line that is not a base64 body, so a truncated key is not shown raw. A header with no body line is left in place. The scan is one forward pass. A complete private-key block and a mismatched END are still redacted. A certificate stays.
+- The leaks fixed in 1.0.47 through 1.0.56 stay closed, including exact footer shapes, ASCII-only trailing whitespace, odd RSA runs, CR-only verify, subdirectory `relativePath`, short RSA tails, lowercase RSA tail residual, uppercase 7-letter short tails, glued paths after signatures, not-found path masking, shadow roots, and nested non-git roots.
+
+### Notes
+
+- These are v1.0.56 Release QA follow-ups. They are over-masking and robustness, not new leak classes.
+- After an exact RSA signature (342, 512, or 683), `/Users/x/repo/a.ts` and `/Users/pramod/repo/x.ts` stay. `UserProfile.tsx`, `HomeView.swift`, `MyClass.java`, `formatDate.ts`, `Dockerfile`, and `package.json` stay. `/Ahsqowx.ts`, `/OHALMQO.ts`, `/QZXWVKT.md`, `/Makefile`, and a random mixed-case stem stay masked. Eating a signature-like tail is still preferred over leaving raw signature characters in the clear.
+- A truncated private key with no END line is redacted through the contiguous base64 body. A bare header with no body line is unchanged. The PEM scan stays one forward pass and is bounded in size and time.
+- Package version bumped to `1.0.57`. Pin comments that track the current cut are `v1.0.57`. The action default pin is `1.0.57`. That pin needs an npm publish, which is on hold.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.56] — 2026-10-21
 
 ### Fixed
