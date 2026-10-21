@@ -725,9 +725,12 @@ const SIG_RSA: SigSize[] = [
  * signature (`/src/app` is 8). A longer tail is the rest of the signature.
  * 48 is under the shortest non-standard remainder called out for 1.0.53
  * (600 − 512 = 88) and under 511 − 342. The tail itself is one bounded
- * scan. A mixed alphanumeric run of 8 or more is signature. A tail of
- * 3 to 7 characters, or any uppercase letter, stays only when the tail
+ * scan. A run of 8 or more is signature unless it is one repeated
+ * character or an ordinary path word (`components`, `utilities`). A tail
+ * of 3 to 7 characters, or any uppercase letter, stays only when the tail
  * is a filename path and a 2-to-4 letter extension follows the segment.
+ * A longer lowercase tail stays only when it is a grounded filename and
+ * that extension follows, or the tail is one repeated character.
  * An extension by itself is not enough: `/Qx7.ts` and `/K.ts` are signature.
  */
 const RSA_GLUED_PATH_MAX = 48;
@@ -940,8 +943,197 @@ function titledFilenameSegment(text: string, from: number, to: number): boolean 
   return first >= 65 && first <= 90;
 }
 
+/**
+ * Ordinary directory words of 8 to 24 letters (`components`, `utilities`).
+ * A single leading capital is allowed. Digits, a second capital, and a
+ * run that is not in this set stay signature, so `abcdefgh` is not a path.
+ * One bounded scan of a segment already inside the 48-character tail.
+ */
+const ORDINARY_PATH_WORDS = new Set([
+  'abstractions',
+  'adapters',
+  'arguments',
+  'attributes',
+  'builders',
+  'clients',
+  'component',
+  'components',
+  'configurations',
+  'constants',
+  'containers',
+  'contexts',
+  'controller',
+  'controllers',
+  'dependencies',
+  'documents',
+  'environments',
+  'exceptions',
+  'factories',
+  'formatters',
+  'functions',
+  'handlers',
+  'helpers',
+  'implementations',
+  'interfaces',
+  'javascript',
+  'listeners',
+  'middleware',
+  'migrations',
+  'modules',
+  'packages',
+  'parameters',
+  'parsers',
+  'plugins',
+  'properties',
+  'providers',
+  'publishers',
+  'repositories',
+  'repository',
+  'resources',
+  'routers',
+  'schemas',
+  'selectors',
+  'serializers',
+  'servers',
+  'services',
+  'settings',
+  'subscribers',
+  'templates',
+  'typescript',
+  'utilities',
+  'validators',
+  'workers',
+]);
+
+/**
+ * Short names that ground a lowercase path (`src`, `app`, `docs`).
+ * One- and two-letter pieces stay out, so `/ab/cd/ef` is not a filename.
+ */
+const PATH_ATOMS = new Set([
+  'api',
+  'app',
+  'bin',
+  'cli',
+  'cmd',
+  'core',
+  'data',
+  'demo',
+  'dist',
+  'doc',
+  'docs',
+  'file',
+  'files',
+  'guide',
+  'hooks',
+  'index',
+  'lib',
+  'main',
+  'mock',
+  'pages',
+  'pkg',
+  'readme',
+  'server',
+  'spec',
+  'specs',
+  'src',
+  'state',
+  'store',
+  'test',
+  'tests',
+  'tool',
+  'tools',
+  'types',
+  'util',
+  'utils',
+  'web',
+]);
+
+function ordinaryWordAt(text: string, from: number, to: number): boolean {
+  const n = to - from;
+  if (n < 8 || n > 24) return false;
+  let lower = '';
+  let vowel = false;
+  for (let i = from; i < to; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code >= 97 && code <= 122) {
+      lower += String.fromCharCode(code);
+    } else if (code >= 65 && code <= 90) {
+      if (i !== from) return false;
+      lower += String.fromCharCode(code + 32);
+    } else {
+      return false;
+    }
+    const letter = lower.charCodeAt(lower.length - 1);
+    if (letter === 97 || letter === 101 || letter === 105 || letter === 111 || letter === 117 || letter === 121) {
+      vowel = true;
+    }
+  }
+  if (!vowel) return false;
+  return ORDINARY_PATH_WORDS.has(lower);
+}
+
+function segmentIsAtom(text: string, from: number, to: number): boolean {
+  const n = to - from;
+  if (n < 2 || n > 7) return false;
+  let word = '';
+  for (let i = from; i < to; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code >= 97 && code <= 122) word += String.fromCharCode(code);
+    else if (code >= 65 && code <= 90) word += String.fromCharCode(code + 32);
+    else return false;
+  }
+  return PATH_ATOMS.has(word);
+}
+
+function lettersOnly(text: string, from: number, to: number): boolean {
+  if (to <= from) return false;
+  for (let i = from; i < to; i += 1) {
+    const code = text.charCodeAt(i);
+    if (!((code >= 65 && code <= 90) || (code >= 97 && code <= 122))) return false;
+  }
+  return true;
+}
+
+/**
+ * A hyphenated segment longer than 7 (`my-component`). Each piece is
+ * letters. An 8+ piece must be an ordinary word. At least one piece is
+ * an atom, an ordinary word, or 4 letters or more, so `ab-cd` stays out.
+ */
+function hyphenatedFilenameSegment(text: string, from: number, to: number): boolean {
+  const n = to - from;
+  if (n < 8 || n > 48) return false;
+  let pieces = 0;
+  let grounded = false;
+  let pieceFrom = from;
+  let sawJoin = false;
+  const take = (pieceTo: number): boolean => {
+    if (pieceTo <= pieceFrom) return false;
+    if (!lettersOnly(text, pieceFrom, pieceTo)) return false;
+    pieces += 1;
+    const len = pieceTo - pieceFrom;
+    const ordinary = ordinaryWordAt(text, pieceFrom, pieceTo);
+    if (len >= 8 && !ordinary) return false;
+    if (ordinary || segmentIsAtom(text, pieceFrom, pieceTo) || len >= 4) grounded = true;
+    return true;
+  };
+  for (let i = from; i < to; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code !== 45 && code !== 95) continue;
+    sawJoin = true;
+    if (!take(i)) return false;
+    pieceFrom = i + 1;
+  }
+  if (!sawJoin || !take(to)) return false;
+  return pieces >= 2 && grounded;
+}
+
 function filenameSegment(text: string, from: number, to: number): boolean {
-  return lowercaseFilenameSegment(text, from, to) || titledFilenameSegment(text, from, to);
+  return (
+    lowercaseFilenameSegment(text, from, to) ||
+    titledFilenameSegment(text, from, to) ||
+    ordinaryWordAt(text, from, to) ||
+    hyphenatedFilenameSegment(text, from, to)
+  );
 }
 
 /**
@@ -972,6 +1164,7 @@ function realFilenameTail(text: string, at: number, segEnd: number, sawUpper: bo
   if (!sawUpper || segs.length === 1) return true;
   for (let s = 0; s < segs.length - 1; s += 1) {
     const seg = segs[s];
+    if (ordinaryWordAt(text, seg.from, seg.to)) return true;
     if (!lowercaseFilenameSegment(text, seg.from, seg.to)) continue;
     let letters = 0;
     for (let k = seg.from; k < seg.to; k += 1) {
@@ -984,25 +1177,63 @@ function realFilenameTail(text: string, at: number, segEnd: number, sawUpper: bo
 }
 
 /**
+ * True when some segment is a path atom or an ordinary word.
+ * One pass over a tail already capped at 48 characters.
+ */
+function tailIsGrounded(text: string, at: number, segEnd: number): boolean {
+  let i = at;
+  if (i < segEnd && text.charCodeAt(i) === 43) i += 1;
+  if (i < segEnd && text.charCodeAt(i) === 47) i += 1;
+  let segFrom = i;
+  for (let k = i; k <= segEnd; k += 1) {
+    if (k !== segEnd && text.charCodeAt(k) !== 47) continue;
+    if (k > segFrom) {
+      if (ordinaryWordAt(text, segFrom, k) || segmentIsAtom(text, segFrom, k)) return true;
+      let pieceFrom = segFrom;
+      for (let p = segFrom; p <= k; p += 1) {
+        const boundary = p === k || text.charCodeAt(p) === 45 || text.charCodeAt(p) === 95;
+        if (!boundary) continue;
+        if (p > pieceFrom && (ordinaryWordAt(text, pieceFrom, p) || segmentIsAtom(text, pieceFrom, p))) {
+          return true;
+        }
+        pieceFrom = p + 1;
+      }
+    }
+    segFrom = k + 1;
+  }
+  return false;
+}
+
+function isRepeatedRun(text: string, from: number, to: number): boolean {
+  const first = text.charCodeAt(from);
+  for (let i = from + 1; i < to; i += 1) {
+    if (text.charCodeAt(i) !== first) return false;
+  }
+  return true;
+}
+
+/**
  * RSA short tail that is a path, not the rest of the signature.
  * One pass over [at, segEnd) for the run rules, then one pass for the
  * filename shape when that is the only thing that can keep the tail.
  * The caller already caps that span at `RSA_GLUED_PATH_MAX`.
  *
- * A lowercase tail of 8 to 48 characters stays when every alphanumeric
- * run is shorter than 8, or the tail is one run of a single repeated
- * character (`/${'a'.repeat(46)}/` is 48). `/src/app`, `+src/app`, and
- * `+/src/app` stay.
+ * A run of 8 or more is signature unless every character is the same,
+ * or the run is an ordinary path word. A tail that is one repeated
+ * character stays (`/${'a'.repeat(46)}/` is 48).
  *
  * A tail of 3 to 7 characters, or a tail with an uppercase letter, stays
  * only when a 2-to-4 letter extension follows and the tail is a filename
  * path. `/src/App`, `/docs/README`, `/README`, `/App`, `/ab`, and `/a/b`
  * stay in that case. An extension alone does not keep the tail:
  * `/Qx7.ts`, `/aB3k9.md`, `/XYZ12.md`, and `/K.ts` are signature.
- * `/src/components/Button` stays signature because `components` is a
- * mixed run of 8 or more. `/Makefile`, `/abcdefgh/x`, and `/AbCdEfGh/x`
- * stay signature for the same run rule, and the first and last also
- * have no filename extension.
+ *
+ * A longer lowercase tail stays only when that extension follows, every
+ * segment is a filename, and some segment is a path atom or an ordinary
+ * word. `/src/app.ts`, `/src/components/Button.tsx`, and
+ * `/src/utilities/format.ts` stay. `/ab/cd/ef`, `/tonaxc/u1`, and
+ * `/abcdefgh/x.ts` are signature. `/Makefile` and `/AbCdEfGh/x` have no
+ * filename extension.
  */
 function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): boolean {
   if (!isClearGluedPath(text, at, segEnd)) return false;
@@ -1015,11 +1246,8 @@ function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): bool
   const finish = (end: number): boolean => {
     const len = end - runStart;
     if (len >= 8) {
-      const first = text.charCodeAt(runStart);
-      for (let i = runStart + 1; i < end; i += 1) {
-        if (text.charCodeAt(i) !== first) return false;
-      }
-      longRun = true;
+      if (isRepeatedRun(text, runStart, end)) longRun = true;
+      else if (!ordinaryWordAt(text, runStart, end)) return false;
     }
     runs += 1;
     return true;
@@ -1038,13 +1266,15 @@ function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): bool
   }
   if (runStart >= 0 && !finish(segEnd)) return false;
   if (longRun && runs !== 1) return false;
+  if (longRun && runs === 1) return true;
   const short = tailLen >= 3 && tailLen <= 7;
-  // Longer lowercase paths are unchanged from v1.0.54.
-  if (!sawUpper && !short) return true;
-  // Two slashes, or an extension, used to be enough. A short or uppercase
-  // tail is the rest of a signature unless it is a real filename path.
-  if (!ext) return false;
-  return realFilenameTail(text, at, segEnd, sawUpper);
+  if (short || sawUpper) {
+    if (!ext) return false;
+    return realFilenameTail(text, at, segEnd, sawUpper);
+  }
+  if (tailLen < 8 || !ext) return false;
+  if (!realFilenameTail(text, at, segEnd, sawUpper)) return false;
+  return tailIsGrounded(text, at, segEnd);
 }
 
 /**
@@ -1063,13 +1293,17 @@ function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): bool
  * and does not end on one (511, 600, 682, and any other non-exact length)
  * is not split at 342 or 512. The whole run is redacted. A short glued
  * path after an exact RSA base64url length still splits when the tail is
- * a clear path (no mixed run of 8 or more). A tail of 3 to 7 characters,
- * or a tail with an uppercase letter, splits only when a 2-to-4 letter
- * extension follows and every segment is a filename (`/src/App.tsx`,
- * `/docs/README.md`). An extension alone does not split, so `/Qx7.ts`,
- * `/aB3k9.md`, `/XYZ12.md`, and `/K.ts` stay inside the mask. A `/` or
- * `+` at 342, 512, or 683 cannot leave that tail in the clear. An odd
- * run whose tail only looks like a path is redacted whole.
+ * a clear path. A run of 8 or more stays inside the mask unless it is
+ * one repeated character or an ordinary path word. A tail of 3 to 7
+ * characters, or a tail with an uppercase letter, splits only when a
+ * 2-to-4 letter extension follows and every segment is a filename
+ * (`/src/App.tsx`, `/docs/README.md`). A longer lowercase tail splits
+ * only when that extension follows and the path is grounded
+ * (`/src/components/Button.tsx`). An extension alone does not split, so
+ * `/Qx7.ts`, `/aB3k9.md`, `/XYZ12.md`, and `/K.ts` stay inside the mask.
+ * `/ab/cd/ef` and `/tonaxc/u1` stay inside the mask. A `/` or `+` at
+ * 342, 512, or 683 cannot leave that tail in the clear. An odd run
+ * whose tail only looks like a path is redacted whole.
  * An unknown or undecodable `alg` never splits. Returns -1 when the
  * boundary is not clear.
  */

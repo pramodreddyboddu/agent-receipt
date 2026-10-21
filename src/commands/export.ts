@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, basename } from 'node:path';
-import { resolveReceiptPath } from './show.js';
+import { resolveReceiptPath, resolveStoreRoot } from './show.js';
 import { markdownToHtml } from '../lib/html.js';
 import { publishRedactedReceipt, redactSecretsInText } from '../lib/redact.js';
 import { verifyMarkdown } from '../lib/hash.js';
@@ -72,6 +72,7 @@ export function cmdExport(
   pathArg: string | undefined,
   opts: ExportOptions = {},
 ): ExportResult {
+  const store = resolveStoreRoot(cwd);
   const source = resolveReceiptPath(cwd, pathArg);
   const original = readFileSync(source, 'utf8');
   const sourceSha256 = verifyMarkdown(original).actual;
@@ -101,7 +102,7 @@ export function cmdExport(
   }
   assertProtectedOut(
     outPath,
-    exportProtectedPaths(cwd, [source], { companionJson: true }),
+    exportProtectedPaths(store, [source], { companionJson: true }),
     'export',
     guardOpts,
   );
@@ -124,7 +125,7 @@ export function cmdExport(
   const check = verifyMarkdown(markdown);
   const integrityFailed = format === 'markdown' && !check.ok;
   if (opts.audit !== false) {
-    recordAuditEvent(cwd, {
+    recordAuditEvent(store, {
       event: 'export',
       path: outPath,
       sha256: check.actual,
@@ -144,7 +145,7 @@ export function cmdExport(
   let signatureAction: 'copied' | 'resigned' | 'unsigned' | null = null;
   if (format === 'markdown' && check.ok) {
     const handoff = handoffMarkdownSignature({
-      cwd,
+      cwd: store,
       sourcePath: source,
       sourceSha256,
       publishedPath: outPath,

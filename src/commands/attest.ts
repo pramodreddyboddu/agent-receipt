@@ -77,7 +77,7 @@ import {
   trustStoreActive,
 } from '../lib/trust.js';
 import { VERSION } from '../lib/version.js';
-import { findLatestReceipt, resolveReceiptPath } from './show.js';
+import { findLatestReceipt, resolveReceiptPath, resolveStoreRoot } from './show.js';
 
 const MAX_ATTEST_BYTES = 32 * 1024 * 1024;
 const UNSIGNED_MISSING =
@@ -463,18 +463,19 @@ interface ReceiptSource {
 }
 
 function receiptSource(cwd: string, pathArg: string | undefined, session: string | undefined): ReceiptSource {
+  const store = resolveStoreRoot(cwd);
   if (session) {
     const want = session.trim();
     if (!want) fail('--session requires an id');
     const found: string[] = [];
-    for (const filePath of listOutDirReceipts(cwd)) {
+    for (const filePath of listOutDirReceipts(store)) {
       const fields = fieldsOf(readReceipt(filePath));
       if (fields.Session === want) found.push(filePath);
     }
     if (!found.length) fail(`no local receipts for session ${JSON.stringify(want)}`);
     return {
       paths: found,
-      fallbackDir: dirname(receiptsDir(cwd)),
+      fallbackDir: dirname(receiptsDir(store)),
       label: want,
     };
   }
@@ -504,7 +505,7 @@ function receiptSource(cwd: string, pathArg: string | undefined, session: string
     const one = resolveReceiptPath(cwd, pathArg);
     return {
       paths: [one],
-      fallbackDir: dirname(resolve(cwd, one)),
+      fallbackDir: dirname(receiptsDir(store)),
       label: basename(one).replace(/\.md$/i, ''),
     };
   }
@@ -514,7 +515,7 @@ function receiptSource(cwd: string, pathArg: string | undefined, session: string
   }
   return {
     paths: [latest],
-    fallbackDir: dirname(resolve(cwd, latest)),
+    fallbackDir: dirname(receiptsDir(store)),
     label: basename(latest).replace(/\.md$/i, ''),
   };
 }
@@ -605,10 +606,12 @@ export async function cmdAttest(
   pathArg: string | undefined,
   opts: AttestOptions = {},
 ): Promise<number> {
+  const invoked = cwd;
+  cwd = resolveStoreRoot(cwd);
   const kind: PredicateKind = opts.predicate === 'slsa' ? 'slsa' : 'run';
   const predicateType = kind === 'slsa' ? PREDICATE_SLSA : PREDICATE_RUN;
   try {
-    const source = receiptSource(cwd, pathArg, opts.session);
+    const source = receiptSource(invoked, pathArg, opts.session);
     if (opts.keyless) {
       return await attestKeyless(cwd, source, kind, predicateType, opts);
     }

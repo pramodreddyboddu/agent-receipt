@@ -15,6 +15,7 @@ import { findIndexEntry, failedOnFromIndex } from '../lib/receipt-index.js';
 import { glanceRowFailed } from './history.js';
 import { parseReceiptGlance } from './compare.js';
 import { cmdVerify } from './verify.js';
+import { resolveStoreRoot } from './show.js';
 import {
   ABSENT_SIGNATURE,
   inspectReceiptSignature,
@@ -532,19 +533,20 @@ export function cmdProve(
       'prove --out must be a directory (end it with /) when --page and --html are both passed.',
     );
   }
+  const store = resolveStoreRoot(cwd);
   const verified = cmdVerify(cwd, pathArg, { quiet: true, failOn: opts.failOn });
   const text = readFileSync(verified.path, 'utf8');
-  const memory = runMemory(cwd, verified.path);
+  const memory = runMemory(store, verified.path);
   const failOnTripped = verified.failedOn;
   const failedOn = failOnTripped ? true : memory.failedOn;
-  const audit = readAudit(cwd, verified.path);
+  const audit = readAudit(store, verified.path);
   const auditBroken = audit.present && audit.chainOk === false;
   const inspected = inspectReceiptSignature(verified.path, verified.sha256);
   const signature =
     inspected.present && inspected.ok === true
       ? applyTrust(
           inspected,
-          loadTrustedFingerprints(cwd, { extra: opts.trustedKeys }),
+          loadTrustedFingerprints(store, { extra: opts.trustedKeys }),
         )
       : inspected;
   const signatureBad = signature.present && signature.ok === false;
@@ -590,7 +592,7 @@ export function cmdProve(
     report.session = link.session;
     report.parent = link.parent;
     report.parentVerified = lookupParentVerified(
-      cwd,
+      store,
       verified.path,
       link.parent,
       verified.ok,

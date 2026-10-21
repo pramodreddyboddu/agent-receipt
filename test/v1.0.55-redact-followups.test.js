@@ -421,7 +421,8 @@ describe('v1.0.55 verify and show mask a missing path', { timeout: 120000 }, () 
 
 describe('v1.0.55 extension tails do not reopen the RSA leak', () => {
   const mustMask = ['/Qx7.ts', '/aB3k9.md', '/XYZ12.md', '/K.ts'];
-  const stillMasked = ['/src/components/Button.tsx', '/Makefile', '/abcdefgh/x.ts', '/AbCdEfGh/x'];
+  // `/src/components/Button.tsx` is an ordinary path as of v1.0.56.
+  const stillMasked = ['/Makefile', '/abcdefgh/x.ts', '/AbCdEfGh/x'];
 
   function glued(path) {
     const dot = path.lastIndexOf('.');

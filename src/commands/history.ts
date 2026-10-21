@@ -1,4 +1,5 @@
 import { listReceipts, parseReceiptGlance, type ReceiptGlance } from './compare.js';
+import { resolveStoreRoot } from './show.js';
 import { color, severityColor } from '../lib/color.js';
 import { redactSecretsInText } from '../lib/redact.js';
 import {
@@ -184,8 +185,9 @@ function emitJson(rows: unknown[]): number {
  */
 export function cmdHistory(cwd: string, opts: HistoryOptions = {}): number {
   const limit = opts.limit && opts.limit > 0 ? opts.limit : 20;
+  const store = resolveStoreRoot(cwd);
 
-  const idx = loadIndex(cwd);
+  const idx = loadIndex(store);
   if (idx.receipts.length) {
     const filtered = applyHistoryFilters(idx.receipts, opts, indexRowFailed);
     const slice = filtered.slice(0, limit);

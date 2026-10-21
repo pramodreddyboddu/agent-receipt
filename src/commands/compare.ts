@@ -9,7 +9,7 @@ import {
   isSessionPackageDirName,
   isSharePackageDirName,
 } from '../lib/receipt.js';
-import { resolveReceiptPath, findLatestReceipt } from './show.js';
+import { resolveReceiptPath, findLatestReceipt, resolveStoreRoot } from './show.js';
 import { color } from '../lib/color.js';
 import { decodeReceiptTablePath } from '../lib/git.js';
 import { redactSecretsInText } from '../lib/redact.js';
@@ -36,8 +36,9 @@ export interface ReceiptGlance {
 
 /** List receipt .md files newest-first under configured outDir. */
 export function listReceipts(cwd: string): string[] {
-  const cfg = loadConfig(cwd);
-  const dir = join(cwd, cfg.outDir);
+  const store = resolveStoreRoot(cwd);
+  const cfg = loadConfig(store);
+  const dir = join(store, cfg.outDir);
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((f) => !isSharePackageDirName(f) && !isSessionPackageDirName(f))

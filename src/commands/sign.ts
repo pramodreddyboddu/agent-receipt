@@ -6,6 +6,7 @@ import {
   writeSignatureSidecar,
 } from '../lib/sign.js';
 import { cmdVerify } from './verify.js';
+import { resolveStoreRoot } from './show.js';
 
 export interface SignOptions {
   /** One JSON object on stdout. */
@@ -95,7 +96,7 @@ export function cmdSign(cwd: string, pathArg?: string, opts: SignOptions = {}): 
 
   let keys;
   try {
-    keys = loadKeys(cwd);
+    keys = loadKeys(resolveStoreRoot(cwd));
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     return emit(

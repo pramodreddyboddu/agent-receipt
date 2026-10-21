@@ -65,6 +65,8 @@
 # Subdirectory relativePath, the gate schema relativePath field, odd RSA run redaction, and CR-only verify are local. This smoke still does not listen and does not push.
 # v1.0.55 left that live file unchanged for the same reason.
 # RSA short-tail redaction, glued filename paths, non-git relativePath, and not-found path masking are local. This smoke still does not listen and does not push.
+# v1.0.56 left that live file unchanged for the same reason.
+# RSA tail residual, shadow root, nested non-git roots, subdir readers, and long segment over-mask are local. This smoke still does not listen and does not push.
 name: CI
 
 on:

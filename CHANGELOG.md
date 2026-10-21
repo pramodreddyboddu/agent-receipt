@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.56] — 2026-10-21
+
+### Fixed
+
+- A lowercase RSA signature tail after an exact RS* or PS* signature is redacted with the whole run, so no raw signature substring of 3 or more characters remains. A tail of 8 to 48 characters with no uppercase letter stays only when a 2-to-4 letter extension follows, every segment is a filename, and some segment is a path atom or an ordinary word (`src`, `docs`, `components`, `utilities`). One run of a single repeated character still stays. `/src/app.ts`, `+/src/app.ts`, `/src/components/Button.tsx`, `/src/utilities/format.ts`, and a 48-character repeated-character path stay. Digit tails, ungrounded letter tails, and words outside that ordinary set stay masked: `/tonaxc/u1`, `/ab/cd/ef`, and `/abcdefgh/x.ts`. The check is one pass over the tail, which is already capped at 48 characters. A tail of 3 to 7 characters, or a tail with an uppercase letter, still stays only when a 2-to-4 letter extension follows and the tail is a filename. `/Makefile` and `/AbCdEfGh/x` stay masked. Odd RSA lengths (511, 600, 682) stay redacted as a whole run.
+- A directory is a receipts root only when it holds receipt data: a receipt markdown file under the configured outDir, or `.agent-receipt/index.json` with a non-empty `receipts` array. `audit.jsonl`, keys, a config file, an empty receipts directory, or any extra file beside an audit-only `.agent-receipt` do not make that directory a root, so it does not shadow the real root.
+- Nested non-git receipt roots use one root-resolution function. `share`, the readers, the example receipt picker, and `verify` pick the same root, so `relativePath` and the opened file agree. A git checkout still uses the git toplevel.
+- `last`, `prove`, `report`, `attest`, `sign`, `export`, and `history` resolve the receipts root the same way `share` and `verify` do. From a non-git subdirectory they find that root.
+- Ordinary path segments of 8 or more letters stay visible when they are ordinary words (`components`, `utilities`). Secret-shaped segments stay masked. The leaks fixed in 1.0.47 through 1.0.55 stay closed, including exact footer shapes, ASCII-only trailing whitespace, odd RSA runs, CR-only verify, subdirectory `relativePath`, short RSA tails, glued paths after signatures, and not-found path masking.
+
+### Notes
+
+- These are v1.0.55 Release QA follow-ups.
+- A lowercase tail of 8 to 48 characters stays only when it is a grounded filename with a 2-to-4 letter extension, or one run of a single repeated character. Eating a signature-like tail is preferred over leaving raw signature characters in the clear. `/src/components/Button.tsx` and `/src/utilities/format.ts` stay. `/abcdefgh`, `/Makefile`, and `/AbCdEfGh` stay masked. Short tails and uppercase tails still need a filename extension.
+- A directory is a receipts root only when it holds receipt markdown or a non-empty index. An audit log plus an extra file is not a root. Every command uses the same root resolution, so nested non-git roots agree and a reader started in a non-git subdirectory finds that root. A git toplevel is unchanged.
+- Package version bumped to `1.0.56`. Pin comments that track the current cut are `v1.0.56`. The action default pin is `1.0.56`. That pin needs an npm publish, which is on hold.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.55] — 2026-10-20
 
 ### Fixed

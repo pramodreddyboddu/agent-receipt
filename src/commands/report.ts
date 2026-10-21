@@ -90,7 +90,7 @@ import {
 } from '../lib/sign.js';
 import { applyTrust, loadTrustedFingerprints, trustStoreActive, type TrustStore } from '../lib/trust.js';
 import { VERSION } from '../lib/version.js';
-import { findLatestReceipt } from './show.js';
+import { findLatestReceipt, resolveReceiptPath, resolveStoreRoot } from './show.js';
 import { collectSession } from './session.js';
 import { sessionPackageIntegrityReasons } from './session-import.js';
 
@@ -716,17 +716,28 @@ function localSessionReport(cwd: string, sessionId: string, opts: ReportOptions)
 }
 
 function oneReceiptReport(cwd: string, pathArg: string, opts: ReportOptions): ReportCommandResult {
-  const target = pathArg === 'last' ? findLatestReceipt(cwd) : resolve(cwd, pathArg);
+  const root = resolveStoreRoot(cwd);
+  let target: string | null = null;
+  if (pathArg === 'last') {
+    target = findLatestReceipt(cwd);
+  } else {
+    try {
+      target = resolveReceiptPath(cwd, pathArg);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : `Receipt not found: ${pathArg}`;
+      return emptyResult(1, message);
+    }
+  }
   if (!target || !existsSync(target) || !statSync(target).isFile()) {
     return emptyResult(1, pathArg === 'last' ? 'No receipt found under the configured outDir.' : `Receipt not found: ${pathArg}`);
   }
   const exposure = exposureOf(opts);
-  const store = loadTrustedFingerprints(cwd, { extra: opts.trustedKeys });
-  const provenance = loadResignProvenance(cwd);
+  const store = loadTrustedFingerprints(root, { extra: opts.trustedKeys });
+  const provenance = loadResignProvenance(root);
   const built = buildOne(target, exposure, store, provenance);
   const session = parseLinkMeta(readFileSync(target, 'utf8')).session;
   return writeReport(
-    cwd,
+    root,
     opts,
     'receipt',
     session,
@@ -781,6 +792,7 @@ export function cmdReport(
   pathArg: string | undefined,
   opts: ReportOptions = {},
 ): number {
+  const root = resolveStoreRoot(cwd);
   if (opts.session && pathArg) {
     return emitReport(emptyResult(1, 'pass a receipt path or --session, not both'), Boolean(opts.json));
   }
@@ -789,11 +801,13 @@ export function cmdReport(
   }
   let result: ReportCommandResult;
   if (opts.session) {
-    result = localSessionReport(cwd, opts.session, opts);
+    result = localSessionReport(root, opts.session, opts);
   } else if (!pathArg) {
     result = emptyResult(1, 'report requires a receipt path, last, or --session <id>');
   } else if (pathArg !== 'last' && looksLikeSessionPackage(cwd, pathArg)) {
     result = sessionPackageReport(cwd, pathArg, opts);
+  } else if (pathArg !== 'last' && resolve(root) !== resolve(cwd) && looksLikeSessionPackage(root, pathArg)) {
+    result = sessionPackageReport(root, pathArg, opts);
   } else {
     result = oneReceiptReport(cwd, pathArg, opts);
   }

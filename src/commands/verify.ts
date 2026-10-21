@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { verifyMarkdown } from '../lib/hash.js';
 import { linkMetaTamperReason } from '../lib/link.js';
-import { resolveReceiptPath } from './show.js';
+import { resolveReceiptPath, resolveStoreRoot } from './show.js';
 import { color } from '../lib/color.js';
 import { maskDisplayedJson, redactSecretsInText } from '../lib/redact.js';
 import {
@@ -114,14 +114,15 @@ export function cmdVerify(
   opts: VerifyCommandOptions = {},
 ): VerifyCommandResult {
   const path = resolveReceiptPath(cwd, pathArg);
+  const store = resolveStoreRoot(cwd);
   const text = readFileSync(path, 'utf8');
   const quiet = Boolean(opts.quiet || opts.json);
   const reported = reportVerify(path, text, { quiet });
   const risk = parseRiskSummaryMarkdown(text);
   const policy = opts.applyPolicy
-    ? evaluateActivePolicy(cwd, opts.policyPacks, [
+    ? evaluateActivePolicy(store, opts.policyPacks, [
         {
-          receipt: receiptDisplayPath(cwd, path),
+          receipt: receiptDisplayPath(store, path),
           markdown: text,
           absolutePath: path,
         },
@@ -155,8 +156,8 @@ export function cmdVerify(
         trusted: null,
       };
     } else {
-      const store = loadTrustedFingerprints(cwd, { extra: opts.trustedKeys });
-      signature = applyTrust(inspected, store);
+      const trust = loadTrustedFingerprints(store, { extra: opts.trustedKeys });
+      signature = applyTrust(inspected, trust);
     }
   }
   const sigFailed = Boolean(signature && signature.ok !== true);
