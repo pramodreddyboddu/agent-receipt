@@ -149,6 +149,14 @@ const KEPT = [
   '/UserProfile.tsx',
   '/src/app.ts',
   '/src/components/Button.tsx',
+  '/Views/HomeView.swift',
+  '/Sources/App/AppDelegate.swift',
+  '/Models/User.cs',
+  '/components/NavBar.vue',
+  '/lib/parseJSON.ts',
+  '/LICENSE',
+  '/CHANGELOG.md',
+  '/tsconfig.json',
 ];
 
 const MASKED = [
@@ -354,6 +362,56 @@ describe('v1.0.57 truncated PEM private keys are redacted in one linear scan', (
     assert.equal(redacted.includes('secretkeymaterial'), false);
     assert.ok(bodyElapsed < 5000, `truncated PEM bodies took ${bodyElapsed}ms`);
   });
+
+  it('redacts a partial last line, keeps the block newline, and leaves short lines', () => {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const line64 = alphabet.slice(0, 64);
+    const partial = `${alphabet.slice(0, 40)}==`;
+    const kinds = ['RSA ', 'OPENSSH ', 'EC ', 'DSA ', 'ENCRYPTED ', ''];
+    const newlines = ['\n', '\r\n'];
+
+    for (const kind of kinds) {
+      for (const nl of newlines) {
+        const raw = `-----BEGIN ${kind}PRIVATE KEY-----${nl}${line64}${nl}${partial} PROSE_KEEP`;
+        const out = redactSecretsInText(raw);
+        assert.equal(out, `${PEM_REPLACEMENT} PROSE_KEEP`, `${JSON.stringify(kind)} ${JSON.stringify(nl)}`);
+        assert.equal(out.includes(line64), false, kind);
+        assert.equal(out.includes(partial), false, kind);
+        assert.equal(out.includes('PROSE_KEEP'), true, kind);
+      }
+    }
+
+    for (const nl of newlines) {
+      const raw = `-----BEGIN EC PRIVATE KEY-----${nl}${line64}${nl}not base64, keep this!${nl}`;
+      const out = redactSecretsInText(raw);
+      assert.equal(out, `${PEM_REPLACEMENT}${nl}not base64, keep this!${nl}`);
+    }
+
+    for (const word of ['Next', 'README', 'npm', 'test', 'TODO']) {
+      for (const nl of newlines) {
+        const raw = `-----BEGIN PRIVATE KEY-----${nl}${line64}${nl}${word}${nl}`;
+        const out = redactSecretsInText(raw);
+        assert.equal(out, `${PEM_REPLACEMENT}${nl}${word}${nl}`, `${word} ${JSON.stringify(nl)}`);
+      }
+    }
+
+    for (const nl of newlines) {
+      const raw = `-----BEGIN PRIVATE KEY-----${nl}${line64}${nl}`;
+      assert.equal(redactSecretsInText(raw), PEM_REPLACEMENT, JSON.stringify(nl));
+      const noBreak = `-----BEGIN PRIVATE KEY-----${nl}${line64}`;
+      assert.equal(redactSecretsInText(noBreak), PEM_REPLACEMENT, `end ${JSON.stringify(nl)}`);
+    }
+
+    const keptLines = ['abcdefgh', 'Next', 'README', 'npm', 'test', 'TODO', 'A'.repeat(15), 'abcdefghijkl'];
+    for (const line of keptLines) {
+      const raw = `-----BEGIN PRIVATE KEY-----\n${line}\n`;
+      assert.equal(redactSecretsInText(raw), raw, line);
+    }
+    for (const line of ['A'.repeat(16), 'ABCD1234', 'ABCDEF+/', 'abcdef==']) {
+      const raw = `-----BEGIN PRIVATE KEY-----\n${line}\n`;
+      assert.equal(redactSecretsInText(raw), PEM_REPLACEMENT, line);
+    }
+  });
 });
 
 describe('v1.0.57 kept paths on every redaction surface', { timeout: 180000 }, () => {
@@ -368,6 +426,14 @@ describe('v1.0.57 kept paths on every redaction surface', { timeout: 180000 }, (
       ['PS512', 683, 'formatDate.ts'],
       ['RS256', 512, 'Dockerfile'],
       ['PS256', 683, 'package.json'],
+      ['RS256', 342, '/Views/HomeView.swift'],
+      ['PS256', 512, '/Sources/App/AppDelegate.swift'],
+      ['RS384', 683, '/Models/User.cs'],
+      ['PS384', 342, '/components/NavBar.vue'],
+      ['RS512', 512, '/lib/parseJSON.ts'],
+      ['PS512', 683, '/LICENSE'],
+      ['RS256', 512, '/CHANGELOG.md'],
+      ['PS256', 342, '/tsconfig.json'],
     ];
     const masked = [
       ['RS256', 342, '/Ahsqowx.ts'],

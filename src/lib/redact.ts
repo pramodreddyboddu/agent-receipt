@@ -748,6 +748,9 @@ const SIG_RSA: SigSize[] = [
  * stays when another segment is a path word (`/Users/pramod/repo`). A
  * filename with no slash stays only when that suffix is one of those names.
  * `/Ahsqowx`, `/OHALMQO`, `/QZXWVKT`, and `/Makefile` stay masked.
+ * `/Views/HomeView.swift`, `/Sources/App/AppDelegate.swift`,
+ * `/Models/User.cs`, `/components/NavBar.vue`, `/lib/parseJSON.ts`,
+ * `/LICENSE`, `/CHANGELOG.md`, and `/tsconfig.json` stay.
  */
 const RSA_GLUED_PATH_MAX = 48;
 /** Fast reject before a header decode. Unknown lengths never split. */
@@ -981,6 +984,7 @@ const ORDINARY_PATH_WORDS = new Set([
   'arguments',
   'attributes',
   'builders',
+  'changelog',
   'clients',
   'component',
   'components',
@@ -1027,6 +1031,7 @@ const ORDINARY_PATH_WORDS = new Set([
   'settings',
   'subscribers',
   'templates',
+  'tsconfig',
   'typescript',
   'utilities',
   'validators',
@@ -1060,6 +1065,7 @@ const PATH_ATOMS = new Set([
   'home',
   'hooks',
   'index',
+  'json',
   'lib',
   'main',
   'mock',
@@ -1094,12 +1100,16 @@ const PATH_ATOMS = new Set([
  * `my` is only a hump inside `MyClass`, checked with the other humps.
  */
 const FILENAME_WORDS = new Set([
+  'bar',
   'class',
   'date',
+  'delegate',
   'file',
   'format',
   'my',
+  'nav',
   'package',
+  'parse',
   'profile',
   'repo',
   'user',
@@ -1293,6 +1303,72 @@ function dictionaryHumps(text: string, from: number, to: number): boolean {
   return humps >= 2;
 }
 
+/**
+ * camelCase with an all-caps hump (`parseJSON` is `parse` + `JSON`).
+ * A run of capitals is one hump. When that run is followed by a lowercase
+ * word, the last capital starts the word (`JSONParser` is `JSON` + `Parser`).
+ * Every hump is a path word, and at least one hump is two or more capitals,
+ * so `HomeView` stays on the single-capital check. One pass over a segment
+ * already inside the 48-character tail.
+ */
+function acronymHumps(text: string, from: number, to: number): boolean {
+  const n = to - from;
+  if (n < 4 || n > 48) return false;
+  const first = text.charCodeAt(from);
+  if (!((first >= 65 && first <= 90) || (first >= 97 && first <= 122))) return false;
+  let humps = 0;
+  let acronym = false;
+  let i = from;
+  const take = (humpFrom: number, humpTo: number): boolean => {
+    if (humpTo - humpFrom < 2) return false;
+    if (!dictionaryWordAt(text, humpFrom, humpTo, true)) return false;
+    let uppers = 0;
+    for (let k = humpFrom; k < humpTo; k += 1) {
+      if (text.charCodeAt(k) >= 65 && text.charCodeAt(k) <= 90) uppers += 1;
+    }
+    if (uppers >= 2) acronym = true;
+    humps += 1;
+    return true;
+  };
+  while (i < to) {
+    const code = text.charCodeAt(i);
+    if (code >= 97 && code <= 122) {
+      const start = i;
+      i += 1;
+      while (i < to) {
+        const next = text.charCodeAt(i);
+        if (next < 97 || next > 122) break;
+        i += 1;
+      }
+      if (!take(start, i)) return false;
+      continue;
+    }
+    if (code < 65 || code > 90) return false;
+    const start = i;
+    i += 1;
+    while (i < to) {
+      const next = text.charCodeAt(i);
+      if (next < 65 || next > 90) break;
+      i += 1;
+    }
+    const followedByLower = i < to && text.charCodeAt(i) >= 97 && text.charCodeAt(i) <= 122;
+    if (followedByLower && i - start >= 2) {
+      if (!take(start, i - 1)) return false;
+      const wordStart = i - 1;
+      i += 1;
+      while (i < to) {
+        const next = text.charCodeAt(i);
+        if (next < 97 || next > 122) break;
+        i += 1;
+      }
+      if (!take(wordStart, i)) return false;
+      continue;
+    }
+    if (!take(start, i)) return false;
+  }
+  return humps >= 2 && acronym;
+}
+
 /** `Dockerfile` or `dockerfile`. `Makefile` is not this name. */
 function knownFilename(text: string, from: number, to: number): boolean {
   if (to - from !== 10) return false;
@@ -1300,6 +1376,16 @@ function knownFilename(text: string, from: number, to: number): boolean {
   const first = text.charCodeAt(from);
   if (first !== 68 && first !== 100) return false;
   for (let i = 1; i < 10; i += 1) {
+    if (text.charCodeAt(from + i) !== word.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+/** `LICENSE` exactly. `license` and `License` are not this name. */
+function knownLicense(text: string, from: number, to: number): boolean {
+  if (to - from !== 7) return false;
+  const word = 'LICENSE';
+  for (let i = 0; i < 7; i += 1) {
     if (text.charCodeAt(from + i) !== word.charCodeAt(i)) return false;
   }
   return true;
@@ -1335,7 +1421,7 @@ function looseName(text: string, from: number, to: number): boolean {
   return vowels >= 1;
 }
 
-/** True when the tail is only `Dockerfile` or `dockerfile`, optional `+` and one slash. */
+/** True when the tail is only `Dockerfile`, `dockerfile`, or `LICENSE`, optional `+` and one slash. */
 function isKnownExtensionlessTail(text: string, at: number, segEnd: number): boolean {
   let i = at;
   if (i < segEnd && text.charCodeAt(i) === 43) i += 1;
@@ -1344,7 +1430,7 @@ function isKnownExtensionlessTail(text: string, at: number, segEnd: number): boo
   for (let k = i; k < segEnd; k += 1) {
     if (text.charCodeAt(k) === 47) return false;
   }
-  return knownFilename(text, i, segEnd);
+  return knownFilename(text, i, segEnd) || knownLicense(text, i, segEnd);
 }
 
 /**
@@ -1371,7 +1457,8 @@ function ordinaryAnchoredPath(text: string, at: number, segEnd: number): boolean
       segmentIsAtom(text, from, to) ||
       dictionaryHumps(text, from, to) ||
       knownFilename(text, from, to) ||
-      camelHumpsAreAtoms(text, from, to)
+      camelHumpsAreAtoms(text, from, to) ||
+      acronymHumps(text, from, to)
     ) {
       anchors += 1;
       return true;
@@ -1396,6 +1483,27 @@ function ordinaryAnchoredPath(text: string, at: number, segEnd: number): boolean
   return true;
 }
 
+/**
+ * Title-case directory names that are not already path atoms
+ * (`Views`, `Sources`, `Models`). All-caps and a lowercase copy stay out,
+ * so a signature fragment is not kept just because the letters match.
+ */
+const CAPITAL_DIRECTORIES = new Set(['models', 'sources', 'views']);
+
+function capitalDirectorySegment(text: string, from: number, to: number): boolean {
+  const n = to - from;
+  if (n < 3 || n > 16) return false;
+  const first = text.charCodeAt(from);
+  if (first < 65 || first > 90) return false;
+  let lower = String.fromCharCode(first + 32);
+  for (let i = from + 1; i < to; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code < 97 || code > 122) return false;
+    lower += String.fromCharCode(code);
+  }
+  return CAPITAL_DIRECTORIES.has(lower);
+}
+
 function filenameSegment(text: string, from: number, to: number): boolean {
   return (
     lowercaseFilenameSegment(text, from, to) ||
@@ -1405,7 +1513,8 @@ function filenameSegment(text: string, from: number, to: number): boolean {
     camelHumpsAreAtoms(text, from, to) ||
     dictionaryWordAt(text, from, to) ||
     dictionaryHumps(text, from, to) ||
-    knownFilename(text, from, to)
+    knownFilename(text, from, to) ||
+    acronymHumps(text, from, to)
   );
 }
 
@@ -1413,7 +1522,8 @@ function filenameSegment(text: string, from: number, to: number): boolean {
  * True when [at, segEnd) is a filename path. Every segment is a filename.
  * Uppercase is allowed for a single segment (`/App`, `/README`) or when a
  * directory segment has 2 or more lowercase letters (`/src/App`,
- * `/docs/README`, `/Src/lib/App`). One pass over a tail already capped at
+ * `/docs/README`, `/Src/lib/App`), or is a title-case directory name
+ * (`Views`, `Sources`, `Models`). One pass over a tail already capped at
  * 48 characters. No slice of the segment.
  */
 function realFilenameTail(text: string, at: number, segEnd: number, sawUpper: boolean): boolean {
@@ -1438,6 +1548,7 @@ function realFilenameTail(text: string, at: number, segEnd: number, sawUpper: bo
   for (let s = 0; s < segs.length - 1; s += 1) {
     const seg = segs[s];
     if (ordinaryWordAt(text, seg.from, seg.to)) return true;
+    if (capitalDirectorySegment(text, seg.from, seg.to)) return true;
     if (!lowercaseFilenameSegment(text, seg.from, seg.to)) continue;
     let letters = 0;
     for (let k = seg.from; k < seg.to; k += 1) {
@@ -1500,7 +1611,9 @@ function shortSegmentIsReal(text: string, from: number, to: number): boolean {
     camelHumpsAreAtoms(text, from, to) ||
     dictionaryWordAt(text, from, to) ||
     dictionaryHumps(text, from, to) ||
-    knownFilename(text, from, to)
+    knownFilename(text, from, to) ||
+    capitalDirectorySegment(text, from, to) ||
+    acronymHumps(text, from, to)
   ) {
     return true;
   }
@@ -1631,7 +1744,8 @@ function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): bool
         !ordinaryWordAt(text, runStart, end) &&
         !dictionaryWordAt(text, runStart, end) &&
         !dictionaryHumps(text, runStart, end) &&
-        !knownFilename(text, runStart, end)
+        !knownFilename(text, runStart, end) &&
+        !acronymHumps(text, runStart, end)
       ) return false;
     }
     runs += 1;
@@ -1739,7 +1853,9 @@ function rsaUngluedFilenameCut(
       continue;
     }
     if (!filenameExtensionAfter(text, sigEnd)) continue;
-    if (dictionaryWordAt(text, at, sigEnd) || dictionaryHumps(text, at, sigEnd)) best = at;
+    if (dictionaryWordAt(text, at, sigEnd) || dictionaryHumps(text, at, sigEnd) || acronymHumps(text, at, sigEnd)) {
+      best = at;
+    }
   }
   return best;
 }
@@ -2066,7 +2182,46 @@ function pemPrivateKeyEnd(text: string, at: number): number {
   return -1;
 }
 
-/** A PEM body line: base64 alphabet only, after ASCII space, tab, and CR. */
+/**
+ * A private-key body line is base64, and it is not a short prose word.
+ * 16 characters is the usual minimum (`Next`, `README`, `npm`, `test`,
+ * and `TODO` stay). A shorter line still counts when it is a multiple of
+ * 4 and contains a digit, `+`, `/`, or `=`, so a 12-character padded
+ * fragment such as `QUJDREVGR0g=` is key material and a word is not.
+ */
+const PEM_BODY_MIN = 16;
+const PEM_BODY_SHORT_MIN = 8;
+
+function isBase64Code(code: number): boolean {
+  return (
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    (code >= 48 && code <= 57) ||
+    code === 43 ||
+    code === 47 ||
+    code === 61
+  );
+}
+
+function isPemKeyChar(code: number): boolean {
+  return code === 43 || code === 47 || code === 61 || (code >= 48 && code <= 57);
+}
+
+/** True when [start, end) is key-shaped base64, not a short prose word. */
+function isKeyMaterialSpan(line: string, start: number, end: number): boolean {
+  const n = end - start;
+  if (n < PEM_BODY_SHORT_MIN) return false;
+  if (n < PEM_BODY_MIN && n % 4 !== 0) return false;
+  let shaped = n >= PEM_BODY_MIN;
+  for (let i = start; i < end; i += 1) {
+    const code = line.charCodeAt(i);
+    if (!isBase64Code(code)) return false;
+    if (isPemKeyChar(code)) shaped = true;
+  }
+  return shaped;
+}
+
+/** A full PEM body line: key-shaped base64 only, after ASCII space, tab, and CR. */
 function isPemBodyLine(line: string): boolean {
   let start = 0;
   let end = line.length;
@@ -2081,36 +2236,61 @@ function isPemBodyLine(line: string): boolean {
     end -= 1;
   }
   if (end <= start) return false;
-  for (let i = start; i < end; i += 1) {
-    const code = line.charCodeAt(i);
-    const ok =
-      (code >= 65 && code <= 90) ||
-      (code >= 97 && code <= 122) ||
-      (code >= 48 && code <= 57) ||
-      code === 43 ||
-      code === 47 ||
-      code === 61;
-    if (!ok) return false;
-  }
-  return true;
+  return isKeyMaterialSpan(line, start, end);
 }
 
 /**
- * Index after the contiguous base64 body that follows a private-key header.
+ * End index of a key-shaped base64 run at the start of `line`, when prose
+ * follows on that same line. -1 when the line is a full body line or the
+ * run is not key material. Leading ASCII space and tab are not part of
+ * the run. The prose, including the space before it, stays.
+ */
+function pemPartialCut(line: string): number {
+  let i = 0;
+  while (i < line.length) {
+    const code = line.charCodeAt(i);
+    if (code !== 32 && code !== 9) break;
+    i += 1;
+  }
+  const start = i;
+  while (i < line.length && isBase64Code(line.charCodeAt(i))) i += 1;
+  if (i === start) return -1;
+  let prose = false;
+  for (let k = i; k < line.length; k += 1) {
+    const code = line.charCodeAt(k);
+    if (code !== 32 && code !== 9 && code !== 13) {
+      prose = true;
+      break;
+    }
+  }
+  if (!prose) return -1;
+  if (!isKeyMaterialSpan(line, start, i)) return -1;
+  return i;
+}
+
+/**
+ * Index where the contiguous private-key body that follows a header ends.
  * `from` is the first character after the header. Blank space on the header
- * line is skipped. The scan stops at the first line that is not a base64
- * body, and it does not read past that line. Returns `from` when there is
- * no body line. One forward pass.
+ * line is skipped. A full key line is consumed. A partial line consumes
+ * only its leading base64 run, so the trailing prose stays. The newline
+ * after the last consumed body line stays when more text follows (LF or
+ * CRLF), and it is consumed when that newline is the end of the input.
+ * The scan stops at the first line that is not key material. It does not
+ * read past that line. Returns `from` when there is no body line.
+ * One forward pass.
  */
 function pemBodyEnd(text: string, from: number): number {
   let i = from;
-  let last = from;
+  let consumed = from;
   let onHeaderLine = true;
   while (i < text.length) {
     let k = i;
     while (k < text.length && text.charCodeAt(k) !== 10) k += 1;
-    const lineEnd = k < text.length ? k + 1 : k;
+    const hasNl = k < text.length;
+    const lineEnd = hasNl ? k + 1 : k;
     const line = text.slice(i, k);
+    let terminatorAt = lineEnd;
+    if (hasNl) terminatorAt = k > i && text.charCodeAt(k - 1) === 13 ? k - 1 : k;
     if (onHeaderLine) {
       onHeaderLine = false;
       let onlySpace = true;
@@ -2126,20 +2306,38 @@ function pemBodyEnd(text: string, from: number): number {
         continue;
       }
     }
-    if (!isPemBodyLine(line)) break;
-    last = lineEnd;
-    i = lineEnd;
+    if (isPemBodyLine(line)) {
+      if (!hasNl || lineEnd >= text.length) {
+        consumed = lineEnd;
+        break;
+      }
+      consumed = terminatorAt;
+      i = lineEnd;
+      continue;
+    }
+    const partial = pemPartialCut(line);
+    if (partial >= 0) {
+      consumed = i + partial;
+      break;
+    }
+    break;
   }
-  return last;
+  return consumed;
 }
 
 /**
  * Replace private-key PEM blocks. One left-to-right scan.
  * A complete block, BEGIN through a private-key END, is replaced. The END
  * kind does not have to match the BEGIN kind. A header with no matching
- * END is replaced from the header through the contiguous base64 body, and
- * the scan stops at the first line that is not that body, so a truncated
- * key is not left raw. A header with no body line is copied through.
+ * END is replaced from the header through the contiguous base64 body. A
+ * body line is key-shaped base64 (16 characters, or a shorter multiple of
+ * 4 that contains a digit, `+`, `/`, or `=`). The scan stops at the first
+ * line that is not that body, so `Next`, `README`, `npm`, `test`, and
+ * `TODO` stay. A partial line redacts its leading base64 run and keeps
+ * the trailing prose. The newline after the block stays when more text
+ * follows, for LF and CRLF, so that text does not glue to the marker.
+ * A truncated block at the end of the input is still replaced. A header
+ * with no body line is copied through.
  * The END search never rewinds: a miss covers the rest of the buffer.
  */
 function redactPrivateKeyBlocks(text: string): string {
