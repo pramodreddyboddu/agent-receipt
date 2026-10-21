@@ -160,8 +160,9 @@ function agentFromReceipt(markdown: string): string | null {
  * Directory `relativePath` is computed against. The git toplevel, so a
  * share started in a subdirectory still names the receipt from the repo
  * root. When this directory is not a git checkout, the nearest receipts
- * root at or above the working directory that contains the file. A nearer
- * root that does not contain the file is skipped. When the working
+ * root at or above the working directory that contains the file. That
+ * cwd-relative root wins over a parent root when both contain the file.
+ * A nearer root that does not contain the file is skipped. When the working
  * directory is above every root, the receipts root of the file is used,
  * so a secret-shaped parent of that root is not part of the path.
  */

@@ -134,7 +134,10 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; replacement: SecretReplacement 
     replacement: '$1[REDACTED]',
   },
   {
-    re: /-----BEGIN (?:RSA |OPENSSH |EC |DSA |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |DSA |ENCRYPTED )?PRIVATE KEY-----/g,
+    // Handled by redactPrivateKeyBlocks. The old lazy `[\s\S]*?` scan
+    // walked to EOF once per unterminated BEGIN, which is quadratic.
+    // The source prefix marks this slot so the block stays in pattern order.
+    re: /-----BEGIN (?:RSA |OPENSSH |EC |DSA |ENCRYPTED )?PRIVATE KEY-----/,
     replacement: '-----BEGIN PRIVATE KEY-----\n[REDACTED]\n-----END PRIVATE KEY-----',
   },
   {
@@ -727,11 +730,14 @@ const SIG_RSA: SigSize[] = [
  * (600 − 512 = 88) and under 511 − 342. The tail itself is one bounded
  * scan. A run of 8 or more is signature unless it is one repeated
  * character or an ordinary path word (`components`, `utilities`). A tail
- * of 3 to 7 characters stays only when a 2-to-4 letter extension follows
- * and every segment of 3 or more letters is a path atom or an ordinary
- * word. One- and two-letter lowercase pieces still stay (`/ab`, `/a/b`).
- * `/Ahs`, `/Qow`, and `/hnw/x` are signature. Any uppercase letter stays
- * only when the tail is a filename path and that extension follows.
+ * of 3 to 7 characters, measured without the leading `/` or `+`, stays
+ * only when a 2-to-4 letter extension follows and every segment of 3 or
+ * more letters is a path atom or an ordinary word. A 7-letter segment
+ * is short (`/Ahsqowx` is 7, not 8). One- and two-letter lowercase
+ * pieces still stay (`/ab`, `/a/b`). `/Ahs`, `/Qow`, `/hnw/x`,
+ * `/Ahsqowx`, `/OHALMQO`, and `/QZXWVKT` are signature. Any uppercase
+ * letter stays only when the tail is a filename path, that extension
+ * follows, and the same per-segment word check passes.
  * A longer lowercase tail stays when it is a grounded filename and that
  * extension follows, when every segment is a path word (`/src/index`,
  * `/bin/run`), or when the tail is one repeated character.
@@ -974,11 +980,13 @@ const ORDINARY_PATH_WORDS = new Set([
   'exceptions',
   'factories',
   'formatters',
+  'frontend',
   'functions',
   'handlers',
   'helpers',
   'implementations',
   'interfaces',
+  'internal',
   'javascript',
   'listeners',
   'middleware',
@@ -1018,7 +1026,9 @@ const ORDINARY_PATH_WORDS = new Set([
 const PATH_ATOMS = new Set([
   'api',
   'app',
+  'auth',
   'bin',
+  'button',
   'cli',
   'cmd',
   'core',
@@ -1054,6 +1064,7 @@ const PATH_ATOMS = new Set([
   'tool',
   'tools',
   'types',
+  'use',
   'util',
   'utils',
   'web',
@@ -1139,12 +1150,46 @@ function hyphenatedFilenameSegment(text: string, from: number, to: number): bool
   return pieces >= 2 && grounded;
 }
 
+/**
+ * camelCase of path atoms (`useAuth` is `use` + `Auth`). The segment must
+ * start with a lowercase letter and contain an internal capital. Each hump
+ * is an atom, so a random capital in the middle stays signature.
+ * One pass over a segment already inside the 48-character tail.
+ */
+function camelHumpsAreAtoms(text: string, from: number, to: number): boolean {
+  const n = to - from;
+  if (n < 4 || n > 48) return false;
+  if (text.charCodeAt(from) < 97 || text.charCodeAt(from) > 122) return false;
+  let humpFrom = from;
+  let humps = 0;
+  let broke = false;
+  for (let i = from; i <= to; i += 1) {
+    if (i < to) {
+      const code = text.charCodeAt(i);
+      const upper = code >= 65 && code <= 90;
+      const lower = code >= 97 && code <= 122;
+      if (!upper && !lower) return false;
+      if (i > from && upper) {
+        if (!segmentIsAtom(text, humpFrom, i)) return false;
+        humps += 1;
+        humpFrom = i;
+        broke = true;
+      }
+      continue;
+    }
+    if (!broke || !segmentIsAtom(text, humpFrom, to)) return false;
+    humps += 1;
+  }
+  return humps >= 2;
+}
+
 function filenameSegment(text: string, from: number, to: number): boolean {
   return (
     lowercaseFilenameSegment(text, from, to) ||
     titledFilenameSegment(text, from, to) ||
     ordinaryWordAt(text, from, to) ||
-    hyphenatedFilenameSegment(text, from, to)
+    hyphenatedFilenameSegment(text, from, to) ||
+    camelHumpsAreAtoms(text, from, to)
   );
 }
 
@@ -1233,7 +1278,13 @@ function shortSegmentIsReal(text: string, from: number, to: number): boolean {
     }
     return true;
   }
-  if (segmentIsAtom(text, from, to) || ordinaryWordAt(text, from, to)) return true;
+  if (
+    segmentIsAtom(text, from, to) ||
+    ordinaryWordAt(text, from, to) ||
+    camelHumpsAreAtoms(text, from, to)
+  ) {
+    return true;
+  }
   let pieceFrom = from;
   let sawJoin = false;
   for (let p = from; p <= to; p += 1) {
@@ -1313,20 +1364,23 @@ function isRepeatedRun(text: string, from: number, to: number): boolean {
  * or the run is an ordinary path word. A tail that is one repeated
  * character stays (`/${'a'.repeat(46)}/` is 48).
  *
- * A tail of 3 to 7 characters stays only when a 2-to-4 letter extension
- * follows, the tail is a filename, and every segment of 3 or more letters
- * is a path atom or an ordinary word. `/ab`, `/a/b`, `/App`, and `/README`
- * stay. `/Ahs`, `/Qow`, and `/hnw/x` do not: those segments are not path
- * words, and the check does not use a digit. A tail with an uppercase
- * letter and a length outside that band stays when the extension follows
- * and the tail is a filename. `/src/App`, `/docs/README`, and
- * `/Src/lib/App` stay. An extension alone does not keep the tail:
- * `/Qx7.ts`, `/aB3k9.md`, `/XYZ12.md`, and `/K.ts` are signature.
+ * A tail of 3 to 7 characters, measured without the leading `/` or `+`,
+ * stays only when a 2-to-4 letter extension follows, the tail is a
+ * filename, and every segment of 3 or more letters is a path atom or an
+ * ordinary word. `/Ahsqowx` is 7, not 8. `/ab`, `/a/b`, `/App`, and
+ * `/README` stay. `/Ahs`, `/Qow`, `/hnw/x`, `/Ahsqowx`, `/OHALMQO`, and
+ * `/QZXWVKT` do not: those segments are not path words, and the check
+ * does not use a digit. A tail with an uppercase letter uses that same
+ * word check even when it is longer than 7. `/src/App`, `/docs/README`,
+ * `/Src/lib/App`, `/src/components/Button`, and `/src/hooks/useAuth` stay.
+ * `/Jrq/kl/x` and `/qb/Zrh/x` do not. An extension alone does not keep
+ * the tail: `/Qx7.ts`, `/aB3k9.md`, `/XYZ12.md`, and `/K.ts` are signature.
  *
  * A longer lowercase tail stays when that extension follows, every segment
  * is a filename, and some segment is a path atom or an ordinary word.
- * `/src/app.ts`, `/src/components/Button.tsx`, `/src/utilities/format.ts`,
- * `/home/runner/work/a/b.ts`, and `/scripts/deploy.sh` stay. The same tail
+ * `/src/app.ts`, `/src/utilities/format.ts`, `/packages/frontend/main.ts`,
+ * `/internal/handlers/api.go`, `/home/runner/work/a/b.ts`, and
+ * `/scripts/deploy.sh` stay. The same tail
  * stays with no extension when every segment is a path word: `/src/index`
  * and `/bin/run`. `/ab/cd/ef`, `/tonaxc/u1`, and `/abcdefgh/x.ts` are
  * signature. `/Makefile` and `/AbCdEfGh/x` have no filename extension.
@@ -1334,7 +1388,12 @@ function isRepeatedRun(text: string, from: number, to: number): boolean {
 function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): boolean {
   if (!isClearGluedPath(text, at, segEnd)) return false;
   const ext = filenameExtensionAfter(text, segEnd);
-  const tailLen = segEnd - at;
+  const inclusiveLen = segEnd - at;
+  let bodyFrom = at;
+  if (bodyFrom < segEnd && text.charCodeAt(bodyFrom) === 43) bodyFrom += 1;
+  if (bodyFrom < segEnd && text.charCodeAt(bodyFrom) === 47) bodyFrom += 1;
+  const bodyLen = segEnd - bodyFrom;
+  let internalSlash = false;
   let runStart = -1;
   let runs = 0;
   let longRun = false;
@@ -1350,6 +1409,7 @@ function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): bool
   };
   for (let k = at; k < segEnd; k += 1) {
     const code = text.charCodeAt(k);
+    if (k >= bodyFrom && code === 47) internalSlash = true;
     if (code >= 65 && code <= 90) sawUpper = true;
     if (isAsciiAlnum(code)) {
       if (runStart < 0) runStart = k;
@@ -1363,14 +1423,18 @@ function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): bool
   if (runStart >= 0 && !finish(segEnd)) return false;
   if (longRun && runs !== 1) return false;
   if (longRun && runs === 1) return true;
-  const short = tailLen >= 3 && tailLen <= 7;
+  // The leading `/` or `+` is not part of the length. `/Ahsqowx` is 7.
+  // An internal slash is not that case, so `/bin/run` stays on the long path.
+  const short =
+    (!internalSlash && bodyLen >= 2 && bodyLen <= 7) ||
+    (inclusiveLen >= 3 && inclusiveLen <= 7);
   if (short || sawUpper) {
     if (!ext) return false;
     if (!realFilenameTail(text, at, segEnd, sawUpper)) return false;
-    if (short && !shortTailWordsAreReal(text, at, segEnd)) return false;
+    if (!shortTailWordsAreReal(text, at, segEnd)) return false;
     return true;
   }
-  if (tailLen < 8) return false;
+  if (inclusiveLen < 8) return false;
   if (!realFilenameTail(text, at, segEnd, sawUpper)) return false;
   if (!ext) return everySegmentIsPathWord(text, at, segEnd);
   return tailIsGrounded(text, at, segEnd);
@@ -1394,14 +1458,18 @@ function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): bool
  * path after an exact RSA base64url length still splits when the tail is
  * a clear path. A run of 8 or more stays inside the mask unless it is
  * one repeated character or an ordinary path word. A tail of 3 to 7
- * characters splits only when a 2-to-4 letter extension follows and every
- * segment of 3 or more letters is a path word (`/App.md`, `/README.md`,
- * `/ab.ts`). `/Ahs.ts`, `/Qow.md`, and `/hnw/x.ts` stay inside the mask.
+ * characters, measured without the leading `/` or `+`, splits only when
+ * a 2-to-4 letter extension follows and every segment of 3 or more
+ * letters is a path word (`/App.md`, `/README.md`, `/ab.ts`). A 7-letter
+ * segment is that short tail. `/Ahs.ts`, `/Qow.md`, `/hnw/x.ts`,
+ * `/Ahsqowx.ts`, `/OHALMQO.ts`, and `/QZXWVKT.md` stay inside the mask.
  * A tail with an uppercase letter splits only when that extension follows
- * and every segment is a filename (`/src/App.tsx`, `/docs/README.md`).
- * A longer lowercase tail splits when that extension follows and the path
- * is grounded (`/src/components/Button.tsx`, `/home/runner/work/a/b.ts`,
- * `/scripts/deploy.sh`), or when every segment is a path word
+ * and the same word check passes (`/src/App.tsx`, `/docs/README.md`,
+ * `/src/components/Button.tsx`, `/src/hooks/useAuth.ts`). `/Jrq/kl/x.ts`
+ * and `/qb/Zrh/x.ts` stay inside the mask. A longer lowercase tail splits
+ * when that extension follows and the path is grounded
+ * (`/home/runner/work/a/b.ts`, `/scripts/deploy.sh`,
+ * `/packages/frontend/main.ts`), or when every segment is a path word
  * (`/src/index`, `/bin/run`). An extension alone does not split, so
  * `/Qx7.ts`, `/aB3k9.md`, `/XYZ12.md`, and `/K.ts` stay inside the mask.
  * `/ab/cd/ef` and `/tonaxc/u1` stay inside the mask. A `/` or `+` at
@@ -1706,10 +1774,85 @@ export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): stri
   return out;
 }
 
+const PEM_BEGIN = '-----BEGIN ';
+const PEM_END = '-----END ';
+const PEM_TAIL = 'PRIVATE KEY-----';
+/** Longer kinds first. `EC ` is not a prefix of `ENCRYPTED `. */
+const PEM_KINDS = ['ENCRYPTED ', 'OPENSSH ', 'RSA ', 'DSA ', 'EC ', ''];
+const PEM_BLOCK_REPLACEMENT = '-----BEGIN PRIVATE KEY-----\n[REDACTED]\n-----END PRIVATE KEY-----';
+
+/** End index of a private-key header or footer starting at `at`, or -1. */
+function pemPrivateKeyEnd(text: string, at: number): number {
+  for (let i = 0; i < PEM_KINDS.length; i += 1) {
+    const header = PEM_KINDS[i] + PEM_TAIL;
+    if (text.startsWith(header, at)) return at + header.length;
+  }
+  return -1;
+}
+
+/**
+ * Replace complete private-key PEM blocks. One left-to-right scan.
+ * An unterminated `-----BEGIN … PRIVATE KEY-----` is copied through and
+ * the scan continues after that header, so a run of them is linear.
+ * The END kind does not have to match the BEGIN kind.
+ */
+function redactPrivateKeyBlocks(text: string): string {
+  // No footer anywhere: an unterminated header cannot match. One scan.
+  if (!text.includes(PEM_END)) return text;
+  const parts: string[] = [];
+  let i = 0;
+  // A failed footer search covers the rest of the buffer. Do not repeat it.
+  let endMiss = -1;
+  const findEnd = (from: number): number => {
+    if (endMiss >= 0 && from >= endMiss) return -1;
+    const endAt = text.indexOf(PEM_END, from);
+    if (endAt < 0) endMiss = from;
+    return endAt;
+  };
+  while (i < text.length) {
+    const start = text.indexOf(PEM_BEGIN, i);
+    if (start < 0) {
+      parts.push(text.slice(i));
+      break;
+    }
+    parts.push(text.slice(i, start));
+    const headerAt = start + PEM_BEGIN.length;
+    const headerEnd = pemPrivateKeyEnd(text, headerAt);
+    if (headerEnd < 0) {
+      parts.push(PEM_BEGIN);
+      i = headerAt;
+      continue;
+    }
+    let cursor = headerEnd;
+    let matched = false;
+    while (cursor < text.length) {
+      const endAt = findEnd(cursor);
+      if (endAt < 0) break;
+      const endStop = pemPrivateKeyEnd(text, endAt + PEM_END.length);
+      if (endStop >= 0) {
+        parts.push(PEM_BLOCK_REPLACEMENT);
+        i = endStop;
+        matched = true;
+        break;
+      }
+      cursor = endAt + PEM_END.length;
+    }
+    if (!matched) {
+      parts.push(text.slice(start, headerEnd));
+      i = headerEnd;
+    }
+  }
+  return parts.join('');
+}
+
 export function redactSecretsInText(text: string): string {
   let out = redactSecretAssignments(text);
   out = maskJwtTokens(out);
   for (const { re, replacement } of SECRET_VALUE_PATTERNS) {
+    if (re.source.startsWith('-----BEGIN ')) {
+      out = redactPrivateKeyBlocks(out);
+      continue;
+    }
     out = typeof replacement === 'function'
       ? out.replace(re, replacement)
       : out.replace(re, replacement);

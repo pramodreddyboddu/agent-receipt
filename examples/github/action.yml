@@ -244,6 +244,7 @@ runs:
         // Wrap JSON has no relativePath, so the raw path is used.
         // Resolve against the git toplevel, or the receipts root when this
         // directory is not a git checkout, before a cwd-relative path.
+        // The nearest root at or above cwd wins over a parent root.
         // A directory is a root only when it holds receipt data. Keep
         // walking when a nearer root does not contain the relative path.
         const path = require('path');
@@ -308,8 +309,9 @@ runs:
               dir = parent;
             }
           }
-          // A cwd-relative hit is only the fallback. A nested directory
-          // can contain the same relative path as the receipts root.
+          // A cwd-relative file is only the fallback, used when no receipts
+          // root contains the path. The nearest root wins over a parent.
+          // A nested directory can contain the same relative path.
           if (!abs && !path.isAbsolute(candidate) && fs.existsSync(path.resolve(candidate))) {
             abs = path.resolve(candidate);
           }

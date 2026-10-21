@@ -3,6 +3,8 @@
  * Attestations land beside the receipt. Short random extension tails are
  * masked without a digit rule. Real checkout paths stay visible. The
  * example receipt picker resolves a receipts root before a cwd-relative path.
+ * The nearest cwd-relative root wins over a parent root.
+ * A 7-letter signature tail is measured without the leading / or +.
  */
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -294,5 +296,166 @@ describe('v1.0.56 receipt picker prefers the receipts root', () => {
       encoding: 'utf8',
     }).trim();
     assert.equal(resolve(nested, loosePicked), join(looseDir, 'loose.md'), loosePicked);
+  });
+});
+
+function lcg(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+    return state;
+  };
+}
+
+describe('v1.0.56 short-tail signature chars stay masked', () => {
+  const leaks = [
+    '/Ahsqowx.ts',
+    '/OHALMQO.ts',
+    '/QZXWVKT.md',
+    '/Jrq/kl/x.ts',
+    '/qb/Zrh/x.ts',
+    '+Ahsqowx.ts',
+    '+/OHALMQO.md',
+  ];
+  const kept = [
+    '/ab.ts',
+    '/App.md',
+    '/README.md',
+    '/src/index',
+    '/bin/run',
+    '/home/runner/work/a/b.ts',
+    '/scripts/deploy.sh',
+    '/src/components/Button.tsx',
+    '/src/utilities/format.ts',
+    '/packages/frontend/main.ts',
+    '/internal/handlers/api.go',
+    '/src/hooks/useAuth.ts',
+    '/components/utilities',
+  ];
+
+  it('masks the QA leak tails and keeps real paths', () => {
+    assert.equal(redactSecretsInText('components/utilities'), 'components/utilities');
+    assert.equal(redactSecretsInText('src/components/utilities'), 'src/components/utilities');
+    for (const alg of RSA_ALGS) {
+      for (const at of SPOTS) {
+        for (const path of leaks) {
+          const tail = inSegmentTail(path);
+          const token = jwtFor(alg, `${'A'.repeat(at)}${tail}`);
+          for (const mode of ['general', 'strict']) {
+            const out = maskJwtTokens(`${token}${path.slice(tail.length)}${TRAILER}`, mode);
+            assertNoRawTail(out, tail, `${alg} ${at} ${mode} ${path}`);
+            assert.equal(out.includes('A'.repeat(8)), false, `${path} leaked signature`);
+            assert.equal(out.includes(TRAILER), true, `${path} ate the trailer`);
+          }
+          const text = redactSecretsInText(`${token}${path.slice(tail.length)}${TRAILER}`);
+          assertNoRawTail(text, tail, `${alg} ${at} text ${path}`);
+        }
+        const token = jwtFor(alg, 'A'.repeat(at));
+        for (const path of kept) {
+          for (const mode of ['general', 'strict']) {
+            const out = maskJwtTokens(`${token}${path}${TRAILER}`, mode);
+            assert.equal(out, `[REDACTED]${path}${TRAILER}`, `${alg} ${at} ${mode} ${path}`);
+          }
+          const text = redactSecretsInText(`${token}${path}${TRAILER}`);
+          assert.equal(text, `[REDACTED]${path}${TRAILER}`, `${alg} ${at} text ${path}`);
+        }
+      }
+    }
+  });
+
+  it('masks mixed-case base64 with 2 characters before .ts and .md', () => {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const spots = [
+      ['RS256', 342],
+      ['PS512', 683],
+    ];
+    for (const [alg, at] of spots) {
+      for (let i = 0; i < alphabet.length; i += 1) {
+        for (let j = 0; j < alphabet.length; j += 1) {
+          const pair = alphabet[i] + alphabet[j];
+          const lower = pair >= 'aa' && pair <= 'zz' && pair[0] >= 'a' && pair[0] <= 'z' && pair[1] >= 'a' && pair[1] <= 'z';
+          for (const ext of ['.ts', '.md']) {
+            const path = `/${pair}${ext}`;
+            const tail = `/${pair}`;
+            const token = jwtFor(alg, `${'A'.repeat(at)}${tail}`);
+            const raw = `${token}${ext}${TRAILER}`;
+            for (const mode of ['general', 'strict']) {
+              const out = maskJwtTokens(raw, mode);
+              if (lower) {
+                assert.equal(out, `[REDACTED]${path}${TRAILER}`, `${alg} ${mode} ${path}`);
+              } else {
+                assertNoRawTail(out, tail, `${alg} ${at} ${mode} ${path}`);
+                assert.equal(out.includes(TRAILER), true, path);
+              }
+              assert.equal(out.includes('A'.repeat(8)), false, path);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('seeded path-like sweep leaves no 3+ raw signature chars', () => {
+    const std = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const next = lcg(0x1056b2);
+    let probes = 0;
+    for (let n = 0; n < 4096; n += 1) {
+      const len = 4 + (next() % 11);
+      let tail = next() % 2 === 0 ? '/' : '+';
+      for (let i = 1; i < len; i += 1) tail += std[next() % std.length];
+      if (next() % 2 === 0 && len > 3) {
+        const pos = 1 + (next() % (len - 1));
+        if (tail[pos] !== '/' && tail[pos] !== '+') {
+          tail = `${tail.slice(0, pos)}/${tail.slice(pos + 1)}`;
+        }
+      }
+      if (!/[A-Z]/.test(tail)) {
+        const pos = 1 + (next() % (tail.length - 1));
+        tail = `${tail.slice(0, pos)}${upper[next() % upper.length]}${tail.slice(pos + 1)}`;
+      }
+      const ext = n % 2 === 0 ? '.ts' : '.md';
+      const alg = RSA_ALGS[next() % RSA_ALGS.length];
+      const at = SPOTS[next() % SPOTS.length];
+      const token = jwtFor(alg, `${'B'.repeat(at)}${tail}`);
+      const raw = `${token}${ext}${TRAILER}`;
+      for (const mode of ['general', 'strict']) {
+        const out = maskJwtTokens(raw, mode);
+        assertNoRawTail(out, tail, `${alg} ${at} ${mode} ${tail}${ext}`);
+        assert.equal(out.includes('B'.repeat(8)), false, tail);
+        assert.equal(out.includes(TRAILER), true, tail);
+      }
+      const text = redactSecretsInText(raw);
+      assertNoRawTail(text, tail, `${alg} text ${tail}${ext}`);
+      probes += 1;
+    }
+    assert.equal(probes, 4096);
+  });
+});
+
+describe('v1.0.56 unterminated PEM headers stay linear', () => {
+  it('redacts a complete private key and does not rescan bare BEGIN headers', () => {
+    const body = 'MIIEowIBAAKCAQEAsecretkeymaterial';
+    const kinds = ['RSA ', 'OPENSSH ', 'EC ', 'DSA ', 'ENCRYPTED ', ''];
+    for (const kind of kinds) {
+      const block = `-----BEGIN ${kind}PRIVATE KEY-----\n${body}\n-----END ${kind}PRIVATE KEY-----`;
+      const out = redactSecretsInText(`before\n${block}\nafter`);
+      assert.equal(out.includes(body), false, kind);
+      assert.match(out, /-----BEGIN PRIVATE KEY-----\n\[REDACTED\]\n-----END PRIVATE KEY-----/);
+      assert.equal(out.includes('before'), true, kind);
+      assert.equal(out.includes('after'), true, kind);
+    }
+    const mismatched = `-----BEGIN RSA PRIVATE KEY-----\n${body}\n-----END EC PRIVATE KEY-----`;
+    assert.equal(redactSecretsInText(mismatched).includes(body), false);
+    const cert = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----';
+    assert.equal(redactSecretsInText(cert), cert);
+
+    const begin = '-----BEGIN PRIVATE KEY-----\n';
+    const many = begin.repeat(20000);
+    const started = Date.now();
+    const untouched = redactSecretsInText(many);
+    const elapsed = Date.now() - started;
+    assert.equal(untouched, many);
+    assert.ok(elapsed < 1500, `unterminated PEM headers took ${elapsed}ms`);
   });
 });

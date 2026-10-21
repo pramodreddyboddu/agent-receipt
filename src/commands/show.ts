@@ -132,8 +132,9 @@ export function resolveStoreRoot(cwd: string): string {
 /**
  * Directory `relativePath` is computed against. Git toplevel first.
  * With no toplevel, the nearest receipts root at or above `cwd` that
- * contains `filePath`. When none does (share started above the project),
- * the receipts root of the file.
+ * contains `filePath`. That cwd-relative root wins over a parent root
+ * when both contain the file. When none does (share started above the
+ * project), the receipts root of the file.
  */
 export function receiptsRootFor(cwd: string, filePath: string): string {
   const top = gitToplevel(cwd);
