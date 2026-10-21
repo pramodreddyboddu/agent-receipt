@@ -97,7 +97,7 @@ export function verifySharePackage(
   }
   const loc = locateSharePackage(cwd, pathArg);
   if (loc.inputKind === 'missing' || !existsSync(loc.inputPath)) {
-    throw new SharePackageUsageError(`share package not found: ${loc.inputPath}`);
+    throw new SharePackageUsageError(`share package not found: ${redactSecretsInText(loc.inputPath)}`);
   }
   if (loc.inputKind === 'other') {
     throw new SharePackageUsageError(

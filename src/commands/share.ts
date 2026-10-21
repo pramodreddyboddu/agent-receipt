@@ -174,6 +174,16 @@ function sharePathBase(cwd: string, filePath: string): string {
 }
 
 /**
+ * Where `share` appends `audit.jsonl`. The receipts root of the file, so a
+ * fresh subdirectory does not gain an audit-only `.agent-receipt` that the
+ * next lookup would treat as the root. The working directory is the fallback
+ * when the file has no receipts root.
+ */
+function auditWriteRoot(cwd: string, filePath: string): string {
+  return findReceiptsRoot(dirname(filePath)) ?? resolve(cwd);
+}
+
+/**
  * Receipt path relative to the git repo root for `share --json`.
  * Null when the file leaves that root, or when displaying it would mask
  * a secret. With no git toplevel, the base is the receipts root of the
@@ -294,7 +304,7 @@ export function cmdShare(
     } else if (partial.verified && policy?.policyDenied && policy.reason) {
       console.error(color.red('✗') + ` ${policy.reason} — exiting 2`);
     }
-    recordAuditEvent(cwd, {
+    recordAuditEvent(auditWriteRoot(cwd, source), {
       event: 'share',
       path: partial.htmlPath || source,
       sha256: partial.sha256,

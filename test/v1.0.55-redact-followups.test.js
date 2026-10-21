@@ -418,3 +418,289 @@ describe('v1.0.55 verify and show mask a missing path', { timeout: 120000 }, () 
     assert.equal(JSON.stringify(absBody).includes(secret), false);
   });
 });
+
+describe('v1.0.55 extension tails do not reopen the RSA leak', () => {
+  const mustMask = ['/Qx7.ts', '/aB3k9.md', '/XYZ12.md', '/K.ts'];
+  const stillMasked = ['/src/components/Button.tsx', '/Makefile', '/abcdefgh/x.ts', '/AbCdEfGh/x'];
+
+  function glued(path) {
+    const dot = path.lastIndexOf('.');
+    const slash = path.lastIndexOf('/');
+    const tail = dot > slash ? path.slice(0, dot) : path;
+    const ext = dot > slash ? path.slice(dot) : '';
+    return { tail, ext };
+  }
+
+  it('masks the reported extension tails and the paths the changelog still masks', () => {
+    for (const alg of RSA_ALGS) {
+      for (const length of SPOTS) {
+        const token = jwtFor(alg, 'A'.repeat(length));
+        for (const path of [...mustMask, ...stillMasked]) {
+          const { tail } = glued(path);
+          for (const mode of ['general', 'strict']) {
+            const out = maskJwtTokens(`${token}${path}${TRAILER}`, mode);
+            assertNoRawTail(out, tail, `${alg} ${length} ${mode} ${path}`);
+            assert.equal(out.includes('A'.repeat(8)), false, `${path} leaked signature`);
+            assert.equal(out.includes(TRAILER), true, `${path} ate the trailer`);
+          }
+        }
+      }
+    }
+  });
+
+  /**
+   * v1.0.54 kept a glued tail only when it was a clear path with no
+   * uppercase letter and no mixed run of 8 or more. The count below uses
+   * that rule on the same draws the masker sees.
+   */
+  function v54WouldKeep(tail, ext) {
+    if (tail.length < 1 || tail.length > 48) return false;
+    const next = tail.charCodeAt(0);
+    if (next !== 47 && next !== 43) return false;
+    let slashes = 0;
+    let sawUpper = false;
+    for (let k = 0; k < tail.length; k += 1) {
+      const code = tail.charCodeAt(k);
+      if (code >= 65 && code <= 90) sawUpper = true;
+      if (code === 47) {
+        slashes += 1;
+        continue;
+      }
+      if (code === 43) {
+        if (k !== 0) return false;
+        continue;
+      }
+      const alnum = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+      if (!(alnum || code === 95 || code === 45)) return false;
+    }
+    let hasExt = false;
+    if (ext.charCodeAt(0) === 46) {
+      let n = 0;
+      let i = 1;
+      for (; i < ext.length && n < 8; i += 1) {
+        const code = ext.charCodeAt(i);
+        const alnum = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+        if (!alnum) break;
+        n += 1;
+      }
+      const after = i < ext.length ? ext.charCodeAt(i) : 0;
+      const afterUrl = (after >= 48 && after <= 57) || (after >= 65 && after <= 90) ||
+        (after >= 97 && after <= 122) || after === 95 || after === 45;
+      hasExt = n >= 1 && (i >= ext.length || !afterUrl);
+    }
+    const clear = next === 43 ? slashes >= 1 || hasExt : slashes >= 2 || (slashes >= 1 && hasExt);
+    if (!clear || sawUpper) return false;
+    let runStart = -1;
+    let runs = 0;
+    let longRun = false;
+    const finish = (end) => {
+      const len = end - runStart;
+      if (len >= 8) {
+        const first = tail.charCodeAt(runStart);
+        for (let i = runStart + 1; i < end; i += 1) {
+          if (tail.charCodeAt(i) !== first) return false;
+        }
+        longRun = true;
+      }
+      runs += 1;
+      return true;
+    };
+    for (let k = 0; k < tail.length; k += 1) {
+      const code = tail.charCodeAt(k);
+      const alnum = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+      if (alnum) {
+        if (runStart < 0) runStart = k;
+        continue;
+      }
+      if (runStart >= 0) {
+        if (!finish(k)) return false;
+        runStart = -1;
+      }
+    }
+    if (runStart >= 0 && !finish(tail.length)) return false;
+    if (longRun && runs !== 1) return false;
+    return true;
+  }
+
+  function tailLeaked(out, tail, ext) {
+    let residue = out.split('[REDACTED]').join('');
+    if (ext) residue = residue.split(ext).join('');
+    residue = residue.split(TRAILER).join('');
+    if (tail.length < 3) return false;
+    for (let n = 3; n <= tail.length; n += 1) {
+      for (let i = 0; i + n <= tail.length; i += 1) {
+        if (residue.includes(tail.slice(i, i + n))) return true;
+      }
+    }
+    return false;
+  }
+
+  function measure(gen, samples) {
+    const next = lcg(0x1055e);
+    let leaked = 0;
+    let v54 = 0;
+    let maxLeaked = 0;
+    let maxV54 = 0;
+    const exts = ['.ts', '.md', '.json', '.tsx'];
+    for (let n = 0; n < samples; n += 1) {
+      const draw = gen(next, exts);
+      const alg = RSA_ALGS[next() % RSA_ALGS.length];
+      const at = SPOTS[next() % SPOTS.length];
+      const token = jwtFor(alg, `${'A'.repeat(at)}${draw.tail}`);
+      const text = `${token}${draw.ext}${TRAILER}`;
+      const out = maskJwtTokens(text, n % 2 === 0 ? 'general' : 'strict');
+      const did = tailLeaked(out, draw.tail, draw.ext);
+      const old = v54WouldKeep(draw.tail, draw.ext) && draw.tail.length >= 3;
+      if (did) {
+        leaked += 1;
+        if (draw.tail.length > maxLeaked) maxLeaked = draw.tail.length;
+      }
+      if (old) {
+        v54 += 1;
+        if (draw.tail.length > maxV54) maxV54 = draw.tail.length;
+      }
+      assert.equal(out.includes('A'.repeat(8)), false, `signature leaked before ${draw.tail}`);
+    }
+    return { leaked, v54, maxLeaked, maxV54 };
+  }
+
+  it('keeps a mixed-case extension tail no more often than v1.0.54', () => {
+    const std = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const mixed = measure((next, exts) => {
+      const len = 3 + (next() % 20);
+      let tail = next() % 2 === 0 ? '/' : '+';
+      for (let i = 1; i < len; i += 1) tail += std[next() % std.length];
+      if (next() % 2 === 0 && len > 2) {
+        const pos = 1 + (next() % (len - 1));
+        tail = `${tail.slice(0, pos)}/${tail.slice(pos + 1)}`;
+      }
+      return { tail, ext: exts[next() % exts.length] };
+    }, 256);
+    assert.ok(mixed.leaked <= mixed.v54, `mixed leak ${mixed.leaked} > v1.0.54 ${mixed.v54}`);
+    assert.ok(mixed.leaked < mixed.v54, `mixed leak ${mixed.leaked} was not lower than v1.0.54 ${mixed.v54}`);
+    assert.ok(mixed.maxLeaked <= mixed.maxV54, `mixed max ${mixed.maxLeaked} > v1.0.54 ${mixed.maxV54}`);
+
+    const stdTs = measure((next) => {
+      const len = 1 + (next() % 22);
+      let tail = '/';
+      for (let i = 1; i < len; i += 1) {
+        tail += next() % 5 === 0 ? '/' : std[next() % std.length];
+      }
+      return { tail, ext: '.ts' };
+    }, 256);
+    assert.ok(stdTs.leaked <= stdTs.v54, `std-base64+.ts leak ${stdTs.leaked} > v1.0.54 ${stdTs.v54}`);
+    assert.ok(stdTs.maxLeaked <= 22, `std-base64+.ts leaked ${stdTs.maxLeaked} chars`);
+    assert.ok(stdTs.maxLeaked <= stdTs.maxV54, `std-base64+.ts max ${stdTs.maxLeaked} > v1.0.54 ${stdTs.maxV54}`);
+  });
+});
+
+describe('v1.0.55 share then verify from a fresh non-git subdirectory', () => {
+  it('picks the receipt and verifies from a plain parent and a secret-shaped parent', () => {
+    const action = readFileSync(join(root, 'examples/github/action.yml'), 'utf8');
+    const picker = action.match(/node -e '([^']*relativePath[^']*)'/)[1];
+    assert.ok(picker, 'action receipt picker');
+
+    const shapes = [
+      { label: 'plain', secret: null },
+      { label: 'secret', secret: `ghp_${'a'.repeat(36)}` },
+    ];
+    for (const shape of shapes) {
+      const parent = keep(mkdtempSync(join(tmpdir(), `ar1055-${shape.label}-`)));
+      const project = shape.secret ? join(parent, shape.secret, 'notes') : join(parent, 'notes');
+      const receipts = join(project, '.agent-receipt', 'receipts');
+      mkdirSync(receipts, { recursive: true });
+      const receipt = join(receipts, 'plain.md');
+      writeFileSync(
+        receipt,
+        appendHashFooter('# Agent Receipt\n\n## Session\n\n- **Agent**: qa\n\nhello\n'),
+      );
+      const sub = join(project, 'nested', 'deeper');
+      mkdirSync(sub, { recursive: true });
+      mkdirSync(join(sub, '.agent-receipt'), { recursive: true });
+      writeFileSync(join(sub, '.agent-receipt', 'audit.jsonl'), '{"event":"share"}\n');
+
+      const shared = cli(sub, ['share', receipt, '--json']);
+      assert.equal(shared.code, 0, `${shape.label} ${shared.err}${shared.out}`);
+      const body = JSON.parse(shared.out);
+      assert.equal(typeof body.relativePath, 'string', shape.label);
+      assert.equal(existsSync(join(project, body.relativePath)), true, body.relativePath);
+      assert.equal(existsSync(join(sub, body.relativePath)), false, body.relativePath);
+      const audit = readFileSync(join(project, '.agent-receipt', 'audit.jsonl'), 'utf8');
+      assert.match(audit, /"event":"share"/, shape.label);
+      if (shape.secret) {
+        assert.equal(body.relativePath.includes(shape.secret), false, body.relativePath);
+        assert.equal(body.path.includes(shape.secret), false, body.path);
+        assert.equal(JSON.stringify(body).includes(shape.secret), false, shape.label);
+      }
+
+      const gateFile = join(project, 'share-gate.json');
+      writeFileSync(gateFile, shared.out);
+      const picked = execFileSync(process.execPath, ['-e', picker, gateFile], {
+        cwd: sub,
+        encoding: 'utf8',
+      }).trim();
+      assert.equal(existsSync(join(sub, picked)), true, `${shape.label} picked ${picked}`);
+      if (shape.secret) assert.equal(picked.includes(shape.secret), false, picked);
+
+      const verified = cli(sub, ['verify', picked]);
+      assert.equal(verified.code, 0, `${shape.label} ${verified.err}${verified.out}`);
+      assert.match(verified.out, /OK/);
+      const direct = cli(sub, ['verify', body.relativePath]);
+      assert.equal(direct.code, 0, `${shape.label} relative ${direct.err}${direct.out}`);
+      if (shape.secret) {
+        const shown = `${verified.out}${verified.err}${direct.out}${direct.err}${picked}`;
+        assert.equal(shown.includes(shape.secret), false, shown);
+        assert.equal(shown.includes('a'.repeat(36)), false, shown);
+      }
+    }
+  });
+});
+
+describe('v1.0.55 missing attest and package paths are masked', () => {
+  it('masks attest --verify and verify --package not-found errors', () => {
+    const secret = `ghp_${'b'.repeat(36)}`;
+    const parent = keep(mkdtempSync(join(tmpdir(), 'ar1055-misspath-')));
+    const dir = join(parent, secret, 'repo');
+    mkdirSync(dir, { recursive: true });
+
+    function assertMasked(text, label) {
+      assert.equal(text.includes(secret), false, `${label} printed the secret\n${text}`);
+      assert.equal(text.includes('b'.repeat(36)), false, `${label} printed the token body\n${text}`);
+      assert.match(text, /ghp_\[REDACTED\]/, label);
+    }
+
+    const missingFile = 'missing.intoto.jsonl';
+    const plainAttest = cli(dir, ['attest', '--verify', missingFile]);
+    assert.equal(plainAttest.code, 1, plainAttest.out + plainAttest.err);
+    assert.match(plainAttest.err, /attestation not found/);
+    assertMasked(plainAttest.out + plainAttest.err, 'attest --verify');
+
+    const jsonAttest = cli(dir, ['attest', '--verify', missingFile, '--json']);
+    assert.equal(jsonAttest.code, 1, jsonAttest.out + jsonAttest.err);
+    const attestBody = JSON.parse(jsonAttest.out);
+    assert.equal(attestBody.command, 'attest-verify');
+    assert.equal(attestBody.ok, false);
+    assert.equal(attestBody.exitCode, 1);
+    assert.match(attestBody.reason, /attestation not found/);
+    assertMasked(attestBody.reason, 'attest --verify --json');
+    assert.equal(JSON.stringify(attestBody).includes(secret), false);
+    assert.equal((jsonAttest.err || '').includes(secret), false);
+
+    const missingDir = 'missing.share';
+    const plainPack = cli(dir, ['verify', '--package', missingDir]);
+    assert.equal(plainPack.code, 1, plainPack.out + plainPack.err);
+    assert.match(plainPack.err, /share package not found/);
+    assertMasked(plainPack.out + plainPack.err, 'verify --package');
+
+    const jsonPack = cli(dir, ['verify', '--package', missingDir, '--json']);
+    assert.equal(jsonPack.code, 1, jsonPack.out + jsonPack.err);
+    const packBody = JSON.parse(jsonPack.out);
+    assert.equal(packBody.command, 'verify');
+    assert.equal(packBody.ok, false);
+    assert.equal(packBody.exitCode, 1);
+    assert.match(packBody.reason, /share package not found/);
+    assertMasked(packBody.reason, 'verify --package --json');
+    assert.equal(JSON.stringify(packBody).includes(secret), false);
+    assert.equal((jsonPack.err || '').includes(secret), false);
+  });
+});

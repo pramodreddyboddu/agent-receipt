@@ -58,15 +58,34 @@ function gitToplevel(cwd: string): string | null {
 }
 
 /**
+ * True when `.agent-receipt` holds only `audit.jsonl` and there is no
+ * `.agent-receipt.yml`. `share` from a subdirectory used to create that
+ * directory, and the next lookup then treated it as the receipts root.
+ */
+function isAuditOnlyAgentReceipt(dir: string): boolean {
+  if (existsSync(join(dir, '.agent-receipt.yml'))) return false;
+  const marker = join(dir, '.agent-receipt');
+  if (!existsSync(marker)) return false;
+  let names: string[];
+  try {
+    names = readdirSync(marker);
+  } catch {
+    return false;
+  }
+  return names.length === 1 && names[0] === 'audit.jsonl';
+}
+
+/**
  * Project directory that holds receipts. The nearest directory at or above
- * `start` with `.agent-receipt` or `.agent-receipt.yml`.
+ * `start` with `.agent-receipt` or `.agent-receipt.yml`. A directory whose
+ * `.agent-receipt` contains only `audit.jsonl` is not a root.
  */
 export function findReceiptsRoot(start: string): string | null {
   let dir = resolve(start);
   for (;;) {
-    if (existsSync(join(dir, '.agent-receipt')) || existsSync(join(dir, '.agent-receipt.yml'))) {
-      return dir;
-    }
+    const yml = existsSync(join(dir, '.agent-receipt.yml'));
+    const marker = existsSync(join(dir, '.agent-receipt'));
+    if ((yml || marker) && !isAuditOnlyAgentReceipt(dir)) return dir;
     const parent = resolve(dir, '..');
     if (parent === dir) return null;
     dir = parent;

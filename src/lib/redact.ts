@@ -725,9 +725,10 @@ const SIG_RSA: SigSize[] = [
  * signature (`/src/app` is 8). A longer tail is the rest of the signature.
  * 48 is under the shortest non-standard remainder called out for 1.0.53
  * (600 − 512 = 88) and under 511 − 342. The tail itself is one bounded
- * scan. A mixed alphanumeric run of 8 or more is signature. Uppercase is
- * signature unless a filename extension follows the segment. A tail of
- * 3 to 7 characters with no filename extension is signature.
+ * scan. A mixed alphanumeric run of 8 or more is signature. A tail of
+ * 3 to 7 characters, or any uppercase letter, stays only when the tail
+ * is a filename path and a 2-to-4 letter extension follows the segment.
+ * An extension by itself is not enough: `/Qx7.ts` and `/K.ts` are signature.
  */
 const RSA_GLUED_PATH_MAX = 48;
 /** Fast reject before a header decode. Unknown lengths never split. */
@@ -897,29 +898,116 @@ function isClearGluedPath(text: string, at: number, segEnd: number): boolean {
 }
 
 /**
+ * Lowercase filename segment, 1 to 7 characters (`src`, `app`, `my-app`).
+ * A `-` or `_` may follow a letter. Digits stay out, so `x7` is signature.
+ * One scan of a segment already bounded by the 48-character tail cap.
+ */
+function lowercaseFilenameSegment(text: string, from: number, to: number): boolean {
+  const n = to - from;
+  if (n < 1 || n > 7) return false;
+  let letters = 0;
+  for (let i = from; i < to; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code >= 97 && code <= 122) {
+      letters += 1;
+      continue;
+    }
+    if ((code === 45 || code === 95) && letters > 0) continue;
+    return false;
+  }
+  return letters >= 1;
+}
+
+/**
+ * Capitalized word of 3 to 7 letters (`App`) or all-caps of 4 to 7 (`README`).
+ * A single capital (`K`), `AB`, `XYZ`, and mixed internals (`Qx`, `aB`) are
+ * signature alphabet. Letters only.
+ */
+function titledFilenameSegment(text: string, from: number, to: number): boolean {
+  const n = to - from;
+  if (n < 3 || n > 7) return false;
+  let upper = 0;
+  let lower = 0;
+  for (let i = from; i < to; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code >= 65 && code <= 90) upper += 1;
+    else if (code >= 97 && code <= 122) lower += 1;
+    else return false;
+  }
+  if (lower === 0) return upper >= 4;
+  if (upper !== 1) return false;
+  const first = text.charCodeAt(from);
+  return first >= 65 && first <= 90;
+}
+
+function filenameSegment(text: string, from: number, to: number): boolean {
+  return lowercaseFilenameSegment(text, from, to) || titledFilenameSegment(text, from, to);
+}
+
+/**
+ * True when [at, segEnd) is a filename path. Every segment is a filename.
+ * Uppercase is allowed for a single segment (`/App`, `/README`) or when a
+ * directory segment has 2 or more lowercase letters (`/src/App`,
+ * `/docs/README`, `/Src/lib/App`). One pass over a tail already capped at
+ * 48 characters. No slice of the segment.
+ */
+function realFilenameTail(text: string, at: number, segEnd: number, sawUpper: boolean): boolean {
+  let i = at;
+  if (i < segEnd && text.charCodeAt(i) === 43) i += 1;
+  if (i < segEnd && text.charCodeAt(i) === 47) i += 1;
+  if (i >= segEnd) return false;
+  const segs: Array<{ from: number; to: number }> = [];
+  let segFrom = i;
+  for (let k = i; k <= segEnd; k += 1) {
+    if (k === segEnd || text.charCodeAt(k) === 47) {
+      segs.push({ from: segFrom, to: k });
+      segFrom = k + 1;
+    }
+  }
+  if (segs.length === 0) return false;
+  for (let s = 0; s < segs.length; s += 1) {
+    const seg = segs[s];
+    if (seg.to <= seg.from || !filenameSegment(text, seg.from, seg.to)) return false;
+  }
+  if (!sawUpper || segs.length === 1) return true;
+  for (let s = 0; s < segs.length - 1; s += 1) {
+    const seg = segs[s];
+    if (!lowercaseFilenameSegment(text, seg.from, seg.to)) continue;
+    let letters = 0;
+    for (let k = seg.from; k < seg.to; k += 1) {
+      const code = text.charCodeAt(k);
+      if (code >= 97 && code <= 122) letters += 1;
+    }
+    if (letters >= 2) return true;
+  }
+  return false;
+}
+
+/**
  * RSA short tail that is a path, not the rest of the signature.
- * One pass over [at, segEnd). The caller already caps that span at
- * `RSA_GLUED_PATH_MAX`.
+ * One pass over [at, segEnd) for the run rules, then one pass for the
+ * filename shape when that is the only thing that can keep the tail.
+ * The caller already caps that span at `RSA_GLUED_PATH_MAX`.
  *
- * A clear path has no uppercase letter, unless a filename extension
- * follows the segment (`.ts`, `.tsx`, `.md`, `.js`, `.json`). Each
- * alphanumeric run is shorter than 8 characters, or the tail has exactly
- * one run and that run is a single repeated character
- * (`/${'a'.repeat(46)}/` is 48). `/src/app`, `+src/app`, `+/src/app`,
- * `/src/App.tsx`, and `/docs/README.md` stay.
+ * A lowercase tail of 8 to 48 characters stays when every alphanumeric
+ * run is shorter than 8, or the tail is one run of a single repeated
+ * character (`/${'a'.repeat(46)}/` is 48). `/src/app`, `+src/app`, and
+ * `+/src/app` stay.
  *
- * A tail of 3 to 7 characters with no filename extension is still the
- * signature (`/ab/c`, `+/mn`, `//abcd`). A mixed run of 8 or more, two
- * long runs, or an uppercase marker with no filename extension is
- * signature material.
+ * A tail of 3 to 7 characters, or a tail with an uppercase letter, stays
+ * only when a 2-to-4 letter extension follows and the tail is a filename
+ * path. `/src/App`, `/docs/README`, `/README`, `/App`, `/ab`, and `/a/b`
+ * stay in that case. An extension alone does not keep the tail:
+ * `/Qx7.ts`, `/aB3k9.md`, `/XYZ12.md`, and `/K.ts` are signature.
+ * `/src/components/Button` stays signature because `components` is a
+ * mixed run of 8 or more. `/Makefile`, `/abcdefgh/x`, and `/AbCdEfGh/x`
+ * stay signature for the same run rule, and the first and last also
+ * have no filename extension.
  */
 function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): boolean {
   if (!isClearGluedPath(text, at, segEnd)) return false;
   const ext = filenameExtensionAfter(text, segEnd);
   const tailLen = segEnd - at;
-  // Two slashes used to be enough. A 3–7 character lowercase tail is the
-  // rest of a non-standard RSA signature about as often as it is a path.
-  if (tailLen >= 3 && tailLen <= 7 && !ext) return false;
   let runStart = -1;
   let runs = 0;
   let longRun = false;
@@ -950,8 +1038,13 @@ function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): bool
   }
   if (runStart >= 0 && !finish(segEnd)) return false;
   if (longRun && runs !== 1) return false;
-  if (sawUpper && !ext) return false;
-  return true;
+  const short = tailLen >= 3 && tailLen <= 7;
+  // Longer lowercase paths are unchanged from v1.0.54.
+  if (!sawUpper && !short) return true;
+  // Two slashes, or an extension, used to be enough. A short or uppercase
+  // tail is the rest of a signature unless it is a real filename path.
+  if (!ext) return false;
+  return realFilenameTail(text, at, segEnd, sawUpper);
 }
 
 /**
@@ -970,12 +1063,13 @@ function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): bool
  * and does not end on one (511, 600, 682, and any other non-exact length)
  * is not split at 342 or 512. The whole run is redacted. A short glued
  * path after an exact RSA base64url length still splits when the tail is
- * a clear path (no mixed run of 8 or more). Uppercase stays when a
- * filename extension follows (`.tsx`, `.md`, `.js`, `.json`). A tail of
- * 3 to 7 characters with no filename extension is redacted with the
- * signature, so a `/` or `+` at 342, 512, or 683 cannot leave that
- * lowercase tail in the clear. An odd run whose tail only looks like a
- * path is redacted whole.
+ * a clear path (no mixed run of 8 or more). A tail of 3 to 7 characters,
+ * or a tail with an uppercase letter, splits only when a 2-to-4 letter
+ * extension follows and every segment is a filename (`/src/App.tsx`,
+ * `/docs/README.md`). An extension alone does not split, so `/Qx7.ts`,
+ * `/aB3k9.md`, `/XYZ12.md`, and `/K.ts` stay inside the mask. A `/` or
+ * `+` at 342, 512, or 683 cannot leave that tail in the clear. An odd
+ * run whose tail only looks like a path is redacted whole.
  * An unknown or undecodable `alg` never splits. Returns -1 when the
  * boundary is not clear.
  */
@@ -1009,19 +1103,19 @@ function clearPathSplit(
   const alg = jwtHeaderInfo(header, mode).alg;
   const clearPath = isClearGluedPath(text, i, end);
   let measure = runLen;
-  if (signatureSizesForAlg(alg) === SIG_RSA && !rsaRunEndsExactly(runLen)) {
+  if (signatureSizesForAlg(alg) === SIG_RSA) {
     const tailLen = runLen - sigLen;
     // Exact signature plus a short clear path. Measure the signature.
-    // A tail that is still signature alphabet (uppercase, or a mixed run
-    // of 8 or more) stays the whole segment, including odd lengths whose
-    // tail is 1 to 48 characters. One pass over that tail.
-    if (
-      isRsaUrlLength(sigLen) &&
-      tailLen > 0 &&
-      tailLen <= RSA_GLUED_PATH_MAX &&
-      rsaShortTailIsClearPath(text, i, end)
-    ) {
+    // A tail that is still signature alphabet stays the whole segment.
+    // That includes a 2-character tail after 342: `/K` makes the run 344,
+    // which is the padded RSA-2048 length, so the exact-length check alone
+    // would split. One pass over that tail.
+    const glued =
+      isRsaUrlLength(sigLen) && tailLen > 0 && tailLen <= RSA_GLUED_PATH_MAX;
+    if (glued && rsaShortTailIsClearPath(text, i, end)) {
       measure = sigLen;
+    } else if (glued && rsaRunEndsExactly(runLen)) {
+      measure = 0;
     }
   }
   const wanted = longestSignatureLength(alg, measure);

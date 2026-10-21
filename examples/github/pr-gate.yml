@@ -185,7 +185,7 @@ jobs:
             # Prefer share relativePath. Resolve it from a subdirectory against
             # the git toplevel, or the receipts root when this is not a git
             # checkout. A masked path is not a file. Displayed path stays masked.
-            receipt_path=$(node -e 'const fs=require("fs");const path=require("path");const cp=require("child_process");const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const rel=typeof g.relativePath==="string"?g.relativePath:"";const raw=typeof g.path==="string"?g.path:"";const candidate=rel&&rel.indexOf("[REDACTED]")<0?rel:(raw&&raw.indexOf("[REDACTED]")<0?raw:"");if(!candidate){console.error("gate path missing");process.exit(1);}function under(base,relPath){if(!base||path.isAbsolute(relPath))return "";const abs=path.resolve(base,relPath);const root=path.resolve(base);if(abs!==root&&!abs.startsWith(root+path.sep))return "";return fs.existsSync(abs)?abs:"";}let abs="";if(path.isAbsolute(candidate)){if(fs.existsSync(candidate))abs=candidate;}else if(fs.existsSync(path.resolve(candidate)))abs=path.resolve(candidate);else{let top="";try{top=cp.execFileSync("git",["rev-parse","--show-toplevel"],{encoding:"utf8"}).trim();}catch(e){top="";}if(top)abs=under(top,candidate);else{let dir=process.cwd();for(;;){if(fs.existsSync(path.join(dir,".agent-receipt"))||fs.existsSync(path.join(dir,".agent-receipt.yml"))){abs=under(dir,candidate);break;}const parent=path.dirname(dir);if(parent===dir)break;dir=parent;}}}let picked=candidate;if(abs){picked=abs===path.resolve(candidate)?candidate:path.relative(process.cwd(),abs);}process.stdout.write(picked);' "$out")
+            receipt_path=$(node -e 'const fs=require("fs");const path=require("path");const cp=require("child_process");const g=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const rel=typeof g.relativePath==="string"?g.relativePath:"";const raw=typeof g.path==="string"?g.path:"";const candidate=rel&&rel.indexOf("[REDACTED]")<0?rel:(raw&&raw.indexOf("[REDACTED]")<0?raw:"");if(!candidate){console.error("gate path missing");process.exit(1);}function under(base,relPath){if(!base||path.isAbsolute(relPath))return "";const abs=path.resolve(base,relPath);const root=path.resolve(base);if(abs!==root&&!abs.startsWith(root+path.sep))return "";return fs.existsSync(abs)?abs:"";}let abs="";if(path.isAbsolute(candidate)){if(fs.existsSync(candidate))abs=candidate;}else if(fs.existsSync(path.resolve(candidate)))abs=path.resolve(candidate);else{let top="";try{top=cp.execFileSync("git",["rev-parse","--show-toplevel"],{encoding:"utf8"}).trim();}catch(e){top="";}if(top)abs=under(top,candidate);else{let dir=process.cwd();for(;;){const marker=path.join(dir,".agent-receipt");const yml=fs.existsSync(path.join(dir,".agent-receipt.yml"));let auditOnly=false;if(!yml&&fs.existsSync(marker)){try{const names=fs.readdirSync(marker);auditOnly=names.length===1&&names[0]==="audit.jsonl";}catch(e){auditOnly=false;}}if((fs.existsSync(marker)||yml)&&!auditOnly){abs=under(dir,candidate);break;}const parent=path.dirname(dir);if(parent===dir)break;dir=parent;}}}let picked=candidate;if(abs){picked=abs===path.resolve(candidate)?candidate:path.relative(process.cwd(),abs);}process.stdout.write(picked);' "$out")
             sig_path=$(node -e 'const p=process.argv[1]; process.stdout.write(/\.md$/i.test(p) ? p.replace(/\.md$/i, ".sig.json") : p + ".sig.json");' "$receipt_path")
             if [ ! -f "$sig_path" ]; then
               agent-receipt sign "$receipt_path"
@@ -298,7 +298,18 @@ jobs:
             else {
               let dir = process.cwd();
               for (;;) {
-                if (fs.existsSync(path.join(dir, '.agent-receipt')) || fs.existsSync(path.join(dir, '.agent-receipt.yml'))) {
+                const marker = path.join(dir, '.agent-receipt');
+                const yml = fs.existsSync(path.join(dir, '.agent-receipt.yml'));
+                let auditOnly = false;
+                if (!yml && fs.existsSync(marker)) {
+                  try {
+                    const names = fs.readdirSync(marker);
+                    auditOnly = names.length === 1 && names[0] === 'audit.jsonl';
+                  } catch (e) {
+                    auditOnly = false;
+                  }
+                }
+                if ((fs.existsSync(marker) || yml) && !auditOnly) {
                   abs = under(dir, candidate);
                   break;
                 }
