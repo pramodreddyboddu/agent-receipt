@@ -42,7 +42,7 @@ npm install -D @pramodreddyboddu/agent-receipt
 ## GitHub Action
 
 Gate a pull request with one `uses:` line. The action runs a pinned
-`agent-receipt` (`1.0.54` by default, never `latest`) and posts a sticky
+`agent-receipt` (`1.0.55` by default, never `latest`) and posts a sticky
 summary comment.
 
 ```yaml
@@ -201,7 +201,7 @@ landed*. It does not give you a **session-shaped** artifact: who (agent), why
 | `adapters [list\|status\|install\|uninstall] [name]` | Native capture hooks for Claude Code, Cursor, Grok CLI, and Codex. Install merges and snapshots the previous bytes. Uninstall restores them when they are unchanged and strips only our hooks when they are not. `--dry-run` writes nothing. `--json` for scripts. `--no-stop` skips the extra Stop hook on Claude, Codex, and Cursor. `--force` restores the snapshot anyway |
 | `capture` | Git snapshot → Markdown receipt (+ optional JSON). `--transcript` records tool calls, including MCP, inside the hashed body. `--sign` writes `*.sig.json` when local keys exist |
 | `wrap` | End of session: capture (+ `--uncommitted` if dirty) → TL;DR + path → verify. `--transcript` is the same as capture. `--sign` is opt-in |
-| `share [path]` | One shot: redact → HTML (+ optional Markdown) → verify → paths + TL;DR. `--package` writes `foo.share/` with HTML, Markdown, optional `receipt.sig.json`, and `manifest.json`. Markdown sidecar is copied or re-signed; HTML stays unsigned. `--json` adds `relativePath` (relative to the git repo root, including from a subdirectory, or null) while displayed `path` stays masked |
+| `share [path]` | One shot: redact → HTML (+ optional Markdown) → verify → paths + TL;DR. `--package` writes `foo.share/` with HTML, Markdown, optional `receipt.sig.json`, and `manifest.json`. Markdown sidecar is copied or re-signed; HTML stays unsigned. `--json` adds `relativePath` (relative to the git repo root, or the receipts root when not in git, or null) while displayed `path` stays masked |
 | `export` / `html` | Self-contained HTML receipt (or Markdown); `--out`, `--redact`. `--format otlp` (alias `otel`) writes one OTLP/JSON trace file (`.otlp.json`) for Jaeger, Tempo, Honeycomb, or Datadog via your collector. Markdown uses the same sidecar handoff. HTML stays unsigned. OTLP always redacts and does not push |
 | `show [path]` | Pretty-print last / given receipt (full body) |
 | `last` | Path + glance of the most recent receipt. `--json` prints one object (`path`, `sha256`, agent, `failedOn`, `uncommitted`, TL;DR). `--json` wins over `--path` |
@@ -505,7 +505,7 @@ Team install, CI gates, audit log, retention, and what not to put in receipts:
 [`examples/org-policy.yml`](examples/org-policy.yml). Drop-in PR gate:
 [`examples/github/action.yml`](examples/github/action.yml) (copy to
 `.github/actions/agent-receipt/`; `install` pin
-`github:pramodreddyboddu/agent-receipt#v1.0.54`, optional `prove`, optional
+`github:pramodreddyboddu/agent-receipt#v1.0.55`, optional `prove`, optional
 `sign`, optional `require-sig`, optional `trusted-keys`) and
 [`examples/github/pr-gate.yml`](examples/github/pr-gate.yml) (prove after a
 green gate, optional temp keygen + `trust add --self` when `trusted-keys`
@@ -606,7 +606,9 @@ Editing the body still fails the hash. Re-capture when you need a new sealed art
 `share --json` set that field when they verified a body. `capture --json`
 leaves it null. `share --json` also includes `relativePath` (the receipt
 path relative to the git repo root, including when share runs from a
-subdirectory, or null) so a masked `path` is not the only way to name the file.
+subdirectory, or the receipts root when the directory is not a git checkout)
+so a masked `path` is not the only way to name the file. A secret-shaped
+parent of that receipts root is not part of the value.
 `verify` and the other commands that open a receipt resolve that path
 against the git toplevel, or against the receipts root when the directory
 is not a git checkout. Displayed `path` stays masked.

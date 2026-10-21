@@ -32,8 +32,10 @@ export function findLatestReceipt(cwd: string): string | null {
 }
 
 function notFound(p: string): Error {
+  // Display only. The lookup still used the raw path.
+  const shown = redactSecretsInText(p);
   return new Error(
-    `Receipt not found: ${p}\nRun \`agent-receipt last\` to see the newest receipt, or \`capture\` first.`,
+    `Receipt not found: ${shown}\nRun \`agent-receipt last\` to see the newest receipt, or \`capture\` first.`,
   );
 }
 
@@ -56,15 +58,34 @@ function gitToplevel(cwd: string): string | null {
 }
 
 /**
- * Project directory that holds receipts when this cwd is not a git checkout.
- * The nearest parent with `.agent-receipt` or `.agent-receipt.yml`.
+ * True when `.agent-receipt` holds only `audit.jsonl` and there is no
+ * `.agent-receipt.yml`. `share` from a subdirectory used to create that
+ * directory, and the next lookup then treated it as the receipts root.
  */
-function receiptsRoot(cwd: string): string | null {
-  let dir = resolve(cwd);
+function isAuditOnlyAgentReceipt(dir: string): boolean {
+  if (existsSync(join(dir, '.agent-receipt.yml'))) return false;
+  const marker = join(dir, '.agent-receipt');
+  if (!existsSync(marker)) return false;
+  let names: string[];
+  try {
+    names = readdirSync(marker);
+  } catch {
+    return false;
+  }
+  return names.length === 1 && names[0] === 'audit.jsonl';
+}
+
+/**
+ * Project directory that holds receipts. The nearest directory at or above
+ * `start` with `.agent-receipt` or `.agent-receipt.yml`. A directory whose
+ * `.agent-receipt` contains only `audit.jsonl` is not a root.
+ */
+export function findReceiptsRoot(start: string): string | null {
+  let dir = resolve(start);
   for (;;) {
-    if (existsSync(join(dir, '.agent-receipt')) || existsSync(join(dir, '.agent-receipt.yml'))) {
-      return dir;
-    }
+    const yml = existsSync(join(dir, '.agent-receipt.yml'));
+    const marker = existsSync(join(dir, '.agent-receipt'));
+    if ((yml || marker) && !isAuditOnlyAgentReceipt(dir)) return dir;
     const parent = resolve(dir, '..');
     if (parent === dir) return null;
     dir = parent;
@@ -83,7 +104,7 @@ export function resolveReceiptPath(cwd: string, pathArg?: string): string {
     // that string is not under cwd. Git toplevel first; receipts root only
     // when this directory is not a git checkout.
     const top = gitToplevel(cwd);
-    const base = top ?? receiptsRoot(cwd);
+    const base = top ?? findReceiptsRoot(cwd);
     const resolved = base ? pathInside(base, pathArg) : null;
     if (resolved) return resolved;
     throw notFound(atCwd);

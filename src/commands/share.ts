@@ -1,8 +1,8 @@
 import { lstatSync, readFileSync, statSync } from 'node:fs';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { cmdExport } from './export.js';
 import { cmdVerify, reportVerify } from './verify.js';
-import { resolveReceiptPath } from './show.js';
+import { findReceiptsRoot, resolveReceiptPath } from './show.js';
 import { verifyMarkdown } from '../lib/hash.js';
 import { extractTldr } from '../lib/receipt.js';
 import {
@@ -160,28 +160,40 @@ function agentFromReceipt(markdown: string): string | null {
 /**
  * Directory `relativePath` is computed against. The git toplevel, so a
  * share started in a subdirectory still names the receipt from the repo
- * root. When this directory is not a git checkout, the working directory.
+ * root. When this directory is not a git checkout, the receipts root of
+ * the file, so a secret-shaped parent of that root is not part of the path.
  */
-function sharePathBase(cwd: string): string {
+function sharePathBase(cwd: string, filePath: string): string {
   try {
     const top = runGit(['rev-parse', '--show-toplevel'], cwd);
     if (top) return top;
   } catch {
     /* not a git checkout */
   }
-  return resolve(cwd);
+  return findReceiptsRoot(dirname(filePath)) ?? resolve(cwd);
+}
+
+/**
+ * Where `share` appends `audit.jsonl`. The receipts root of the file, so a
+ * fresh subdirectory does not gain an audit-only `.agent-receipt` that the
+ * next lookup would treat as the root. The working directory is the fallback
+ * when the file has no receipts root.
+ */
+function auditWriteRoot(cwd: string, filePath: string): string {
+  return findReceiptsRoot(dirname(filePath)) ?? resolve(cwd);
 }
 
 /**
  * Receipt path relative to the git repo root for `share --json`.
  * Null when the file leaves that root, or when displaying it would mask
- * a secret. With no git toplevel, the base is the working directory.
+ * a secret. With no git toplevel, the base is the receipts root of the
+ * file, so the value is set when that file exists under the root.
  * The displayed `path` stays masked either way.
  */
 function shareRelativePath(cwd: string, filePath: string): string | null {
   let rel: string;
   try {
-    rel = relative(sharePathBase(cwd), filePath);
+    rel = relative(sharePathBase(cwd, filePath), filePath);
   } catch {
     return null;
   }
@@ -292,7 +304,7 @@ export function cmdShare(
     } else if (partial.verified && policy?.policyDenied && policy.reason) {
       console.error(color.red('✗') + ` ${policy.reason} — exiting 2`);
     }
-    recordAuditEvent(cwd, {
+    recordAuditEvent(auditWriteRoot(cwd, source), {
       event: 'share',
       path: partial.htmlPath || source,
       sha256: partial.sha256,

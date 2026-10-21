@@ -1048,7 +1048,7 @@ export function cmdAttestVerify(
 ): number {
   if (!fileArg || !fileArg.trim()) fail('attest --verify requires a file');
   const abs = resolve(cwd, fileArg);
-  if (!existsSync(abs)) fail(`attestation not found: ${abs}`);
+  if (!existsSync(abs)) fail(`attestation not found: ${redactSecretsInText(abs)}`);
   if (!isRegularFile(abs)) fail(`attestation is not a regular file: ${abs}`);
   const size = lstatSync(abs).size;
   if (size > MAX_ATTEST_BYTES) {
