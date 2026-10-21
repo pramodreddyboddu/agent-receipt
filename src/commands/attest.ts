@@ -475,6 +475,7 @@ function receiptSource(cwd: string, pathArg: string | undefined, session: string
     if (!found.length) fail(`no local receipts for session ${JSON.stringify(want)}`);
     return {
       paths: found,
+      // Beside outDir (the parent of the receipts directory), not beside one receipt.
       fallbackDir: dirname(receiptsDir(store)),
       label: want,
     };
@@ -505,7 +506,9 @@ function receiptSource(cwd: string, pathArg: string | undefined, session: string
     const one = resolveReceiptPath(cwd, pathArg);
     return {
       paths: [one],
-      fallbackDir: dirname(receiptsDir(store)),
+      // Beside the receipt. dirname(receiptsDir) is the store parent and
+      // drops the file out of `.agent-receipt/receipts/`.
+      fallbackDir: dirname(resolve(one)),
       label: basename(one).replace(/\.md$/i, ''),
     };
   }
@@ -515,7 +518,7 @@ function receiptSource(cwd: string, pathArg: string | undefined, session: string
   }
   return {
     paths: [latest],
-    fallbackDir: dirname(receiptsDir(store)),
+    fallbackDir: dirname(resolve(latest)),
     label: basename(latest).replace(/\.md$/i, ''),
   };
 }
