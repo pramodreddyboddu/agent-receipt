@@ -2,7 +2,7 @@ import { lstatSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { cmdExport } from './export.js';
 import { cmdVerify, reportVerify } from './verify.js';
-import { findReceiptsRoot, resolveReceiptPath } from './show.js';
+import { findReceiptsRoot, receiptsRootFor, resolveReceiptPath } from './show.js';
 import { verifyMarkdown } from '../lib/hash.js';
 import { extractTldr } from '../lib/receipt.js';
 import {
@@ -20,7 +20,6 @@ import {
   riskToGate,
 } from '../lib/gate.js';
 import { recordAuditEvent } from '../lib/audit.js';
-import { runGit } from '../lib/git.js';
 import {
   assertNotDirectoryPath,
   assertWritableOutFile,
@@ -160,17 +159,15 @@ function agentFromReceipt(markdown: string): string | null {
 /**
  * Directory `relativePath` is computed against. The git toplevel, so a
  * share started in a subdirectory still names the receipt from the repo
- * root. When this directory is not a git checkout, the receipts root of
- * the file, so a secret-shaped parent of that root is not part of the path.
+ * root. When this directory is not a git checkout, the nearest receipts
+ * root at or above the working directory that contains the file. That
+ * cwd-relative root wins over a parent root when both contain the file.
+ * A nearer root that does not contain the file is skipped. When the working
+ * directory is above every root, the receipts root of the file is used,
+ * so a secret-shaped parent of that root is not part of the path.
  */
 function sharePathBase(cwd: string, filePath: string): string {
-  try {
-    const top = runGit(['rev-parse', '--show-toplevel'], cwd);
-    if (top) return top;
-  } catch {
-    /* not a git checkout */
-  }
-  return findReceiptsRoot(dirname(filePath)) ?? resolve(cwd);
+  return receiptsRootFor(cwd, filePath);
 }
 
 /**

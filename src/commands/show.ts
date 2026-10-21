@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { isAbsolute, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { loadConfig } from '../lib/config.js';
 import { runGit } from '../lib/git.js';
 import { extractEmbeddedHash } from '../lib/hash.js';
@@ -12,8 +12,9 @@ import {
 } from '../lib/receipt.js';
 
 export function findLatestReceipt(cwd: string): string | null {
-  const cfg = loadConfig(cwd);
-  const dir = join(cwd, cfg.outDir);
+  const store = resolveStoreRoot(cwd);
+  const cfg = loadConfig(store);
+  const dir = join(store, cfg.outDir);
   if (!existsSync(dir)) return null;
   const files = readdirSync(dir)
     .filter((f) => !isSessionPackageDirName(f))
@@ -57,39 +58,96 @@ function gitToplevel(cwd: string): string | null {
   }
 }
 
-/**
- * True when `.agent-receipt` holds only `audit.jsonl` and there is no
- * `.agent-receipt.yml`. `share` from a subdirectory used to create that
- * directory, and the next lookup then treated it as the receipts root.
- */
-function isAuditOnlyAgentReceipt(dir: string): boolean {
-  if (existsSync(join(dir, '.agent-receipt.yml'))) return false;
-  const marker = join(dir, '.agent-receipt');
-  if (!existsSync(marker)) return false;
-  let names: string[];
-  try {
-    names = readdirSync(marker);
-  } catch {
-    return false;
-  }
-  return names.length === 1 && names[0] === 'audit.jsonl';
+function containsPath(base: string, file: string): boolean {
+  const root = resolve(base);
+  const abs = resolve(file);
+  return abs === root || abs.startsWith(root + sep);
 }
 
 /**
- * Project directory that holds receipts. The nearest directory at or above
- * `start` with `.agent-receipt` or `.agent-receipt.yml`. A directory whose
- * `.agent-receipt` contains only `audit.jsonl` is not a root.
+ * True when `dir` holds receipt data. A receipt markdown file under the
+ * configured outDir counts. So does `.agent-receipt/index.json` when its
+ * `receipts` array is non-empty. An audit log, keys, a config file, an
+ * empty receipts directory, or an extra file beside `audit.jsonl` do not.
+ */
+export function hasReceiptData(dir: string): boolean {
+  const root = resolve(dir);
+  let outDir = '.agent-receipt/receipts';
+  try {
+    const configured = loadConfig(root).outDir.trim();
+    if (configured) outDir = configured;
+  } catch {
+    /* unreadable config is not receipt data */
+  }
+  const receipts = isAbsolute(outDir) ? outDir : join(root, outDir);
+  let names: string[] = [];
+  try {
+    names = readdirSync(receipts);
+  } catch {
+    names = [];
+  }
+  for (const name of names) {
+    if (!name.endsWith('.md') || isProveOnePagerName(name)) continue;
+    if (isSessionPackageDirName(name)) continue;
+    const file = join(receipts, name);
+    if (isInsideSharePackage(file) || isInsideSessionPackage(file)) continue;
+    try {
+      if (statSync(file).isFile()) return true;
+    } catch {
+      /* skip an unreadable entry */
+    }
+  }
+  const indexFile = join(root, '.agent-receipt', 'index.json');
+  try {
+    const raw = JSON.parse(readFileSync(indexFile, 'utf8')) as { receipts?: unknown };
+    if (Array.isArray(raw.receipts) && raw.receipts.length > 0) return true;
+  } catch {
+    /* missing or unreadable index is not receipt data */
+  }
+  return false;
+}
+
+/**
+ * Nearest directory at or above `start` that holds receipt data.
+ * Null when none does.
  */
 export function findReceiptsRoot(start: string): string | null {
   let dir = resolve(start);
   for (;;) {
-    const yml = existsSync(join(dir, '.agent-receipt.yml'));
-    const marker = existsSync(join(dir, '.agent-receipt'));
-    if ((yml || marker) && !isAuditOnlyAgentReceipt(dir)) return dir;
+    if (hasReceiptData(dir)) return dir;
     const parent = resolve(dir, '..');
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+/**
+ * Store directory for readers. The receipts root when this directory is
+ * inside one, otherwise `cwd` itself. Calling it again returns the same path.
+ */
+export function resolveStoreRoot(cwd: string): string {
+  return findReceiptsRoot(cwd) ?? resolve(cwd);
+}
+
+/**
+ * Directory `relativePath` is computed against. Git toplevel first.
+ * With no toplevel, the nearest receipts root at or above `cwd` that
+ * contains `filePath`. That cwd-relative root wins over a parent root
+ * when both contain the file. When none does (share started above the
+ * project), the receipts root of the file.
+ */
+export function receiptsRootFor(cwd: string, filePath: string): string {
+  const top = gitToplevel(cwd);
+  if (top) return top;
+  const file = resolve(filePath);
+  let dir = resolve(cwd);
+  for (;;) {
+    if (hasReceiptData(dir) && containsPath(dir, file)) return dir;
+    const parent = resolve(dir, '..');
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return findReceiptsRoot(dirname(filePath)) ?? resolve(cwd);
 }
 
 export function resolveReceiptPath(cwd: string, pathArg?: string): string {
@@ -101,12 +159,25 @@ export function resolveReceiptPath(cwd: string, pathArg?: string): string {
     const atCwd = join(cwd, pathArg);
     if (existsSync(atCwd)) return atCwd;
     // share --json relativePath is repo-root relative. From a subdirectory
-    // that string is not under cwd. Git toplevel first; receipts root only
-    // when this directory is not a git checkout.
+    // that string is not under cwd. Git toplevel first. With no toplevel,
+    // walk every receipts root above cwd until one contains the path.
+    // A nearer root that does not hold the file is not the end of the walk.
     const top = gitToplevel(cwd);
-    const base = top ?? findReceiptsRoot(cwd);
-    const resolved = base ? pathInside(base, pathArg) : null;
-    if (resolved) return resolved;
+    if (top) {
+      const resolved = pathInside(top, pathArg);
+      if (resolved) return resolved;
+      throw notFound(atCwd);
+    }
+    let dir = resolve(cwd);
+    for (;;) {
+      if (hasReceiptData(dir)) {
+        const resolved = pathInside(dir, pathArg);
+        if (resolved) return resolved;
+      }
+      const parent = resolve(dir, '..');
+      if (parent === dir) break;
+      dir = parent;
+    }
     throw notFound(atCwd);
   }
   const latest = findLatestReceipt(cwd);

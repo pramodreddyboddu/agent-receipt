@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { resolveReceiptPath } from './show.js';
+import { resolveReceiptPath, resolveStoreRoot } from './show.js';
 import { extractEmbeddedHash } from '../lib/hash.js';
 import { color } from '../lib/color.js';
 import { VERSION } from '../lib/version.js';
@@ -48,11 +48,12 @@ function textOrNull(value: string | null | undefined): string | null {
  * Distinct from `show`, which dumps the full Markdown body without the banner.
  */
 export function cmdLast(cwd: string, opts: LastOptions = {}): string {
+  const store = resolveStoreRoot(cwd);
   const path = resolveReceiptPath(cwd);
   if (opts.json) {
     const text = readFileSync(path, 'utf8');
     const glance = parseReceiptGlance(path);
-    const entry = findIndexEntry(cwd, path);
+    const entry = findIndexEntry(store, path);
     const agent =
       entry && entry.agent !== undefined
         ? textOrNull(entry.agent)
