@@ -366,7 +366,7 @@ describe('v1.0.40 GitHub Action and pr-comment', { concurrency: 1 }, () => {
     ]) {
       assert.ok(action.inputs[key], `missing input ${key}`);
     }
-    assert.equal(action.inputs.version.default, '1.0.57');
+    assert.equal(action.inputs.version.default, '1.0.58');
     assert.equal(action.inputs.command.default, 'gate');
     assert.equal(action.inputs.comment.default, 'on');
     assert.equal(action.inputs['comment-mode'].default, 'update');
@@ -583,7 +583,7 @@ describe('v1.0.40 GitHub Action and pr-comment', { concurrency: 1 }, () => {
     assert.equal(failed.code, 2, failed.out + failed.err);
     const body = JSON.parse(failed.out);
     assert.equal(body.command, 'pr-comment');
-    assert.equal(body.version, '1.0.57');
+    assert.equal(body.version, '1.0.58');
     assert.equal(body.verdict, 'fail');
     assert.equal(body.exitCode, 2);
     assert.equal(body.ok, false);
@@ -609,7 +609,7 @@ describe('v1.0.40 GitHub Action and pr-comment', { concurrency: 1 }, () => {
 
   it('documents 1.0.44 and rejects an unknown command', () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.57');
+    assert.equal(pkg.version, '1.0.58');
     assert.equal(pkg.dependencies, undefined);
     const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     assert.match(changelog, /## \[1\.0\.34\]/);

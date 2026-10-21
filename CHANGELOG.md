@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.58] — 2026-10-21
+
+### Fixed
+
+- After a truncated PEM private key (a BEGIN line with no END) and a gap, ordinary text stays visible. A gap is a blank line, a line of 1 to 15 characters, or a `Proc-Type` / `DEK-Info` header. Masking resumes only on a full-length base64 body line of 64 characters (OpenSSL) or 70 characters (OpenSSH) that is not a hex digest. The first line that is not that body stops the scan. A 64-hex hash, a 40-hex hash, a 16-character identifier, `/src/components/Button.tsx`, and `ok` before a sha stay. The truncated key itself stays fully redacted, including CR-only and CRLF endings, a short or blank line in the middle of the body, and `Proc-Type: 4,ENCRYPTED` / `DEK-Info` headers. The scan is still one forward pass.
+- A short line that ends a truncated private-key block stays visible. That includes a short mixed-case alnum line such as `Ab1`, plus `Next`, `README`, `npm`, `test`, `TODO`, and `QUJD`. A 4-character key-shaped line such as `YQ==` stays redacted.
+- A path segment is a real word only at 4 or more letters, or when it is a grounding segment: a known directory name, a filename extension, or a path word that already grounds a repo path. A 3-character filename word such as `nav`, `bar`, or `get` does not keep a raw signature fragment. `/nav.ts`, `/bar.ts`, `/get.ts`, and `/src/nav.ts` stay masked. Grounded short directories stay visible: `/src/app.ts`, `/ab.ts`, `/a/b.js`, `/App.md`, `/components/NavBar.vue`, `/src/api/getUser.js`, and `/Users/pramod/repo/x.ts`. A seeded sweep leaves no raw signature substring of 3 or more characters.
+- Deep Java and PHP paths stay visible: `src/main/java/com/example/service/UserService.java` and `app/Http/Controllers/Admin/UserController.php`, with or without a leading slash, and with a `+` joiner. The same keep is covered on plain and JSON output for `show`, `last`, `compare`, `share`, `prove`, `verify`, and `attest`. A secret-shaped segment stays masked, including `src/main/java/com/example/service/Ahsqowx.java`.
+- The leaks fixed in 1.0.47 through 1.0.57 stay closed, including exact footer shapes, ASCII-only trailing whitespace, odd RSA runs, CR-only verify, subdirectory `relativePath`, short RSA tails, lowercase RSA tail residual, uppercase 7-letter short tails, glued paths after signatures, not-found path masking, shadow roots, nested non-git roots, truncated PEM CR-only and mid-body short lines, PascalCase keeps, and the PEM timing bound.
+
+### Notes
+
+- These are v1.0.57 Release QA follow-ups. They are over-masking and docs, not new leak classes.
+- A short mixed-case alnum line such as `Ab1` stays when it ends a truncated private-key block. `Ab1` is 3 characters and is not key-shaped. A 4-character key-shaped line such as `YQ==` stays inside the block.
+- After a gap, a 64-hex or 40-hex hash, a 16-character identifier, `/src/components/Button.tsx`, and `ok` before a sha stay. A later 64-character or 70-character base64 line that is not a hex digest is still redacted with the key.
+- `/nav.ts` and `/src/nav.ts` stay masked. `/src/app.ts` and the deep Java and PHP paths stay. Eating a signature-like tail is still preferred over leaving raw signature characters in the clear.
+- Package version bumped to `1.0.58`. Pin comments that track the current cut are `v1.0.58`. The action default pin is `1.0.58`. That pin needs an npm publish, which is on hold.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.57] — 2026-10-21
 
 ### Fixed

@@ -1047,6 +1047,7 @@ const ORDINARY_PATH_WORDS = new Set([
  * checkout paths (`/home/runner/work/a/b.ts`, `/bin/run`, `/scripts/deploy.sh`).
  */
 const PATH_ATOMS = new Set([
+  'admin',
   'api',
   'app',
   'auth',
@@ -1054,6 +1055,7 @@ const PATH_ATOMS = new Set([
   'button',
   'cli',
   'cmd',
+  'com',
   'core',
   'data',
   'demo',
@@ -1061,12 +1063,15 @@ const PATH_ATOMS = new Set([
   'dist',
   'doc',
   'docs',
+  'example',
   'file',
   'files',
   'guide',
   'home',
   'hooks',
+  'http',
   'index',
+  'java',
   'json',
   'lib',
   'main',
@@ -1099,7 +1104,9 @@ const PATH_ATOMS = new Set([
  * Ordinary filename and path words that are not already atoms.
  * Title case or all-lowercase. All-caps stays out of this set so a
  * 7-letter uppercase tail (`OHALMQO`, `QZXWVKT`) is not a word.
- * `my` is only a hump inside `MyClass`, checked with the other humps.
+ * A word shorter than 4 (`my`, `nav`, `bar`, `get`) is only a hump
+ * inside `MyClass`, `NavBar`, or `getUser`. Alone, `/nav.ts` is a
+ * 3-character signature fragment and stays masked.
  */
 const FILENAME_WORDS = new Set([
   'bar',
@@ -1241,9 +1248,11 @@ function camelHumpsAreAtoms(text: string, from: number, to: number): boolean {
  * A path word in the atom, ordinary-word, or filename set.
  * All-lowercase and a single leading capital match. All-caps matches only
  * an atom or an ordinary word (`README`), not a short filename word, so
- * `OHALMQO` and `QZXWVKT` stay signature. A filename word shorter than 3
- * (`my`) matches only as a PascalCase hump. Mixed internals stay out.
- * One scan of a segment already inside the 48-character tail.
+ * `OHALMQO` and `QZXWVKT` stay signature. A filename word shorter than 4
+ * (`my`, `nav`, `bar`, `get`) matches only as a hump. A 3-letter known
+ * directory (`src`, `app`, `com`) is an atom and still matches alone.
+ * Mixed internals stay out. One scan of a segment already inside the
+ * 48-character tail.
  */
 function dictionaryWordAt(text: string, from: number, to: number, asHump = false): boolean {
   const n = to - from;
@@ -1269,8 +1278,8 @@ function dictionaryWordAt(text: string, from: number, to: number, asHump = false
     if (first < 65 || first > 90) return false;
   }
   if (uppers === n && !PATH_ATOMS.has(lower) && !ORDINARY_PATH_WORDS.has(lower)) return false;
-  // `my` is a hump inside `MyClass`. Alone, `/My.ts` stays signature.
-  if (!asHump && n < 3 && !PATH_ATOMS.has(lower) && !ORDINARY_PATH_WORDS.has(lower)) return false;
+  // `nav` is a hump inside `NavBar`. Alone, `/nav.ts` stays signature.
+  if (!asHump && n < 4 && !PATH_ATOMS.has(lower) && !ORDINARY_PATH_WORDS.has(lower)) return false;
   return pathWordLower(lower);
 }
 
@@ -1396,14 +1405,15 @@ function knownLicense(text: string, from: number, to: number): boolean {
 }
 
 /**
- * Lowercase name of 3 to 7 letters (`pramod`) used only when another
+ * Lowercase name of 4 to 7 letters (`pramod`) used only when another
  * segment is a path word. A vowel is required. `q` must be followed by
  * `u`. A consonant run longer than 2 stays signature, so `abcdefgh`
- * and `bcdf` do not pass. Digits and capitals stay out.
+ * and `bcdf` do not pass. Three letters stay out, so `nav` is not a
+ * name. Digits and capitals stay out.
  */
 function looseName(text: string, from: number, to: number): boolean {
   const n = to - from;
-  if (n < 3 || n > 7) return false;
+  if (n < 4 || n > 7) return false;
   let vowels = 0;
   let cluster = 0;
   for (let i = from; i < to; i += 1) {
@@ -1682,6 +1692,30 @@ function everySegmentIsPathWord(text: string, at: number, segEnd: number): boole
   return any;
 }
 
+/**
+ * Every segment is a real path word. One- and two-letter lowercase
+ * pieces stay (`a`, `b`, `ab`). A segment of 3 or more letters must be
+ * a known directory, an ordinary word, or a hump of those words.
+ * `nav` is none of those, so `/src/nav.ts` stays out. `my-app` stays.
+ * One pass over a tail already capped at 48 characters.
+ */
+function everySegmentIsRealWord(text: string, at: number, segEnd: number): boolean {
+  let i = at;
+  if (i < segEnd && text.charCodeAt(i) === 43) i += 1;
+  if (i < segEnd && text.charCodeAt(i) === 47) i += 1;
+  if (i >= segEnd) return false;
+  let segFrom = i;
+  let any = false;
+  for (let k = i; k <= segEnd; k += 1) {
+    if (k !== segEnd && text.charCodeAt(k) !== 47) continue;
+    if (k <= segFrom) return false;
+    any = true;
+    if (!shortSegmentIsReal(text, segFrom, k)) return false;
+    segFrom = k + 1;
+  }
+  return any;
+}
+
 function isRepeatedRun(text: string, from: number, to: number): boolean {
   const first = text.charCodeAt(from);
   for (let i = from + 1; i < to; i += 1) {
@@ -1720,16 +1754,47 @@ function isRepeatedRun(text: string, from: number, to: number): boolean {
  * `/XYZ12.md`, and `/K.ts` are signature. `/My.ts` is signature.
  *
  * A longer lowercase tail stays when that extension follows, every segment
- * is a filename, and some segment is a path atom or an ordinary word.
- * `/src/app.ts`, `/src/utilities/format.ts`, `/packages/frontend/main.ts`,
- * `/internal/handlers/api.go`, `/home/runner/work/a/b.ts`, and
- * `/scripts/deploy.sh` stay. The same tail
+ * is a real path word, and some segment is a path atom or an ordinary word.
+ * A segment is a real word at 4 or more letters, or when it is a known
+ * directory (`src`, `app`, `java`, `com`, `http`). A 3-letter filename
+ * word (`nav`, `bar`, `get`) is not, so `/nav.ts` and `/src/nav.ts` stay
+ * signature. `/src/app.ts`, `/src/utilities/format.ts`,
+ * `/packages/frontend/main.ts`, `/internal/handlers/api.go`,
+ * `/home/runner/work/a/b.ts`, and `/scripts/deploy.sh` stay. A deep
+ * project path stays too, with or without a leading slash:
+ * `src/main/java/com/example/service/UserService.java` and
+ * `app/Http/Controllers/Admin/UserController.php`. The same tail
  * stays with no extension when every segment is a path word: `/src/index`
  * and `/bin/run`. `/ab/cd/ef`, `/tonaxc/u1`, and `/abcdefgh/x.ts` are
  * signature. `/Makefile` and `/AbCdEfGh/x` have no filename extension.
  */
+/**
+ * A project path glued on with no leading `/` or `+`
+ * (`src/main/java/com/example/service/UserService`). The first character
+ * is a letter and a later character is `/`. A `+` is still signature
+ * alphabet. One pass over a tail already capped at 48 characters.
+ */
+function isUnslashedDeepPath(text: string, at: number, segEnd: number): boolean {
+  if (at >= segEnd || !isLetterCode(text.charCodeAt(at))) return false;
+  let slash = false;
+  for (let k = at; k < segEnd; k += 1) {
+    const code = text.charCodeAt(k);
+    if (code === 47) {
+      slash = true;
+      continue;
+    }
+    if (code === 43) return false;
+    if (!isBase64UrlChar(code)) return false;
+  }
+  return slash;
+}
+
 function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): boolean {
-  if (!isClearGluedPath(text, at, segEnd) && !isKnownExtensionlessTail(text, at, segEnd)) return false;
+  if (
+    !isClearGluedPath(text, at, segEnd) &&
+    !isKnownExtensionlessTail(text, at, segEnd) &&
+    !isUnslashedDeepPath(text, at, segEnd)
+  ) return false;
   const ext = filenameExtensionAfter(text, segEnd);
   const inclusiveLen = segEnd - at;
   let bodyFrom = at;
@@ -1792,6 +1857,7 @@ function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): bool
   if (inclusiveLen < 8) return false;
   if (!realFilenameTail(text, at, segEnd, sawUpper)) return false;
   if (!ext) return everySegmentIsPathWord(text, at, segEnd);
+  if (!everySegmentIsRealWord(text, at, segEnd)) return false;
   return tailIsGrounded(text, at, segEnd);
 }
 
@@ -1865,6 +1931,46 @@ function rsaUngluedFilenameCut(
   return best;
 }
 
+/**
+ * Cut where an exact RSA signature ends and a deep path begins, when the
+ * first segment was absorbed into the base64url run
+ * (`src/main/java/...`, `app/Http/Controllers/...`). The `/` is not
+ * base64url, so the measured run is longer than 342, 512, or 683. The
+ * tail from that exact length must be a clear path of at most 48
+ * characters. The longest matching length wins, so a 512 signature is
+ * not split at 342. Shape is checked before the header is decoded.
+ * Returns -1 when the tail is not a path.
+ */
+function rsaDeepPathCut(
+  text: string,
+  cursor: number,
+  dot1: number,
+  dot2: number,
+  slashAt: number,
+  end: number,
+  mode: JwtMaskMode,
+): number {
+  if (slashAt >= end || text.charCodeAt(slashAt) !== 47) return -1;
+  const sigStart = dot2 + 1;
+  let best = -1;
+  for (let s = 0; s < SIG_RSA.length; s += 1) {
+    const url = SIG_RSA[s].url;
+    const cut = sigStart + url;
+    if (cut <= sigStart || cut >= slashAt) continue;
+    const tailLen = end - cut;
+    if (tailLen < 4 || tailLen > RSA_GLUED_PATH_MAX) continue;
+    if (!isUnslashedDeepPath(text, cut, end)) continue;
+    if (!filenameExtensionAfter(text, end)) continue;
+    if (!rsaShortTailIsClearPath(text, cut, end)) continue;
+    best = cut;
+  }
+  if (best < 0) return -1;
+  const header = text.slice(cursor, dot1);
+  if (signatureSizesForAlg(jwtHeaderInfo(header, mode).alg) !== SIG_RSA) return -1;
+  if (!isJwtToken(text.slice(cursor, best), mode)) return -1;
+  return best;
+}
+
 function clearPathSplit(
   text: string,
   cursor: number,
@@ -1892,7 +1998,7 @@ function clearPathSplit(
   // ordinary filename stem. A `/` or `+` still inside the segment is the
   // path rule below, and an odd length stays masked.
   if (!SPLITTABLE_SIGNATURE_LENGTHS.has(sigLen)) {
-    if (i !== end) return -1;
+    if (i !== end) return rsaDeepPathCut(text, cursor, dot1, dot2, i, end, mode);
     const cut = rsaUngluedFilenameCut(text, dot2 + 1, i, sigLen);
     if (cut < 0) return -1;
     if (signatureSizesForAlg(jwtHeaderInfo(header, mode).alg) !== SIG_RSA) return -1;
@@ -2249,8 +2355,10 @@ function isPemBodyLine(line: string): boolean {
 /**
  * End index of a key-shaped base64 run at the start of `line`, when prose
  * follows on that same line. -1 when the line is a full body line or the
- * run is not key material. Leading ASCII space and tab are not part of
- * the run. The prose, including the space before it, stays.
+ * run is not key material. The prose must start with ASCII space or tab.
+ * A path such as `/src/components/Button.tsx` is not a partial key line.
+ * Leading ASCII space and tab are not part of the run. The prose,
+ * including the space before it, stays.
  */
 function pemPartialCut(line: string): number {
   let i = 0;
@@ -2261,7 +2369,9 @@ function pemPartialCut(line: string): number {
   }
   const start = i;
   while (i < line.length && isBase64Code(line.charCodeAt(i))) i += 1;
-  if (i === start) return -1;
+  if (i === start || i >= line.length) return -1;
+  const boundary = line.charCodeAt(i);
+  if (boundary !== 32 && boundary !== 9) return -1;
   let prose = false;
   for (let k = i; k < line.length; k += 1) {
     const code = line.charCodeAt(k);
@@ -2273,6 +2383,49 @@ function pemPartialCut(line: string): number {
   if (!prose) return -1;
   if (!isKeyMaterialSpan(line, start, i)) return -1;
   return i;
+}
+
+/** Trimmed bounds of a PEM body span. ASCII space, tab, and CR only. */
+function pemBodySpan(line: string): { start: number; end: number } {
+  let start = 0;
+  let end = line.length;
+  while (start < end) {
+    const code = line.charCodeAt(start);
+    if (code !== 32 && code !== 9 && code !== 13) break;
+    start += 1;
+  }
+  while (end > start) {
+    const code = line.charCodeAt(end - 1);
+    if (code !== 32 && code !== 9 && code !== 13) break;
+    end -= 1;
+  }
+  return { start, end };
+}
+
+function isHexDigitCode(code: number): boolean {
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 70) ||
+    (code >= 97 && code <= 102)
+  );
+}
+
+/**
+ * A full PEM body line: 64 characters (OpenSSL) or 70 (OpenSSH), base64,
+ * and not a hex digest. A 64-hex sha256 and a 70-hex run are ordinary
+ * text. One pass over that line.
+ */
+function isFullLengthPemLine(line: string): boolean {
+  const span = pemBodySpan(line);
+  const n = span.end - span.start;
+  if (n !== 64 && n !== 70) return false;
+  let hex = true;
+  for (let i = span.start; i < span.end; i += 1) {
+    const code = line.charCodeAt(i);
+    if (!isBase64Code(code)) return false;
+    if (!isHexDigitCode(code)) hex = false;
+  }
+  return !hex;
 }
 
 /** Trimmed bounds of a PEM line. ASCII space and tab only. */
@@ -2379,23 +2532,30 @@ function readPemLine(text: string, i: number): PemLineBreak {
  * Index where the private-key body that follows a header ends.
  * `from` is the first character after the header. Blank space on the header
  * line is skipped. A full key line is consumed. A partial line consumes
- * only its leading base64 run, so the trailing prose stays. The break
+ * only its leading base64 run when prose follows a space, so the trailing
+ * prose stays. A path on its own line is not a partial key line. The break
  * after the last consumed body line stays when more text follows (LF,
  * CRLF, or a lone CR), and it is consumed when that break is the end of
  * the input.
  * A short line (1 to 15 characters) or a blank line does not end the body
- * when a key line follows it. Those gap lines are inside the replaced
- * span. The same is true of a `Proc-Type: 4,ENCRYPTED` line and a
- * `DEK-Info` line. A short line ends the body when the next line is prose
- * or the input ends, so `Next`, `README`, `npm`, `test`, and `TODO` stay,
- * and so does a letter-only fragment such as `QUJD`. The scan does not
- * read past the prose line that stops it. Returns `from` when there is
- * no body line. One forward pass.
+ * when a full-length key line follows it. Those gap lines are inside the
+ * replaced span. The same is true of a `Proc-Type: 4,ENCRYPTED` line and a
+ * `DEK-Info` line. After a gap, masking resumes only on a full-length
+ * base64 line of 64 or 70 characters that is not a hex digest. The first
+ * other line stops the scan, so a 64-hex or 40-hex hash, a 16-character
+ * identifier, `/src/components/Button.tsx`, and `ok` before a sha stay.
+ * A short line ends the body when the next line is prose or the input
+ * ends, so `Next`, `README`, `npm`, `test`, `TODO`, and a short mixed-case
+ * line such as `Ab1` stay, and so does a letter-only fragment such as
+ * `QUJD`. The scan does not read past the line that stops it. Returns
+ * `from` when there is no body line. One forward pass.
  */
 function pemBodyEnd(text: string, from: number): number {
   let i = from;
   let consumed = from;
   let onHeaderLine = true;
+  let seenBody = false;
+  let pendingGap = false;
   while (i < text.length) {
     const br = readPemLine(text, i);
     if (br.next === i) break;
@@ -2416,21 +2576,26 @@ function pemBodyEnd(text: string, from: number): number {
       }
     }
     if (isPemBodyLine(line)) {
+      if (seenBody && pendingGap && !isFullLengthPemLine(line)) break;
       if (!br.hasBreak || br.next >= text.length) {
         consumed = br.next;
         break;
       }
       consumed = br.breakAt;
+      seenBody = true;
+      pendingGap = false;
       i = br.next;
       continue;
     }
     const partial = pemPartialCut(line);
     if (partial >= 0) {
+      if (seenBody && pendingGap) break;
       consumed = i + partial;
       break;
     }
     if (isShortOrBlankPemLine(line) || isLegacyPemHeader(line)) {
       if (!br.hasBreak) break;
+      if (seenBody) pendingGap = true;
       i = br.next;
       continue;
     }
@@ -2447,12 +2612,16 @@ function pemBodyEnd(text: string, from: number): number {
  * key-shaped base64: 16 characters, or a shorter multiple of 4 that
  * contains a digit, `+`, `/`, or `=` (including 4 characters, such as
  * `YQ==`). LF, CRLF, and a lone CR are line breaks. A short or blank line
- * stays inside the block when a key line follows it, and so does
- * `Proc-Type: 4,ENCRYPTED` and a `DEK-Info` header. A short line ends the
- * block when prose or the end of the input follows, so `Next`, `README`,
- * `npm`, `test`, and `TODO` stay, and so does a letter-only fragment such
- * as `QUJD`. A partial line redacts its leading base64 run and keeps the
- * trailing prose. The break after the block stays when more text follows,
+ * stays inside the block when a full-length key line follows it, and so
+ * does `Proc-Type: 4,ENCRYPTED` and a `DEK-Info` header. After a gap,
+ * masking resumes only on a 64- or 70-character base64 line that is not a
+ * hex digest. The first other line stops the scan and stays visible,
+ * including a 64-hex or 40-hex hash, a 16-character identifier, a path,
+ * and `ok` before a sha. A short line ends the block when prose or the
+ * end of the input follows, so `Next`, `README`, `npm`, `test`, `TODO`,
+ * and `Ab1` stay, and so does a letter-only fragment such as `QUJD`. A
+ * partial line redacts its leading base64 run when a space separates the
+ * prose. The break after the block stays when more text follows,
  * so that text does not glue to the marker. A truncated block at the end
  * of the input is still replaced. A header with no body line is copied
  * through. The END search never rewinds: a miss covers the rest of the buffer.
