@@ -67,6 +67,8 @@
 # RSA short-tail redaction, glued filename paths, non-git relativePath, and not-found path masking are local. This smoke still does not listen and does not push.
 # v1.0.56 left that live file unchanged for the same reason.
 # RSA tail residual, shadow root, nested non-git roots, subdir readers, and long segment over-mask are local. This smoke still does not listen and does not push.
+# v1.0.57 left that live file unchanged for the same reason.
+# Path keep after an exact RSA signature, PascalCase filename over-mask, the PEM timing bound, and truncated PEM bodies are local. This smoke still does not listen and does not push.
 name: CI
 
 on:
