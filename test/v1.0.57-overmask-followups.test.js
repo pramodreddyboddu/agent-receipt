@@ -4,6 +4,8 @@
  * PascalCase and camelCase filenames stay visible.
  * Secret-shaped stems stay masked.
  * PEM header scans stay linear, and a truncated private key is redacted.
+ * A lone CR is a line break. A short or blank line in the body does not
+ * hide a later key line.
  */
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -157,6 +159,9 @@ const KEPT = [
   '/LICENSE',
   '/CHANGELOG.md',
   '/tsconfig.json',
+  '/src/api/getUser.js',
+  'UserService.java',
+  'UserController.php',
 ];
 
 const MASKED = [
@@ -412,6 +417,202 @@ describe('v1.0.57 truncated PEM private keys are redacted in one linear scan', (
       assert.equal(redactSecretsInText(raw), PEM_REPLACEMENT, line);
     }
   });
+
+  it('redacts a CR-only truncated block and keeps the following break', () => {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const lineA = alphabet;
+    const lineB = alphabet.slice(32) + alphabet.slice(0, 32);
+    const partial = `${alphabet.slice(0, 40)}==`;
+    const kinds = ['RSA ', 'OPENSSH ', 'EC ', 'DSA ', 'ENCRYPTED ', ''];
+
+    for (const kind of kinds) {
+      const raw = `before\r-----BEGIN ${kind}PRIVATE KEY-----\r${lineA}\r${lineB}\rafter`;
+      const out = redactSecretsInText(raw);
+      assert.equal(out, `before\r${PEM_REPLACEMENT}\rafter`, JSON.stringify(kind));
+      assert.equal(out.includes(lineA), false, kind);
+      assert.equal(out.includes(lineB), false, kind);
+    }
+
+    assert.equal(
+      redactSecretsInText(`-----BEGIN PRIVATE KEY-----\r${lineA}\r${lineB}\r`),
+      PEM_REPLACEMENT,
+    );
+    assert.equal(
+      redactSecretsInText(`-----BEGIN PRIVATE KEY-----\r${lineA}\r${lineB}`),
+      PEM_REPLACEMENT,
+    );
+    assert.equal(
+      redactSecretsInText(`-----BEGIN RSA PRIVATE KEY-----\r${lineA}\r${partial} PROSE_KEEP`),
+      `${PEM_REPLACEMENT} PROSE_KEEP`,
+    );
+
+    for (const word of ['Next', 'README', 'npm', 'test', 'TODO']) {
+      const raw = `-----BEGIN PRIVATE KEY-----\r${lineA}\r${word}\r`;
+      assert.equal(redactSecretsInText(raw), `${PEM_REPLACEMENT}\r${word}\r`, word);
+    }
+  });
+
+  it('keeps scanning past a short or blank line when a key line follows', () => {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const lineA = alphabet;
+    const lineB = alphabet.slice(32) + alphabet.slice(0, 32);
+    const newlines = ['\n', '\r\n', '\r'];
+    const shorts = ['ab', 'QUJD', 'A'.repeat(15), '\t', 'hi there!!'];
+
+    for (const nl of newlines) {
+      for (const short of shorts) {
+        const raw = `-----BEGIN RSA PRIVATE KEY-----${nl}${lineA}${nl}${short}${nl}${lineB}${nl}`;
+        const out = redactSecretsInText(raw);
+        assert.equal(out, PEM_REPLACEMENT, `${JSON.stringify(nl)} ${JSON.stringify(short)}`);
+        assert.equal(out.includes(lineA), false);
+        assert.equal(out.includes(lineB), false);
+      }
+
+      const blank = `-----BEGIN OPENSSH PRIVATE KEY-----${nl}${lineA}${nl}${nl}${lineB}${nl}README${nl}`;
+      assert.equal(
+        redactSecretsInText(blank),
+        `${PEM_REPLACEMENT}${nl}README${nl}`,
+        `blank ${JSON.stringify(nl)}`,
+      );
+
+      const mid = `-----BEGIN EC PRIVATE KEY-----${nl}${lineA}${nl}ab${nl}${lineB}${nl}Next${nl}`;
+      assert.equal(
+        redactSecretsInText(mid),
+        `${PEM_REPLACEMENT}${nl}Next${nl}`,
+        `short ${JSON.stringify(nl)}`,
+      );
+
+      const both = `-----BEGIN DSA PRIVATE KEY-----${nl}${lineA}${nl}ab${nl}${nl}${lineB}${nl}TODO${nl}`;
+      assert.equal(
+        redactSecretsInText(both),
+        `${PEM_REPLACEMENT}${nl}TODO${nl}`,
+        `gaps ${JSON.stringify(nl)}`,
+      );
+    }
+
+    for (const word of ['Next', 'README', 'npm', 'test', 'TODO']) {
+      for (const nl of newlines) {
+        const raw = `-----BEGIN PRIVATE KEY-----${nl}${lineA}${nl}${word}${nl}`;
+        assert.equal(
+          redactSecretsInText(raw),
+          `${PEM_REPLACEMENT}${nl}${word}${nl}`,
+          `${word} ${JSON.stringify(nl)}`,
+        );
+      }
+    }
+
+    for (const line of ['QUJD', 'abcdefgh', 'abcdefghijkl', 'A'.repeat(15)]) {
+      const raw = `-----BEGIN PRIVATE KEY-----\n${lineA}\n${line}\n`;
+      assert.equal(redactSecretsInText(raw), `${PEM_REPLACEMENT}\n${line}\n`, line);
+      assert.equal(redactSecretsInText(raw).includes(lineA), false, line);
+    }
+
+    assert.equal(
+      redactSecretsInText(`-----BEGIN PRIVATE KEY-----\n${lineA}\nYQ==\n`),
+      PEM_REPLACEMENT,
+    );
+    assert.equal(
+      redactSecretsInText(`-----BEGIN PRIVATE KEY-----\n${lineA}\nYQ==\n${lineB}\nNext\n`),
+      `${PEM_REPLACEMENT}\nNext\n`,
+    );
+    assert.equal(
+      redactSecretsInText(`-----BEGIN PRIVATE KEY-----\n${lineA}\nYQ== PROSE_KEEP`),
+      `${PEM_REPLACEMENT} PROSE_KEEP`,
+    );
+    assert.equal(
+      redactSecretsInText('-----BEGIN PRIVATE KEY-----\nYQ==\n'),
+      PEM_REPLACEMENT,
+    );
+  });
+
+  it('redacts a truncated body after Proc-Type and DEK-Info', () => {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const lineA = alphabet;
+    const lineB = alphabet.slice(32) + alphabet.slice(0, 32);
+    for (const nl of ['\n', '\r\n', '\r']) {
+      const raw = [
+        '-----BEGIN RSA PRIVATE KEY-----',
+        'Proc-Type: 4,ENCRYPTED',
+        'DEK-Info: DES-EDE3-CBC,0123456789ABCDEF',
+        '',
+        lineA,
+        lineB,
+        'Next',
+      ].join(nl) + nl;
+      const out = redactSecretsInText(raw);
+      assert.equal(out, `${PEM_REPLACEMENT}${nl}Next${nl}`, JSON.stringify(nl));
+      assert.equal(out.includes(lineA), false);
+      assert.equal(out.includes(lineB), false);
+      assert.equal(out.includes('Proc-Type'), false);
+      assert.equal(out.includes('0123456789ABCDEF'), false);
+      assert.equal(out.includes('DES-EDE3-CBC'), false);
+    }
+
+    const bare = '-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: DES-EDE3-CBC,0123456789ABCDEF\n';
+    assert.equal(redactSecretsInText(bare), bare);
+  });
+
+  it('never prints a full 64-char body line from a truncated block', () => {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const kinds = ['RSA ', 'OPENSSH ', 'EC ', 'DSA ', 'ENCRYPTED ', ''];
+    const newlines = ['\n', '\r\n', '\r'];
+    const words = ['Next', 'README', 'npm', 'test', 'TODO'];
+    const prose = 'abcdefghijklmnopqrstuvwxyz ';
+    const next = lcg(0x1057c);
+    const probes = 3000;
+    for (let n = 0; n < probes; n += 1) {
+      const kind = kinds[next() % kinds.length];
+      const nl = newlines[next() % newlines.length];
+      const bodyCount = 1 + (next() % 4);
+      const parts = [];
+      const secrets = [];
+      if (next() % 3 === 0) {
+        parts.push('Proc-Type: 4,ENCRYPTED');
+        parts.push('DEK-Info: AES-128-CBC,0123456789ABCDEF');
+        parts.push('');
+      }
+      for (let b = 0; b < bodyCount; b += 1) {
+        if (b > 0) {
+          const gap = next() % 4;
+          if (gap === 0) parts.push('');
+          else if (gap === 1) parts.push(' '.repeat(1 + (next() % 3)));
+          else if (gap === 2) {
+            const len = 1 + (next() % 15);
+            let s = '';
+            for (let i = 0; i < len; i += 1) s += prose[next() % prose.length];
+            parts.push(s);
+          } else {
+            parts.push('');
+            parts.push('ab');
+          }
+        }
+        let line = '';
+        for (let i = 0; i < 64; i += 1) line += alphabet[next() % alphabet.length];
+        parts.push(line);
+        secrets.push(line);
+      }
+      let trailing = '';
+      if (next() % 2 === 0) {
+        trailing = words[next() % words.length];
+        parts.push(trailing);
+      }
+      const raw = `-----BEGIN ${kind}PRIVATE KEY-----${nl}${parts.join(nl)}${nl}`;
+      const out = redactSecretsInText(raw);
+      for (const secret of secrets) {
+        assert.equal(out.includes(secret), false, `probe ${n} leaked a 64-char line`);
+      }
+      if (trailing) {
+        assert.equal(out, `${PEM_REPLACEMENT}${nl}${trailing}${nl}`, `probe ${n} ate ${trailing}`);
+      } else {
+        assert.equal(out, PEM_REPLACEMENT, `probe ${n}`);
+      }
+      if (parts[0] === 'Proc-Type: 4,ENCRYPTED') {
+        assert.equal(out.includes('0123456789ABCDEF'), false, `probe ${n} kept the IV`);
+        assert.equal(out.includes('Proc-Type'), false, `probe ${n} kept Proc-Type`);
+      }
+    }
+    assert.equal(probes, 3000);
+  });
 });
 
 describe('v1.0.57 kept paths on every redaction surface', { timeout: 180000 }, () => {
@@ -434,6 +635,9 @@ describe('v1.0.57 kept paths on every redaction surface', { timeout: 180000 }, (
       ['PS512', 683, '/LICENSE'],
       ['RS256', 512, '/CHANGELOG.md'],
       ['PS256', 342, '/tsconfig.json'],
+      ['RS256', 342, '/src/api/getUser.js'],
+      ['PS256', 512, 'UserService.java'],
+      ['RS384', 683, 'UserController.php'],
     ];
     const masked = [
       ['RS256', 342, '/Ahsqowx.ts'],

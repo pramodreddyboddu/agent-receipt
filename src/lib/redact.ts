@@ -742,14 +742,16 @@ const SIG_RSA: SigSize[] = [
  * extension follows, when every segment is a path word (`/src/index`,
  * `/bin/run`), or when the tail is one repeated character.
  * An extension by itself is not enough: `/Qx7.ts` and `/K.ts` are signature.
- * Filename words (`user`, `repo`, `package`), PascalCase and camelCase
- * humps of those words (`UserProfile`, `formatDate`, `MyClass`, `HomeView`),
+ * Filename words (`user`, `repo`, `package`, `get`, `service`), PascalCase
+ * and camelCase humps of those words (`UserProfile`, `formatDate`,
+ * `MyClass`, `HomeView`, `getUser`, `UserService`, `UserController`),
  * and `Dockerfile` also stay. `.swift` is an extension. One lowercase name
  * stays when another segment is a path word (`/Users/pramod/repo`). A
  * filename with no slash stays only when that suffix is one of those names.
  * `/Ahsqowx`, `/OHALMQO`, `/QZXWVKT`, and `/Makefile` stay masked.
  * `/Views/HomeView.swift`, `/Sources/App/AppDelegate.swift`,
  * `/Models/User.cs`, `/components/NavBar.vue`, `/lib/parseJSON.ts`,
+ * `/src/api/getUser.js`, `UserService.java`, `UserController.php`,
  * `/LICENSE`, `/CHANGELOG.md`, and `/tsconfig.json` stay.
  */
 const RSA_GLUED_PATH_MAX = 48;
@@ -1106,12 +1108,14 @@ const FILENAME_WORDS = new Set([
   'delegate',
   'file',
   'format',
+  'get',
   'my',
   'nav',
   'package',
   'parse',
   'profile',
   'repo',
+  'service',
   'user',
   'users',
   'view',
@@ -1705,8 +1709,9 @@ function isRepeatedRun(text: string, from: number, to: number): boolean {
  * does not use a digit. A tail with an uppercase letter uses that same
  * word check even when it is longer than 7. Path words include atoms,
  * ordinary directory words, and filename words (`user`, `profile`,
- * `repo`). PascalCase and camelCase humps of those words stay
- * (`UserProfile`, `formatDate`, `MyClass`, `HomeView`). `Dockerfile`
+ * `repo`, `get`, `service`). PascalCase and camelCase humps of those
+ * words stay (`UserProfile`, `formatDate`, `MyClass`, `HomeView`,
+ * `getUser`, `UserService`, `UserController`). `Dockerfile`
  * stays with no extension. One lowercase name of 3 to 7 letters stays
  * when another segment is a path word (`/Users/pramod/repo/x`).
  * `/src/App`, `/docs/README`, `/Src/lib/App`, `/src/components/Button`,
@@ -2186,11 +2191,13 @@ function pemPrivateKeyEnd(text: string, at: number): number {
  * A private-key body line is base64, and it is not a short prose word.
  * 16 characters is the usual minimum (`Next`, `README`, `npm`, `test`,
  * and `TODO` stay). A shorter line still counts when it is a multiple of
- * 4 and contains a digit, `+`, `/`, or `=`, so a 12-character padded
- * fragment such as `QUJDREVGR0g=` is key material and a word is not.
+ * 4 and contains a digit, `+`, `/`, or `=`. That includes a 12-character
+ * padded fragment such as `QUJDREVGR0g=` and a 4-character fragment such
+ * as `YQ==`. A letter-only line shorter than 16 (`QUJD`, `abcdefghijkl`)
+ * is not key material.
  */
 const PEM_BODY_MIN = 16;
-const PEM_BODY_SHORT_MIN = 8;
+const PEM_BODY_SHORT_MIN = 4;
 
 function isBase64Code(code: number): boolean {
   return (
@@ -2268,29 +2275,131 @@ function pemPartialCut(line: string): number {
   return i;
 }
 
+/** Trimmed bounds of a PEM line. ASCII space and tab only. */
+function pemTrimmed(line: string): { start: number; end: number } {
+  let start = 0;
+  let end = line.length;
+  while (start < end) {
+    const code = line.charCodeAt(start);
+    if (code !== 32 && code !== 9) break;
+    start += 1;
+  }
+  while (end > start) {
+    const code = line.charCodeAt(end - 1);
+    if (code !== 32 && code !== 9) break;
+    end -= 1;
+  }
+  return { start, end };
+}
+
 /**
- * Index where the contiguous private-key body that follows a header ends.
+ * A line the body scan may cross. Blank, or 1 to 15 characters after
+ * ASCII space and tab are removed. A key line is classified first, so
+ * `YQ==` and `QUJDREVGR0g=` are body, not a gap.
+ */
+function isShortOrBlankPemLine(line: string): boolean {
+  const span = pemTrimmed(line);
+  return span.end - span.start <= 15;
+}
+
+function pemStartsWith(line: string, from: number, end: number, prefix: string): boolean {
+  if (end - from < prefix.length) return false;
+  for (let i = 0; i < prefix.length; i += 1) {
+    if (line.charCodeAt(from + i) !== prefix.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+/**
+ * Traditional OpenSSL encryption headers that sit between BEGIN and the
+ * base64 body: `Proc-Type: 4,ENCRYPTED` and `DEK-Info: <ALGO>,<hex>`.
+ * The algorithm is uppercase letters, digits, and hyphens. The IV is an
+ * even run of at least 8 hex digits. Anything else is prose.
+ */
+function isLegacyPemHeader(line: string): boolean {
+  const span = pemTrimmed(line);
+  const proc = 'Proc-Type: 4,ENCRYPTED';
+  if (span.end - span.start === proc.length && pemStartsWith(line, span.start, span.end, proc)) {
+    return true;
+  }
+  const dek = 'DEK-Info: ';
+  if (!pemStartsWith(line, span.start, span.end, dek)) return false;
+  let i = span.start + dek.length;
+  let algo = 0;
+  while (i < span.end) {
+    const code = line.charCodeAt(i);
+    const ok = (code >= 65 && code <= 90) || (code >= 48 && code <= 57) || code === 45;
+    if (!ok) break;
+    algo += 1;
+    i += 1;
+  }
+  if (algo < 1 || i >= span.end || line.charCodeAt(i) !== 44) return false;
+  i += 1;
+  const hexStart = i;
+  while (i < span.end) {
+    const code = line.charCodeAt(i);
+    const ok =
+      (code >= 48 && code <= 57) ||
+      (code >= 65 && code <= 70) ||
+      (code >= 97 && code <= 102);
+    if (!ok) return false;
+    i += 1;
+  }
+  const hex = i - hexStart;
+  return hex >= 8 && hex % 2 === 0;
+}
+
+interface PemLineBreak {
+  contentEnd: number;
+  next: number;
+  breakAt: number;
+  hasBreak: boolean;
+}
+
+/**
+ * One PEM line. LF, CRLF, and a lone CR are breaks. A CR that is part of
+ * CRLF is not its own line. `breakAt` is the first break character, which
+ * stays in the output when more text follows the body.
+ */
+function readPemLine(text: string, i: number): PemLineBreak {
+  let k = i;
+  const n = text.length;
+  while (k < n) {
+    const code = text.charCodeAt(k);
+    if (code === 10 || code === 13) break;
+    k += 1;
+  }
+  if (k >= n) return { contentEnd: k, next: k, breakAt: k, hasBreak: false };
+  let next = k + 1;
+  if (text.charCodeAt(k) === 13 && next < n && text.charCodeAt(next) === 10) next += 1;
+  return { contentEnd: k, next, breakAt: k, hasBreak: true };
+}
+
+/**
+ * Index where the private-key body that follows a header ends.
  * `from` is the first character after the header. Blank space on the header
  * line is skipped. A full key line is consumed. A partial line consumes
- * only its leading base64 run, so the trailing prose stays. The newline
- * after the last consumed body line stays when more text follows (LF or
- * CRLF), and it is consumed when that newline is the end of the input.
- * The scan stops at the first line that is not key material. It does not
- * read past that line. Returns `from` when there is no body line.
- * One forward pass.
+ * only its leading base64 run, so the trailing prose stays. The break
+ * after the last consumed body line stays when more text follows (LF,
+ * CRLF, or a lone CR), and it is consumed when that break is the end of
+ * the input.
+ * A short line (1 to 15 characters) or a blank line does not end the body
+ * when a key line follows it. Those gap lines are inside the replaced
+ * span. The same is true of a `Proc-Type: 4,ENCRYPTED` line and a
+ * `DEK-Info` line. A short line ends the body when the next line is prose
+ * or the input ends, so `Next`, `README`, `npm`, `test`, and `TODO` stay,
+ * and so does a letter-only fragment such as `QUJD`. The scan does not
+ * read past the prose line that stops it. Returns `from` when there is
+ * no body line. One forward pass.
  */
 function pemBodyEnd(text: string, from: number): number {
   let i = from;
   let consumed = from;
   let onHeaderLine = true;
   while (i < text.length) {
-    let k = i;
-    while (k < text.length && text.charCodeAt(k) !== 10) k += 1;
-    const hasNl = k < text.length;
-    const lineEnd = hasNl ? k + 1 : k;
-    const line = text.slice(i, k);
-    let terminatorAt = lineEnd;
-    if (hasNl) terminatorAt = k > i && text.charCodeAt(k - 1) === 13 ? k - 1 : k;
+    const br = readPemLine(text, i);
+    if (br.next === i) break;
+    const line = text.slice(i, br.contentEnd);
     if (onHeaderLine) {
       onHeaderLine = false;
       let onlySpace = true;
@@ -2302,23 +2411,28 @@ function pemBodyEnd(text: string, from: number): number {
         }
       }
       if (onlySpace) {
-        i = lineEnd;
+        i = br.next;
         continue;
       }
     }
     if (isPemBodyLine(line)) {
-      if (!hasNl || lineEnd >= text.length) {
-        consumed = lineEnd;
+      if (!br.hasBreak || br.next >= text.length) {
+        consumed = br.next;
         break;
       }
-      consumed = terminatorAt;
-      i = lineEnd;
+      consumed = br.breakAt;
+      i = br.next;
       continue;
     }
     const partial = pemPartialCut(line);
     if (partial >= 0) {
       consumed = i + partial;
       break;
+    }
+    if (isShortOrBlankPemLine(line) || isLegacyPemHeader(line)) {
+      if (!br.hasBreak) break;
+      i = br.next;
+      continue;
     }
     break;
   }
@@ -2329,16 +2443,19 @@ function pemBodyEnd(text: string, from: number): number {
  * Replace private-key PEM blocks. One left-to-right scan.
  * A complete block, BEGIN through a private-key END, is replaced. The END
  * kind does not have to match the BEGIN kind. A header with no matching
- * END is replaced from the header through the contiguous base64 body. A
- * body line is key-shaped base64 (16 characters, or a shorter multiple of
- * 4 that contains a digit, `+`, `/`, or `=`). The scan stops at the first
- * line that is not that body, so `Next`, `README`, `npm`, `test`, and
- * `TODO` stay. A partial line redacts its leading base64 run and keeps
- * the trailing prose. The newline after the block stays when more text
- * follows, for LF and CRLF, so that text does not glue to the marker.
- * A truncated block at the end of the input is still replaced. A header
- * with no body line is copied through.
- * The END search never rewinds: a miss covers the rest of the buffer.
+ * END is replaced from the header through the base64 body. A body line is
+ * key-shaped base64: 16 characters, or a shorter multiple of 4 that
+ * contains a digit, `+`, `/`, or `=` (including 4 characters, such as
+ * `YQ==`). LF, CRLF, and a lone CR are line breaks. A short or blank line
+ * stays inside the block when a key line follows it, and so does
+ * `Proc-Type: 4,ENCRYPTED` and a `DEK-Info` header. A short line ends the
+ * block when prose or the end of the input follows, so `Next`, `README`,
+ * `npm`, `test`, and `TODO` stay, and so does a letter-only fragment such
+ * as `QUJD`. A partial line redacts its leading base64 run and keeps the
+ * trailing prose. The break after the block stays when more text follows,
+ * so that text does not glue to the marker. A truncated block at the end
+ * of the input is still replaced. A header with no body line is copied
+ * through. The END search never rewinds: a miss covers the rest of the buffer.
  */
 function redactPrivateKeyBlocks(text: string): string {
   const parts: string[] = [];
