@@ -71,6 +71,8 @@
 # Path keep after an exact RSA signature, PascalCase filename over-mask, the PEM timing bound, and truncated PEM bodies are local. This smoke still does not listen and does not push.
 # v1.0.58 left that live file unchanged for the same reason.
 # Truncated-key gap over-mask, the short-line Ab1 note, 3-character path fragments, and deep Java/PHP paths are local. This smoke still does not listen and does not push.
+# v1.0.59 left that live file unchanged for the same reason.
+# Post-gap short final PEM lines, 3-letter directory grounding, and post-gap identifier and hex keeps are local. This smoke still does not listen and does not push.
 name: CI
 
 on:
