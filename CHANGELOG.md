@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.60] — 2026-10-22
+
+### Fixed
+
+- After a truncated PEM private key and a gap, a camelCase, PascalCase, or snake_case line stays only when every part is a real word or a common abbreviation (`JSON`, `URL`, `ID`, `HTTP`). A random letters-only line of 16 to 19 characters is redacted, including a line that only looks like camelCase. `veryLongCamelCaseIdentifier`, `IdentifierValue16`, `HTTPServerConfig`, `getUserProfileSettingsNow`, `thisIsAVeryLongCamelCaseIdentifierName`, and `parseJSONResponse` stay when they follow the gap and no body line has resumed. They are redacted when they follow a resumed body line. A seeded sweep of letters-only lines in that window leaves none raw.
+- A base64url secret or signature split on `_` or `-` no longer leaves a tail of 1, 2, or 3 raw characters (`_`, `-`, `_x`, `_ab`). The whole token is redacted. A whole-word hyphen suffix still stays (`-then`, `-Then`, `-config-file`). Two tokens joined by `_` or `-` stay `[REDACTED]_[REDACTED]` and `[REDACTED]-[REDACTED]`.
+- A private key in an unfenced unified diff is redacted. One leading `+` or `-` on a body line is a diff marker and is not part of the key text, so every body line is redacted. `---`, `+++`, and ordinary diff lines stay visible.
+- A glued 3-letter path fragment does not keep a raw signature. `/Src.ts`, `/App.ts`, `/src.ts`, `/app.ts`, and `/App.md` stay masked, the same way `/Bin.ts` does. A second segment keeps the path, so `./src/app.ts`, `src/App.tsx`, `app/src/index.ts`, `/src/app.ts`, `/src/App.tsx`, and `/src/nav.ts` stay.
+- `thisIsAVeryLongCamelCaseIdentifierName` and `parseJSONResponse` stay visible on plain and JSON output for `show`, `last`, `compare`, `share`, `prove`, `verify`, and `attest`. The key stays fully redacted. A random camelCase line after the gap stays redacted.
+- The leaks fixed in 1.0.47 through 1.0.59 stay closed, including the post-gap short final line, 3-letter directory grounding, the resumed-body identifier keep, the gap-resume width rule, the PEM timing bound, and PascalCase keeps.
+
+### Notes
+
+- These are v1.0.59 Release QA follow-ups.
+- A letters-only line of 16 to 19 characters after a gap is key material unless every camelCase or snake_case part is a real word or a common abbreviation. `thisIsAVeryLongCamelCaseIdentifierName` and `parseJSONResponse` stay when no body line has resumed. A random capital does not.
+- A short tail split on `_` or `-` is part of the token. 1, 2, and 3 raw characters stay inside the mask. `-then` still stays.
+- An unfenced diff prefix is stripped before key-body detection. Diff markers and ordinary diff lines stay.
+- `/Src.ts` and `/App.ts` stay masked. `./src/app.ts`, `src/App.tsx`, and `app/src/index.ts` stay.
+- Package version bumped to `1.0.60`. Pin comments that track the current cut are `v1.0.60`. The action default pin is `1.0.60`. That pin needs an npm publish, which is on hold.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.59] — 2026-10-22
 
 ### Fixed

@@ -156,9 +156,9 @@ describe('v1.0.49 hyphen suffix rule', () => {
       assert.equal(strict, '[REDACTED]', `strict ${tail}`);
       assert.equal(strict.includes(tail), false, `strict ${tail} visible`);
     }
-    assert.equal(redactSecretsInText(`${SAMPLE}_x`), '[REDACTED]_x');
-    assert.equal(redactSecretsInText(`${SAMPLE}-`), '[REDACTED]-');
-    assert.equal(redactSecretsInText(`${SAMPLE}_`), '[REDACTED]_');
+    assert.equal(redactSecretsInText(`${SAMPLE}_x`), '[REDACTED]');
+    assert.equal(redactSecretsInText(`${SAMPLE}-`), '[REDACTED]');
+    assert.equal(redactSecretsInText(`${SAMPLE}_`), '[REDACTED]');
     assert.equal(redactSecretsInText('eyJsee.the.docs'), 'eyJsee.the.docs');
   });
 });

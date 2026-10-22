@@ -182,7 +182,6 @@ describe('v1.0.55 glued filename paths stay after an exact RSA signature', () =>
     '/src/App.json',
     '/src/App.test.tsx',
     '/Src/lib/App.tsx',
-    '/App.md',
     '/ab.ts',
     '/a/b.js',
     '/src/app.ts',
