@@ -552,8 +552,9 @@ describe('v1.0.57 truncated PEM private keys are redacted in one linear scan', (
     assert.equal(redactSecretsInText(bare), bare);
   });
 
-  it('never prints a full 64-char body line from a truncated block', () => {
+  it('never prints a full body line from a truncated block', () => {
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const widths = [44, 64, 70, 76];
     const kinds = ['RSA ', 'OPENSSH ', 'EC ', 'DSA ', 'ENCRYPTED ', ''];
     const newlines = ['\n', '\r\n', '\r'];
     const words = ['Next', 'README', 'npm', 'test', 'TODO'];
@@ -563,6 +564,7 @@ describe('v1.0.57 truncated PEM private keys are redacted in one linear scan', (
     for (let n = 0; n < probes; n += 1) {
       const kind = kinds[next() % kinds.length];
       const nl = newlines[next() % newlines.length];
+      const width = widths[next() % widths.length];
       const bodyCount = 1 + (next() % 4);
       const parts = [];
       const secrets = [];
@@ -587,7 +589,9 @@ describe('v1.0.57 truncated PEM private keys are redacted in one linear scan', (
           }
         }
         let line = '';
-        for (let i = 0; i < 64; i += 1) line += alphabet[next() % alphabet.length];
+        for (let i = 0; i < width; i += 1) line += alphabet[next() % alphabet.length];
+        // A pure hex line of a digest length is prose, not a body line.
+        if (/^[0-9a-fA-F]+$/.test(line)) line = `${line.slice(0, -1)}+`;
         parts.push(line);
         secrets.push(line);
       }
@@ -599,7 +603,7 @@ describe('v1.0.57 truncated PEM private keys are redacted in one linear scan', (
       const raw = `-----BEGIN ${kind}PRIVATE KEY-----${nl}${parts.join(nl)}${nl}`;
       const out = redactSecretsInText(raw);
       for (const secret of secrets) {
-        assert.equal(out.includes(secret), false, `probe ${n} leaked a 64-char line`);
+        assert.equal(out.includes(secret), false, `probe ${n} leaked a ${width}-char line`);
       }
       if (trailing) {
         assert.equal(out, `${PEM_REPLACEMENT}${nl}${trailing}${nl}`, `probe ${n} ate ${trailing}`);
