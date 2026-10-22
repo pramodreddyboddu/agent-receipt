@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.59] — 2026-10-22
+
+### Fixed
+
+- After a truncated PEM private key (a BEGIN line with no END) and a gap, a final base64-only line of 16 to 19 characters is redacted. That includes the line that follows resumed full-width body lines. Ordinary short text stays visible: words with spaces, punctuation, and paths, including `hello world`, `hello!`, `note: done`, and `/src/app.ts`. `Next`, `Ab1`, and a camelCase or PascalCase name stay. A 20-character base64 line that is not an identifier stays redacted. LF, CRLF, and a lone CR still work. The scan is still one forward pass.
+- A 3-letter directory word `bin` does not by itself keep a raw signature fragment. `/Bin.ts`, `/bin.ts`, and `/BIN.ts` stay masked. A second grounding segment is required, so `./bin/cli.js`, `/bin/cli.js`, `/bin/run`, `src/bin/main.rs`, `/src/bin/main.rs`, and `node_modules/.bin/tsc` stay visible. `/App.md` and `/src/nav.ts` stay. A seeded sweep leaves no raw signature substring of 3 or more characters.
+- After a truncated key and a gap, a camelCase or PascalCase identifier stays visible, and so does a snake_case name. A leading `+` on that name is a diff marker, not key material. A 48-hex or 56-hex string stays visible once the key body has ended. The key itself stays fully redacted. A diff fence is redacted as one block, so a private key in a diff is not left behind line by line. A 64-hex digest followed by another body line does not leave that body line raw. A 44-wide, 70-wide, or 76-wide hex body line is still redacted with the key. The same keep is covered on plain and JSON output for `show`, `last`, `compare`, `share`, `prove`, `verify`, and `attest`.
+- The leaks fixed in 1.0.47 through 1.0.58 stay closed, including the gap-resume width rule for 64, 70, 76, and 44-wide bodies, grounded short paths, 3-character path fragments, deep Java and PHP paths, truncated PEM CR-only and mid-body short lines, exact footer shapes, the PEM timing bound, and PascalCase keeps.
+
+### Notes
+
+- These are v1.0.58 Release QA follow-ups.
+- A 16-to-19 character base64-only line after a gap is the key's last line, including when full-width body lines already resumed. `hello world`, `hello!`, `note: done`, and `/src/app.ts` stay.
+- `/Bin.ts` stays masked. `./bin/cli.js`, `node_modules/.bin/tsc`, and `src/bin/main.rs` stay. `/App.md` and `/src/nav.ts` stay. Eating a signature-like tail is still preferred over leaving raw signature characters in the clear.
+- `veryLongCamelCaseIdentifier`, `user_profile_settings_name`, a 48-hex string, and a 56-hex string stay after the key body ends. A 64-hex digest followed by another body line is still redacted with that later line. A 44-wide, 70-wide, or 76-wide hex body line is still redacted with the key.
+- Package version bumped to `1.0.59`. Pin comments that track the current cut are `v1.0.59`. The action default pin is `1.0.59`. That pin needs an npm publish, which is on hold.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.58] — 2026-10-21
 
 ### Fixed
