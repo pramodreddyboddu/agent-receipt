@@ -73,6 +73,8 @@
 # Truncated-key gap over-mask, the short-line Ab1 note, 3-character path fragments, and deep Java/PHP paths are local. This smoke still does not listen and does not push.
 # v1.0.59 left that live file unchanged for the same reason.
 # Post-gap short final PEM lines, 3-letter directory grounding, and post-gap identifier and hex keeps are local. This smoke still does not listen and does not push.
+# v1.0.60 left that live file unchanged for the same reason.
+# Post-gap identifier words, base64url short tails, unfenced diff key lines, and glued 3-letter paths are local. This smoke still does not listen and does not push.
 name: CI
 
 on:

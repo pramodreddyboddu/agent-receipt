@@ -135,7 +135,7 @@ function opaqueName(sessionId) {
 }
 
 describe('v1.0.46 JWT mask coverage and boundary', () => {
-  it('masks alg:none, short segments, and standard base64, and keeps a trailing _x', () => {
+  it('masks alg:none, short segments, standard base64, and a short _x tail', () => {
     assert.ok(ALG_NONE.endsWith('.'));
     assert.equal(ALG_NONE.split('.').length, 3);
     assert.ok(SHORT.split('.')[1].length < 8);
@@ -146,10 +146,10 @@ describe('v1.0.46 JWT mask coverage and boundary', () => {
     assert.ok(PADDED_NONE.includes('='));
 
     assert.equal(redactSecretsInText(`note ${SAMPLE} please`), 'note [REDACTED] please');
-    assert.equal(redactSecretsInText(`${SAMPLE}_x`), '[REDACTED]_x');
+    assert.equal(redactSecretsInText(`${SAMPLE}_x`), '[REDACTED]');
     assert.equal(redactSecretsInText(`${SAMPLE}-suffix`), '[REDACTED]');
-    assert.equal(redactSecretsInText(`${SAMPLE}-`), '[REDACTED]-');
-    assert.equal(redactSecretsInText(`${SAMPLE}_`), '[REDACTED]_');
+    assert.equal(redactSecretsInText(`${SAMPLE}-`), '[REDACTED]');
+    assert.equal(redactSecretsInText(`${SAMPLE}_`), '[REDACTED]');
     assert.equal(redactSecretsInText(`${SAMPLE}-Def9Xyz`).includes('Def9Xyz'), false);
     assert.equal(redactSecretsInText(`${SAMPLE}-Def9Xyz`).includes(SAMPLE), false);
     assert.equal(redactSecretsInText(ALG_NONE), '[REDACTED]');
@@ -166,7 +166,7 @@ describe('v1.0.46 JWT mask coverage and boundary', () => {
     assert.equal(redactSecretsInText('sess-plain'), 'sess-plain');
   });
 
-  it('redacts the missed JWT shapes on share and report and keeps _x', () => {
+  it('redacts the missed JWT shapes on share and report, including a short _x tail', () => {
     const dir = gitRepo('ar1046-jwt-');
     const message = [
       `none ${ALG_NONE} end`,
@@ -202,9 +202,9 @@ describe('v1.0.46 JWT mask coverage and boundary', () => {
       assert.equal(packed.includes(token), false, 'share package still has a raw token');
       assert.equal(sharedResult.out.includes(token), false, 'share stdout still has a raw token');
     }
-    assert.equal(md.includes('[REDACTED]_x'), true);
+    assert.equal(md.includes('_x'), false);
     assert.equal(md.includes('-suffix'), false);
-    assert.equal(shareHtml.includes('[REDACTED]_x'), true);
+    assert.equal(shareHtml.includes('_x'), false);
     assert.equal(shareHtml.includes('-suffix'), false);
     assert.equal(md.includes('eyJsee.the.docs'), true);
     assert.equal(md.includes('v1.0.46'), true);
@@ -221,7 +221,7 @@ describe('v1.0.46 JWT mask coverage and boundary', () => {
       assert.equal(reportHtml.includes(token), false, 'signed report still has a raw token');
       assert.equal(shown.includes(token), false);
     }
-    assert.equal(shown.includes('[REDACTED]_x'), true);
+    assert.equal(shown.includes('_x'), false);
     assert.equal(shown.includes('-suffix'), false);
     assert.equal(shown.includes('eyJsee.the.docs'), true);
     assert.equal(shown.includes('file.name.txt'), true);

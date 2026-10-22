@@ -373,9 +373,9 @@ describe('v1.0.47 oversized JWT segments and hyphen tails', () => {
     assert.equal(redactSecretsInText(`${SAMPLE}-then`), '[REDACTED]-then');
     assert.equal(redactSecretsInText(`${STD}-then`), '[REDACTED]-then');
     assert.equal(redactSecretsInText('see hello-then next'), 'see hello-then next');
-    assert.equal(redactSecretsInText(`${SAMPLE}_x`), '[REDACTED]_x');
-    assert.equal(redactSecretsInText(`${SAMPLE}-`), '[REDACTED]-');
-    assert.equal(redactSecretsInText(`${SAMPLE}_`), '[REDACTED]_');
+    assert.equal(redactSecretsInText(`${SAMPLE}_x`), '[REDACTED]');
+    assert.equal(redactSecretsInText(`${SAMPLE}-`), '[REDACTED]');
+    assert.equal(redactSecretsInText(`${SAMPLE}_`), '[REDACTED]');
     assert.equal(redactSecretsInText('eyJsee.the.docs'), 'eyJsee.the.docs');
 
     const typ = `${b64url(JSON.stringify({ typ: 'JWT' }))}.${b64url('{}')}.x`;
@@ -395,13 +395,13 @@ describe('v1.0.47 oversized JWT segments and hyphen tails', () => {
     assert.equal(md.includes(SAMPLE), false);
     assert.equal(md.includes('suffix'), false);
     assert.equal(md.includes('-then'), true);
-    assert.equal(md.includes('[REDACTED]_x'), true);
+    assert.equal(md.includes('_x'), false);
     const shown = payloadOf(readFileSync(
       parseJson(cli(dir, ['report', receipt, '--json'])).htmlPath,
       'utf8',
     )).receipts[0].message;
     assert.equal(shown.includes('suffix'), false);
     assert.equal(shown.includes('-then'), true);
-    assert.equal(shown.includes('[REDACTED]_x'), true);
+    assert.equal(shown.includes('_x'), false);
   });
 });

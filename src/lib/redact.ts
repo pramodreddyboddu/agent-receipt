@@ -342,8 +342,6 @@ export const JWT_SEGMENT_MAX = 256 * 1024;
  */
 export type JwtMaskMode = 'general' | 'strict';
 
-/** `_x` / `_ab`, or a lone `_` / `-`. A hyphen plus a word or token tail is handled separately. */
-const JWT_PRESERVE_SUFFIX = /(_[A-Za-z0-9]{1,2}|[_-])$/;
 /**
  * Extra `eyJ` starts tried inside one header after the first candidate fails.
  * Each try slices the same span. `eyJ-`, `eyJ_`, and `eyJ=` make every
@@ -560,16 +558,13 @@ function hyphenSuffixRun(span: string): { index: number; clear: boolean } | null
 }
 
 /**
- * How much of `span` to replace. `keep` characters at the end stay
- * (`_x`, a lone `_` or `-`, or a whole-word suffix such as `-then`,
- * `-Then`, or `-config-file`). Anything else after a real token is
- * consumed, including `-suffix`, `-low`, `-the`, and `-word9`.
+ * How much of `span` to replace. A whole-word hyphen suffix stays
+ * (`-then`, `-Then`, `-config-file`). A base64url tail split on `_` or
+ * `-` does not: 1, 2, or 3 raw characters (`_`, `-`, `_x`, `_ab`) are
+ * part of the token. Anything else after a real token is consumed,
+ * including `-suffix`, `-low`, `-the`, and `-word9`.
  */
 function jwtMaskCut(span: string, mode: JwtMaskMode): { cut: number; keep: number } | null {
-  const preserve = JWT_PRESERVE_SUFFIX.exec(span);
-  if (preserve && preserve.index > 0 && isJwtToken(span.slice(0, preserve.index), mode)) {
-    return { cut: preserve.index, keep: preserve[0].length };
-  }
   const run = hyphenSuffixRun(span);
   if (run && run.index > 0 && isJwtToken(span.slice(0, run.index), mode)) {
     if (run.clear) return { cut: run.index, keep: span.length - run.index };
@@ -1964,6 +1959,43 @@ function binDirNeedsMoreGround(text: string, at: number, segEnd: number): boolea
 }
 
 /**
+ * A 3-letter path atom (`src`, `app`, `bin`, `lib`). Any letter case.
+ * A leading dot (`.bin`) is not part of the name. One pass over a
+ * segment already inside the 48-character tail.
+ */
+function isThreeLetterAtomName(text: string, from: number, to: number): boolean {
+  let start = from;
+  if (start < to && text.charCodeAt(start) === 46) start += 1;
+  if (to - start !== 3) return false;
+  let word = '';
+  for (let i = start; i < to; i += 1) {
+    let code = text.charCodeAt(i);
+    if (code >= 65 && code <= 90) code += 32;
+    else if (code < 97 || code > 122) return false;
+    word += String.fromCharCode(code);
+  }
+  return PATH_ATOMS.has(word);
+}
+
+/**
+ * One segment, and that segment is a 3-letter directory atom
+ * (`/Src`, `/App`, `/Bin`, `/lib`). The same second ground `bin` needs:
+ * `/Src.ts` and `/App.ts` stay masked, and `/src/app`, `src/App`, and
+ * `app/src/index` have another segment so they stay. One pass over a
+ * tail already capped at 48 characters.
+ */
+function loneThreeLetterDir(text: string, at: number, segEnd: number): boolean {
+  let i = at;
+  if (i < segEnd && text.charCodeAt(i) === 43) i += 1;
+  if (i < segEnd && text.charCodeAt(i) === 47) i += 1;
+  if (i >= segEnd) return false;
+  for (let k = i; k < segEnd; k += 1) {
+    if (text.charCodeAt(k) === 47) return false;
+  }
+  return isThreeLetterAtomName(text, i, segEnd);
+}
+
+/**
  * A project path glued on with no leading `/` or `+`
  * (`src/main/java/com/example/service/UserService`). The first character
  * is a letter and a later character is `/`. A `+` is still signature
@@ -1986,6 +2018,7 @@ function isUnslashedDeepPath(text: string, at: number, segEnd: number): boolean 
 
 function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): boolean {
   if (binDirNeedsMoreGround(text, at, segEnd)) return false;
+  if (loneThreeLetterDir(text, at, segEnd)) return false;
   if (
     !isClearGluedPath(text, at, segEnd) &&
     !isKnownExtensionlessTail(text, at, segEnd) &&
@@ -2077,7 +2110,8 @@ function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): bool
  * one repeated character or an ordinary path word. A tail of 3 to 7
  * characters, measured without the leading `/` or `+`, splits only when
  * a 2-to-4 letter extension follows and every segment of 3 or more
- * letters is a path word (`/App.md`, `/README.md`, `/ab.ts`). A 7-letter
+ * letters is a path word (`/README.md`, `/ab.ts`). A lone 3-letter
+ * directory atom (`/App.md`, `/Src.ts`) stays inside the mask. A 7-letter
  * segment is that short tail. `/Ahs.ts`, `/Qow.md`, `/hnw/x.ts`,
  * `/Ahsqowx.ts`, `/OHALMQO.ts`, and `/QZXWVKT.md` stay inside the mask.
  * A tail with an uppercase letter splits only when that extension follows
@@ -2119,6 +2153,9 @@ function rsaUngluedFilenameCut(
       best = at;
       continue;
     }
+    // A lone 3-letter directory atom (`Src.ts`, `App.ts`) is the same
+    // fragment as `/Src.ts`. It stays inside the mask.
+    if (isThreeLetterAtomName(text, at, sigEnd)) continue;
     if (!filenameExtensionAfter(text, sigEnd)) continue;
     if (dictionaryWordAt(text, at, sigEnd) || dictionaryHumps(text, at, sigEnd) || acronymHumps(text, at, sigEnd)) {
       best = at;
@@ -2295,7 +2332,11 @@ function clearPathSplit(
   // No second scan of the buffer. RSA uses one length compare on that run.
   const runLen = end - (dot2 + 1);
   const alg = jwtHeaderInfo(header, mode).alg;
-  const clearPath = isClearGluedPath(text, i, end) || isKnownExtensionlessTail(text, i, end);
+  const shaped = isClearGluedPath(text, i, end) || isKnownExtensionlessTail(text, i, end);
+  // A lone 3-letter directory atom needs a second segment, on every alg.
+  // `/Bin.ts` already used that rule for RSA. `/Src.ts` and `/App.ts` do too.
+  const clearPath =
+    shaped && !binDirNeedsMoreGround(text, i, end) && !loneThreeLetterDir(text, i, end);
   let measure = runLen;
   if (signatureSizesForAlg(alg) === SIG_RSA) {
     const tailLen = runLen - sigLen;
@@ -2471,9 +2512,10 @@ function isPureEyJPrefixRun(text: string, start: number, end: number): boolean {
  * inside the mask. An unknown or undecodable `alg` never splits. Dotted
  * text whose header does not decode as a JWT (`eyJsee.the.docs`, versions,
  * filenames) is left alone.
- * `_x`, a lone `_` or `-`, and a whole-word suffix such as `-then`,
- * `-Then`, or `-config-file` stay. A token tail, a short stopword, and a
- * mixed tail are consumed. A header that is only `eyJ-` / `eyJ_` / `eyJ=` /
+ * A whole-word suffix such as `-then`, `-Then`, or `-config-file` stays.
+ * A short tail split on `_` or `-` does not: 1, 2, or 3 raw characters
+ * (`_`, `-`, `_x`, `_ab`) stay inside the mask. A token tail, a short
+ * stopword, and a mixed tail are consumed. A header that is only `eyJ-` / `eyJ_` / `eyJ=` /
  * `eyJ+` / `eyJ/` chunks is skipped in one pass.
  */
 export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): string {
@@ -2628,7 +2670,22 @@ function isKeyMaterialSpan(line: string, start: number, end: number): boolean {
   return shaped;
 }
 
-/** A full PEM body line: key-shaped base64 only, after ASCII space, tab, and CR. */
+/**
+ * Index after one unified-diff marker. A single leading `+` or `-` is
+ * not part of the key line. `+++` and `---` stay, so a file marker is
+ * not stripped into key material. The caller has already skipped
+ * leading space and tab. One comparison.
+ */
+function pemDiffContentStart(line: string, start: number, end: number): number {
+  if (start >= end) return start;
+  const mark = line.charCodeAt(start);
+  if (mark !== 43 && mark !== 45) return start;
+  const next = start + 1;
+  if (next < end && line.charCodeAt(next) === mark) return start;
+  return next;
+}
+
+/** A full PEM body line: key-shaped base64 only, after ASCII space, tab, CR, and one diff mark. */
 function isPemBodyLine(line: string): boolean {
   let start = 0;
   let end = line.length;
@@ -2642,6 +2699,7 @@ function isPemBodyLine(line: string): boolean {
     if (code !== 32 && code !== 9 && code !== 13) break;
     end -= 1;
   }
+  start = pemDiffContentStart(line, start, end);
   if (end <= start) return false;
   return isKeyMaterialSpan(line, start, end);
 }
@@ -2651,8 +2709,9 @@ function isPemBodyLine(line: string): boolean {
  * follows on that same line. -1 when the line is a full body line or the
  * run is not key material. The prose must start with ASCII space or tab.
  * A path such as `/src/components/Button.tsx` is not a partial key line.
- * Leading ASCII space and tab are not part of the run. The prose,
- * including the space before it, stays.
+ * Leading ASCII space and tab are not part of the run. One leading
+ * `+` or `-` is a diff marker and is part of the redacted run. The
+ * prose, including the space before it, stays.
  */
 function pemPartialCut(line: string): number {
   let i = 0;
@@ -2661,6 +2720,7 @@ function pemPartialCut(line: string): number {
     if (code !== 32 && code !== 9) break;
     i += 1;
   }
+  i = pemDiffContentStart(line, i, line.length);
   const start = i;
   while (i < line.length && isBase64Code(line.charCodeAt(i))) i += 1;
   if (i === start || i >= line.length) return -1;
@@ -2706,14 +2766,16 @@ function isHexDigitCode(code: number): boolean {
 
 function pemTrimWidth(line: string): number {
   const span = pemBodySpan(line);
-  return span.end - span.start;
+  const start = pemDiffContentStart(line, span.start, span.end);
+  return span.end - start;
 }
 
-/** Trimmed span is only hex digits. A sha256 line is this shape. */
+/** Trimmed span is only hex digits. A sha256 line is this shape. One leading diff mark is not part of the span. */
 function isPureHexLine(line: string): boolean {
   const span = pemBodySpan(line);
-  if (span.end <= span.start) return false;
-  for (let i = span.start; i < span.end; i += 1) {
+  const start = pemDiffContentStart(line, span.start, span.end);
+  if (span.end <= start) return false;
+  for (let i = start; i < span.end; i += 1) {
     if (!isHexDigitCode(line.charCodeAt(i))) return false;
   }
   return true;
@@ -2731,7 +2793,8 @@ function isHexDigestLine(line: string): boolean {
 
 function hasPemKeyPunctuation(line: string): boolean {
   const span = pemBodySpan(line);
-  for (let i = span.start; i < span.end; i += 1) {
+  const start = pemDiffContentStart(line, span.start, span.end);
+  for (let i = start; i < span.end; i += 1) {
     const code = line.charCodeAt(i);
     if (code === 43 || code === 47 || code === 61) return true;
   }
@@ -2759,59 +2822,116 @@ function trailingDigitCut(line: string, start: number, end: number): number {
 }
 
 /**
- * A path word, or `config`. `config` is not a path atom: adding it there
- * would keep a signature fragment. It is only a hump of a prose name
- * such as `HTTPServerConfig`. One pass over a hump already cut from one line.
+ * Prose words that are not path atoms. They do not ground a path.
+ * A hump of one letter is only `a` or `i`. One lookup per hump.
  */
-function pemProseWord(line: string, from: number, to: number): boolean {
-  if (dictionaryWordAt(line, from, to, true)) return true;
-  if (to - from !== 6) return false;
-  const word = 'config';
-  for (let i = 0; i < 6; i += 1) {
-    let code = line.charCodeAt(from + i);
+const IDENTIFIER_WORDS = new Set([
+  'a',
+  'camel',
+  'case',
+  'i',
+  'identifier',
+  'is',
+  'long',
+  'name',
+  'now',
+  'response',
+  'this',
+  'value',
+  'very',
+]);
+
+/**
+ * Abbreviations kept in any letter case (`JSON`, `Url`, `id`, `HTTP`).
+ * They do not ground a path. `json` and `http` are also path atoms;
+ * `url` and `id` are not.
+ */
+const IDENTIFIER_ABBREVS = new Set([
+  'http',
+  'id',
+  'json',
+  'url',
+]);
+
+/**
+ * A real word or a common abbreviation. Path words and `config` count.
+ * `config` is not a path atom: adding it there would keep a signature
+ * fragment. All-caps matches an abbreviation or a path atom, not an
+ * ordinary word, so a random capital run stays key material. A hump of
+ * one letter is only `a` or `i`. One pass over a hump already cut from
+ * one line.
+ */
+function identifierWordAt(line: string, from: number, to: number): boolean {
+  const n = to - from;
+  if (n < 1 || n > 24) return false;
+  if (n === 1) {
+    let code = line.charCodeAt(from);
     if (code >= 65 && code <= 90) code += 32;
-    if (code !== word.charCodeAt(i)) return false;
+    return code === 97 || code === 105;
   }
-  return true;
+  if (dictionaryWordAt(line, from, to, true)) return true;
+  if (n === 6) {
+    const config = 'config';
+    let match = true;
+    for (let i = 0; i < 6; i += 1) {
+      let code = line.charCodeAt(from + i);
+      if (code >= 65 && code <= 90) code += 32;
+      if (code !== config.charCodeAt(i)) match = false;
+    }
+    if (match) return true;
+  }
+  let lower = '';
+  let uppers = 0;
+  for (let i = from; i < to; i += 1) {
+    const code = line.charCodeAt(i);
+    if (code >= 97 && code <= 122) lower += String.fromCharCode(code);
+    else if (code >= 65 && code <= 90) {
+      uppers += 1;
+      lower += String.fromCharCode(code + 32);
+    } else return false;
+  }
+  if (IDENTIFIER_ABBREVS.has(lower)) return true;
+  if (uppers === n || uppers > 1) return false;
+  if (uppers === 1 && (line.charCodeAt(from) < 65 || line.charCodeAt(from) > 90)) return false;
+  return IDENTIFIER_WORDS.has(lower);
 }
 
 /**
- * camelCase or PascalCase with one capital per hump
- * (`veryLongCamelCaseIdentifier`). Two capitals in a row are not this
- * shape. The span is letters only; the caller strips a trailing digit run.
- * One pass.
+ * camelCase or PascalCase whose every hump is a real word
+ * (`veryLongCamelCaseIdentifier`, `thisIsAVeryLongCamelCaseIdentifierName`).
+ * A capital starts a hump, including a one-letter word (`A`). Two
+ * capitals in a row are a one-letter hump, not a reason to reject the
+ * shape. The span is letters only; the caller strips a trailing digit
+ * run. One pass.
  */
 function isSingleCapIdentifier(line: string, start: number, end: number): boolean {
   if (end - start < 2) return false;
   const first = line.charCodeAt(start);
-  const firstUpper = first >= 65 && first <= 90;
-  const firstLower = first >= 97 && first <= 122;
-  if (!firstUpper && !firstLower) return false;
+  if (!((first >= 65 && first <= 90) || (first >= 97 && first <= 122))) return false;
   let humps = 0;
-  let lowerInHump = firstLower;
-  for (let i = start + 1; i < end; i += 1) {
-    const code = line.charCodeAt(i);
-    if (code >= 65 && code <= 90) {
-      if (!lowerInHump) return false;
-      humps += 1;
-      lowerInHump = false;
+  let humpFrom = start;
+  for (let i = start + 1; i <= end; i += 1) {
+    const split = i === end || (line.charCodeAt(i) >= 65 && line.charCodeAt(i) <= 90);
+    if (!split) {
+      const code = line.charCodeAt(i);
+      if (code < 97 || code > 122) return false;
       continue;
     }
-    if (code >= 97 && code <= 122) {
-      lowerInHump = true;
-      continue;
-    }
-    return false;
+    if (!identifierWordAt(line, humpFrom, i)) return false;
+    humps += 1;
+    humpFrom = i;
   }
-  return humps >= 1 && lowerInHump;
+  return humps >= 2;
 }
 
 /**
- * An acronym name (`HTTPServerConfig` is `HTTP` + `Server` + `Config`).
- * A run of capitals is one hump. When lowercase follows, the last capital
- * starts the next word. Every hump is a real word, and at least one hump
+ * An acronym name (`HTTPServerConfig` is `HTTP` + `Server` + `Config`,
+ * `parseJSONResponse` is `parse` + `JSON` + `Response`). A run of capitals
+ * is one hump. When lowercase follows, the last capital starts the next
+ * word. Every hump is a real word or abbreviation, and at least one hump
  * is two or more capitals, so a random capital pair stays key material.
- * One pass over a letter span already cut from one line.
+ * A one-letter hump is only `a` or `i`. One pass over a letter span
+ * already cut from one line.
  */
 function isAcronymWordIdentifier(line: string, start: number, end: number): boolean {
   if (end - start < 4) return false;
@@ -2821,8 +2941,8 @@ function isAcronymWordIdentifier(line: string, start: number, end: number): bool
   let acronym = false;
   let i = start;
   const take = (from: number, to: number, caps: number): boolean => {
-    if (to - from < 2) return false;
-    if (!pemProseWord(line, from, to)) return false;
+    if (to <= from) return false;
+    if (!identifierWordAt(line, from, to)) return false;
     if (caps >= 2) acronym = true;
     humps += 1;
     return true;
@@ -2879,21 +2999,41 @@ function isAcronymWordIdentifier(line: string, start: number, end: number): bool
 }
 
 /**
- * camelCase or PascalCase (`veryLongCamelCaseIdentifier`,
- * `IdentifierValue16`, `HTTPServerConfig`). Each hump is letters. Digits
- * are only a trailing run, so a digit mixed into the line stays key
- * material. Two capitals in a row are a name only when every hump is a
- * real word. One leading `+` is a diff marker and is not part of the
- * name. One pass over the trimmed line, then one pass over its humps.
+ * snake_case whose every part is a real word (`user_profile_settings_name`).
+ * A digit in a part is not a word. One pass.
+ */
+function isSnakeCaseIdentifier(line: string, start: number, end: number): boolean {
+  if (line.charCodeAt(start) === 95 || line.charCodeAt(end - 1) === 95) return false;
+  let parts = 0;
+  let i = start;
+  while (i < end) {
+    if (line.charCodeAt(i) === 95) return false;
+    const from = i;
+    while (i < end && line.charCodeAt(i) !== 95) i += 1;
+    if (!identifierWordAt(line, from, i)) return false;
+    parts += 1;
+    if (i < end) i += 1;
+  }
+  return parts >= 2;
+}
+
+/**
+ * camelCase, PascalCase, or snake_case (`veryLongCamelCaseIdentifier`,
+ * `IdentifierValue16`, `HTTPServerConfig`, `parseJSONResponse`). Each
+ * part is a real word or a common abbreviation. Digits in a camelCase
+ * or PascalCase name are only a trailing run, so a digit mixed into the
+ * line stays key material. One leading `+` or `-` is a diff marker and
+ * is not part of the name. `+++` and `---` are not stripped. One pass
+ * over the trimmed line, then one pass over its parts.
  */
 function isCamelOrPascalIdentifier(line: string): boolean {
   const span = pemBodySpan(line);
-  let start = span.start;
+  const start = pemDiffContentStart(line, span.start, span.end);
   const end = span.end;
-  // A unified-diff addition marker is a single leading `+`. It is not
-  // part of the name. A second `+` is still key material.
-  if (start < end && line.charCodeAt(start) === 43) start += 1;
   if (end - start < 16) return false;
+  for (let i = start; i < end; i += 1) {
+    if (line.charCodeAt(i) === 95) return isSnakeCaseIdentifier(line, start, end);
+  }
   const letterEnd = trailingDigitCut(line, start, end);
   if (letterEnd <= start) return false;
   if (isSingleCapIdentifier(line, start, letterEnd)) return true;
@@ -2907,9 +3047,12 @@ function isCamelOrPascalIdentifier(line: string): boolean {
  * or when it is base64-only and at least 16 characters. That line is the
  * key's last line, including 16 to 19 characters and a longer
  * alphanumeric line. A camelCase or PascalCase word does not continue
- * when this line follows the gap directly: letter humps, digits only as
- * a trailing run, or an acronym of real words (`HTTPServerConfig`).
- * Digits mixed into the line do continue. A 48-hex or 56-hex string does
+ * when this line follows the gap directly: every camelCase, PascalCase,
+ * or snake_case part is a real word or a common abbreviation
+ * (`HTTPServerConfig`, `parseJSONResponse`). A random capital is not
+ * enough. Digits in a camelCase or PascalCase name are only a trailing
+ * run. Digits mixed into the line do continue. One leading `+` or `-`
+ * is a diff marker and is not part of the line. A 48-hex or 56-hex string does
  * not continue. A hex digest does not continue: 40-hex and 64-hex stay
  * prose. One pass over the trimmed line. The caller uses this only while
  * the gap is still open. A line that follows a resumed body line is body,
@@ -3043,10 +3186,14 @@ function readPemLine(text: string, i: number): PemLineBreak {
  * `+`, `/`, or `=`, or when it is base64-only and at least 16 characters
  * (the key's last line). That includes an alphanumeric line of 16 to 43
  * characters after one or two resumed full-width body lines, even when
- * the line looks like a name. A camelCase or PascalCase word does not
- * resume when it follows the gap and no body line has resumed. Digits in
- * that word are only a trailing run. An acronym of real words
- * (`HTTPServerConfig`) does not resume in that same place. A name that
+ * the line looks like a name. A camelCase, PascalCase, or snake_case word
+ * does not resume when it follows the gap and no body line has resumed.
+ * Every part is a real word or a common abbreviation (`JSON`, `URL`, `ID`,
+ * `HTTP`). A random capital is not enough. Digits in a camelCase or
+ * PascalCase word are only a trailing run. An acronym of real words
+ * (`HTTPServerConfig`, `parseJSONResponse`) does not resume in that same
+ * place. A single leading `+` or `-` is a diff marker and is not part of
+ * the line. `+++` and `---` are not stripped. A name that
  * follows a resumed body line does resume: the identifier keep does not
  * apply there. A 48-hex or 56-hex string does not resume while the gap
  * is open. A hex digest (32, 40, 64, 96, or 128 hex digits) does not
@@ -3151,15 +3298,22 @@ function pemBodyEnd(text: string, from: number): number {
  * line, or the same width, on a shorter final line that contains `+`,
  * `/`, or `=`, and on a base64-only final line of at least 16 characters.
  * That final line stays redacted after one or two resumed full-width
- * body lines, including when it looks like an identifier. A hex digest
+ * body lines, including when it looks like an identifier. A single
+ * leading `+` or `-` on a body line is a diff marker and is not part of
+ * the key text, so a private key in an unfenced unified diff is still
+ * one block. `+++` and `---` are file markers and are not stripped.
+ * A hex digest
  * stays visible when it follows the gap. A 48-hex or 56-hex string does
  * not resume while the gap is open, so it stays visible when prose
  * follows, and it does not end the block when a later body line still
  * has to be masked. Directly after a resumed body line, a hex digest is
- * body, because it is also a legal key line. A camelCase or PascalCase
- * word ends the block when it follows the gap and no body line has
- * resumed. Digits in that word are only a trailing run. An acronym of
- * real words (`HTTPServerConfig`) ends the block in that same place.
+ * body, because it is also a legal key line. A camelCase, PascalCase, or
+ * snake_case word ends the block when it follows the gap and no body line
+ * has resumed, and only when every part is a real word or a common
+ * abbreviation (`JSON`, `URL`, `ID`, `HTTP`). A random capital is not
+ * enough. Digits in a camelCase or PascalCase word are only a trailing
+ * run. An acronym of real words (`HTTPServerConfig`, `parseJSONResponse`)
+ * ends the block in that same place.
  * A hex-only body-shaped line does not end the block. The first
  * other line stops the scan and stays visible, including a 64-hex or
  * 40-hex hash, a 16-character identifier, a longer camelCase or

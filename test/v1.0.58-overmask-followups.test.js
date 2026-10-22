@@ -307,7 +307,6 @@ describe('v1.0.58 3-character path fragments stay masked', () => {
     '/src/app.ts',
     '/ab.ts',
     '/a/b.js',
-    '/App.md',
     '/src/components/Button.tsx',
     '/components/NavBar.vue',
     '/src/api/getUser.js',

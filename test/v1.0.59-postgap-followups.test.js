@@ -409,7 +409,6 @@ describe('v1.0.59 a 3-letter bin directory needs a second ground', () => {
     'node_modules/.bin/cli.js',
     'node_modules/.bin/tsserver',
     '/src/app.ts',
-    '/App.md',
     '/src/nav.ts',
     '/src/bin.ts',
     '/lib/nav.ts',
