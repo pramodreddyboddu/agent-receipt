@@ -1,8 +1,10 @@
 /**
  * v1.0.59 — v1.0.58 Release QA follow-ups.
  * A short base64-only final line after a truncated private key is redacted.
+ * That includes an alphanumeric line after resumed full-width body lines.
  * A 3-letter directory word such as bin needs a second grounding segment.
- * Identifiers and 48-hex or 56-hex strings stay once the key body has ended.
+ * A word-shaped identifier stays when it follows the gap and no body line
+ * has resumed. The same shape after a resumed body line is key material.
  */
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -137,10 +139,9 @@ describe('v1.0.59 a short final key line after a gap is redacted', () => {
     'ok /src/app.ts',
     'Next',
     'Ab1',
-    'IdentifierValue16',
-    'veryLongCamelCaseIdentifier',
     'user_profile_settings_name',
   ];
+  const names = ['IdentifierValue16', 'veryLongCamelCaseIdentifier', 'HTTPServerConfig'];
 
   it('redacts a 16 to 19 character base64-only line, including after full-width lines', () => {
     for (const nl of ['\n', '\r\n', '\r']) {
@@ -174,17 +175,28 @@ describe('v1.0.59 a short final key line after a gap is redacted', () => {
         assert.equal(wide.includes(line), true, `wide ${label}`);
         assert.equal(wide.includes(LINE64), false, `wide ${label}`);
       }
+      for (const line of names) {
+        const raw = block(nl, [LINE64, '', line, 'Next']);
+        const out = redactSecretsInText(raw);
+        const label = `${line} ${JSON.stringify(nl)}`;
+        assert.equal(out, `${PEM_REPLACEMENT}${nl}${nl}${line}${nl}Next${nl}`, label);
+        assert.equal(out.includes(LINE64), false, label);
+
+        const resumed = block(nl, [LINE64, '', LINE64, line, 'Next']);
+        const wide = redactSecretsInText(resumed);
+        assert.equal(wide, `${PEM_REPLACEMENT}${nl}Next${nl}`, `wide ${label}`);
+        assert.equal(wide.includes(line), false, `wide ${label}`);
+        assert.equal(wide.includes(LINE64), false, `wide ${label}`);
+      }
     }
   });
 
-  it('keeps a camelCase name on a unified-diff addition line', () => {
+  it('keeps a camelCase name on a unified-diff addition line after a gap', () => {
     const ident = 'veryLongCamelCaseIdentifier';
     const raw = [
       '+-----BEGIN PRIVATE KEY-----',
       `+${LINE64}`,
       '+',
-      `+${LINE64}`,
-      '+LSZgnu18DKRYfmt0',
       `+${ident}`,
       '+user_profile_settings_name',
       `+${'ab'.repeat(24)}`,
@@ -194,6 +206,23 @@ describe('v1.0.59 a short final key line after a gap is redacted', () => {
     assert.equal(out.includes(ident), true);
     assert.equal(out.includes('user_profile_settings_name'), true);
     assert.equal(out.includes('ab'.repeat(24)), true);
+    assert.equal(out.includes(LINE64), false);
+    assert.equal(out.includes('+Next'), true);
+  });
+
+  it('redacts a camelCase addition line that follows resumed diff body lines', () => {
+    const ident = 'veryLongCamelCaseIdentifier';
+    const raw = [
+      '+-----BEGIN PRIVATE KEY-----',
+      `+${LINE64}`,
+      '+',
+      `+${LINE64}`,
+      '+LSZgnu18DKRYfmt0',
+      `+${ident}`,
+      '+Next',
+    ].join('\n');
+    const out = redactSecretsInText(raw);
+    assert.equal(out.includes(ident), false);
     assert.equal(out.includes('LSZgnu18DKRYfmt0'), false);
     assert.equal(out.includes(LINE64), false);
     assert.equal(out.includes('+Next'), true);
@@ -206,6 +235,107 @@ describe('v1.0.59 a short final key line after a gap is redacted', () => {
       assert.equal(out, `${PEM_REPLACEMENT}${nl}Next${nl}`, JSON.stringify(nl));
       assert.equal(out.includes(line), false);
     }
+  });
+});
+
+describe('v1.0.59 an alphanumeric final line after resumed body lines is redacted', () => {
+  // Letter-only camelCase. The old identifier keep left these raw.
+  const finals = {
+    16: 'abcdefghijKmmmmm',
+    19: 'abcdefghijKmmmmmmmm',
+    20: 'abcdefghijKmmmmmmmmm',
+    43: `abcdefghijK${'m'.repeat(32)}`,
+  };
+
+  it('redacts 16, 19, 20, and 43 character lines after 1 or 2 resumed lines', () => {
+    for (const nl of ['\n', '\r\n', '\r']) {
+      for (const resumes of [1, 2]) {
+        for (const length of [16, 19, 20, 43]) {
+          const line = finals[length];
+          assert.equal(line.length, length);
+          const lines = [LINE64, ''];
+          for (let n = 0; n < resumes; n += 1) lines.push(LINE64);
+          lines.push(line, 'Next');
+          const out = redactSecretsInText(block(nl, lines));
+          const label = `${resumes} ${length} ${JSON.stringify(nl)}`;
+          assert.equal(out, `${PEM_REPLACEMENT}${nl}Next${nl}`, label);
+          assert.equal(out.includes(line), false, label);
+          assert.equal(out.includes(LINE64), false, label);
+        }
+      }
+    }
+  });
+
+  it('redacts a digit-mixed line after a gap and after resumed body lines', () => {
+    const mixed = 'abcDe12fghijklmn';
+    assert.equal(mixed.length, 16);
+    for (const nl of ['\n', '\r\n', '\r']) {
+      const gap = redactSecretsInText(block(nl, [LINE64, '', mixed, 'Next']));
+      assert.equal(gap, `${PEM_REPLACEMENT}${nl}Next${nl}`, `gap ${JSON.stringify(nl)}`);
+      const resumed = redactSecretsInText(block(nl, [LINE64, '', LINE64, mixed, 'Next']));
+      assert.equal(resumed, `${PEM_REPLACEMENT}${nl}Next${nl}`, `wide ${JSON.stringify(nl)}`);
+    }
+  });
+
+  it('keeps a hex digest after a gap and redacts one after resumed body lines', () => {
+    for (const nl of ['\n', '\r\n', '\r']) {
+      for (const line of ['a'.repeat(32), 'b'.repeat(40), 'c'.repeat(64)]) {
+        const resumed = redactSecretsInText(block(nl, [LINE64, '', LINE64, line, 'Next']));
+        const label = `${line.length} ${JSON.stringify(nl)}`;
+        assert.equal(resumed, `${PEM_REPLACEMENT}${nl}Next${nl}`, label);
+        assert.equal(resumed.includes(line), false, label);
+      }
+      const hex40 = 'e'.repeat(40);
+      const gap = redactSecretsInText(block(nl, [LINE64, '', hex40, 'Next']));
+      assert.equal(gap, `${PEM_REPLACEMENT}${nl}${nl}${hex40}${nl}Next${nl}`, `gap ${JSON.stringify(nl)}`);
+      assert.equal(gap.includes(LINE64), false);
+    }
+  });
+
+  it('does not keep a random capital pair as an acronym', () => {
+    const line = 'ABcdefghijklmnop';
+    assert.equal(line.length, 16);
+    for (const nl of ['\n', '\r\n', '\r']) {
+      const out = redactSecretsInText(block(nl, [LINE64, '', line, 'Next']));
+      assert.equal(out, `${PEM_REPLACEMENT}${nl}Next${nl}`, JSON.stringify(nl));
+    }
+  });
+
+  it('seeded sweep leaks no final key line after resumed body lines', () => {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const next = lcg(0x1059f11);
+    const breaks = ['\n', '\r\n', '\r'];
+    let probes = 0;
+    const check = (line, resumes, nl) => {
+      const lines = [LINE64, ''];
+      for (let n = 0; n < resumes; n += 1) lines.push(LINE64);
+      lines.push(line, 'Next');
+      const out = redactSecretsInText(block(nl, lines));
+      const label = `${resumes} ${line.length} ${JSON.stringify(nl)} ${line}`;
+      assert.equal(out, `${PEM_REPLACEMENT}${nl}Next${nl}`, label);
+      assert.equal(out.includes(line), false, label);
+      assert.equal(out.includes(LINE64), false, label);
+      probes += 1;
+    };
+    const forcedCamel = (len) => {
+      let line = alphabet[26 + (next() % 26)];
+      const capAt = 1 + (next() % (len - 2));
+      for (let i = 1; i < len; i += 1) {
+        if (i === capAt) line += alphabet[next() % 26];
+        else line += alphabet[26 + (next() % 26)];
+      }
+      return line;
+    };
+    for (let n = 0; n < 2048; n += 1) {
+      const len = 16 + (next() % 48);
+      let line = '';
+      if (n % 4 === 0) line = forcedCamel(len);
+      else {
+        for (let i = 0; i < len; i += 1) line += alphabet[next() % alphabet.length];
+      }
+      check(line, 1 + (next() % 2), breaks[next() % breaks.length]);
+    }
+    assert.equal(probes, 2048);
   });
 });
 
@@ -228,12 +358,18 @@ describe('v1.0.59 identifiers and 48 or 56 hex stay after the key body', () => {
         assert.equal(out.includes(line), true, `${label} ${line}`);
       }
 
-      const resumed = block(nl, [LINE64, '', LINE64, ident, snake, hex48, hex56, 'Next']);
+      const resumed = block(nl, [LINE64, '', LINE64, snake, hex48, hex56, 'Next']);
       const wide = redactSecretsInText(resumed);
       assert.equal(wide.includes(LINE64), false, `wide ${label}`);
-      for (const line of [ident, snake, hex48, hex56, 'Next']) {
+      for (const line of [snake, hex48, hex56, 'Next']) {
         assert.equal(wide.includes(line), true, `wide ${label} ${line}`);
       }
+      const named = block(nl, [LINE64, '', LINE64, ident, 'Next']);
+      assert.equal(
+        redactSecretsInText(named),
+        `${PEM_REPLACEMENT}${nl}Next${nl}`,
+        `wide name ${label}`,
+      );
     }
   });
 
@@ -504,10 +640,13 @@ describe('v1.0.59 changelog', () => {
     const note = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     const entry = note.slice(note.indexOf('## [1.0.59]'), note.indexOf('## [1.0.58]'));
     assert.match(entry, /16 to 19/);
+    assert.match(entry, /resumed full-width/);
+    assert.match(entry, /HTTPServerConfig/);
     assert.match(entry, /bin/);
     assert.match(entry, /48-hex/);
     assert.match(entry, /56-hex/);
     assert.match(entry, /npm publish, which is on hold/);
     assert.match(entry, /v1\.0\.58 Release QA follow-ups/);
+    assert.match(entry, /version was not bumped again/);
   });
 });
