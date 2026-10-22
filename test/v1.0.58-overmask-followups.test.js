@@ -2,7 +2,8 @@
  * v1.0.58 — v1.0.57 Release QA follow-ups.
  * After a truncated private key and a gap, ordinary text stays visible.
  * A short mixed-case line such as Ab1 stays.
- * A 3-character path word such as nav does not keep a signature fragment.
+ * A 3-character path word such as nav does not keep a signature fragment
+ * unless another segment grounds the path.
  * Deep Java and PHP paths stay visible. Secret-shaped segments stay masked.
  */
 import { describe, it, after } from 'node:test';
@@ -222,6 +223,83 @@ describe('v1.0.58 a gap after a truncated private key stops the mask', () => {
     assert.match(entry, /Ab1/);
     assert.match(entry, /short mixed-case/);
   });
+
+  function base64Line(width, salt) {
+    let out = '';
+    for (let i = 0; i < width; i += 1) out += ALPHABET[(i * 7 + salt) % ALPHABET.length];
+    if (/^[0-9a-fA-F]+$/.test(out)) out = `${out.slice(0, -1)}+`;
+    return out;
+  }
+
+  function hexLine(width) {
+    const hex = '0123456789abcdef';
+    let out = '';
+    for (let i = 0; i < width; i += 1) out += hex[i % hex.length];
+    return out;
+  }
+
+  it('redacts 76-wide and 44-wide body lines after a gap', () => {
+    for (const width of [76, 44]) {
+      const line = base64Line(width, width);
+      for (const nl of ['\n', '\r\n', '\r']) {
+        for (const gap of ['', 'ok']) {
+          const raw = `-----BEGIN PRIVATE KEY-----${nl}${[line, gap, line, 'Next'].join(nl)}${nl}`;
+          const out = redactSecretsInText(raw);
+          const label = `${width} ${JSON.stringify(nl)} gap ${JSON.stringify(gap)}`;
+          assert.equal(out, `${PEM_REPLACEMENT}${nl}Next${nl}`, label);
+          assert.equal(out.includes(line), false, label);
+        }
+      }
+    }
+    const note = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
+    const entry = note.slice(note.indexOf('## [1.0.58]'), note.indexOf('## [1.0.57]'));
+    assert.match(entry, /76-wide/);
+    assert.match(entry, /44-wide/);
+  });
+
+  it('redacts a short final line after a gap', () => {
+    const wide = base64Line(76, 3);
+    const finalLine = base64Line(44, 9);
+    for (const nl of ['\n', '\r\n', '\r']) {
+      const raw = `-----BEGIN PRIVATE KEY-----${nl}${wide}${nl}${nl}${finalLine}${nl}Next${nl}`;
+      const out = redactSecretsInText(raw);
+      assert.equal(out, `${PEM_REPLACEMENT}${nl}Next${nl}`, JSON.stringify(nl));
+      assert.equal(out.includes(wide), false);
+      assert.equal(out.includes(finalLine), false);
+      assert.equal(out.includes('Next'), true);
+    }
+    assert.equal(
+      redactSecretsInText(`-----BEGIN PRIVATE KEY-----\n${LINE64}\n\nQUJDREVGR0g=\nNext\n`),
+      `${PEM_REPLACEMENT}\nNext\n`,
+    );
+    assert.equal(
+      redactSecretsInText(`-----BEGIN PRIVATE KEY-----\n${LINE64}\n\nYQ==\nNext\n`),
+      `${PEM_REPLACEMENT}\nNext\n`,
+    );
+  });
+
+  it('does not end the block on a hex-only body line after a gap', () => {
+    for (const width of [76, 70, 44]) {
+      const body = base64Line(width, 5);
+      const hex = hexLine(width);
+      for (const nl of ['\n', '\r\n', '\r']) {
+        const raw = `-----BEGIN PRIVATE KEY-----${nl}${body}${nl}${nl}${hex}${nl}Next${nl}`;
+        const out = redactSecretsInText(raw);
+        assert.equal(out, `${PEM_REPLACEMENT}${nl}Next${nl}`, `${width} ${JSON.stringify(nl)}`);
+        assert.equal(out.includes(hex), false, width);
+        assert.equal(out.includes(body), false, width);
+      }
+    }
+    const hex64 = 'a'.repeat(64);
+    assert.equal(
+      redactSecretsInText(`-----BEGIN PRIVATE KEY-----\n${LINE64}\n\n${hex64}\nNext\n`),
+      `${PEM_REPLACEMENT}\n\n${hex64}\nNext\n`,
+    );
+    assert.equal(
+      redactSecretsInText(`-----BEGIN PRIVATE KEY-----\n${LINE64}\n\n${hex64}\n${LINE64}\nNext\n`),
+      `${PEM_REPLACEMENT}\nNext\n`,
+    );
+  });
 });
 
 describe('v1.0.58 3-character path fragments stay masked', () => {
@@ -234,6 +312,14 @@ describe('v1.0.58 3-character path fragments stay masked', () => {
     '/components/NavBar.vue',
     '/src/api/getUser.js',
     '/Users/pramod/repo/x.ts',
+    '/src/lib/redact.ts',
+    '/node_modules/pkg/index.js',
+    '/src/nav/x.ts',
+    '/lib/nav.ts',
+    '/o/nav.ts',
+    '/src/bar/index.ts',
+    '/src/nav.ts',
+    '/nav/src.ts',
     '/home/runner/work/a/b.ts',
     'src/main/java/com/example/service/UserService.java',
     '/src/main/java/com/example/service/UserService.java',
@@ -247,8 +333,6 @@ describe('v1.0.58 3-character path fragments stay masked', () => {
     'nav.ts',
     '/bar.ts',
     '/get.ts',
-    '/src/nav.ts',
-    '/nav/src.ts',
     '/xyz.ts',
     '/abc/def.ts',
     'src/main/java/com/example/service/Ahsqowx.java',
