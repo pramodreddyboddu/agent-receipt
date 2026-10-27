@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Runs `npm pack --dry-run` and asserts the tarball includes bin + dist.
+ * Runs `npm pack --dry-run --json` and asserts the tarball includes bin + dist.
  * Also guards against the npm 11 bin-path footgun: a leading `./` on bin
  * targets is treated as invalid at publish time and can strip the CLI.
  * Exit 0 on success; non-zero with a clear message on failure.
@@ -39,7 +39,7 @@ if (badBinPaths.length) {
   process.exit(1);
 }
 
-const result = spawnSync('npm', ['pack', '--dry-run'], {
+const result = spawnSync('npm', ['pack', '--dry-run', '--json'], {
   cwd: root,
   encoding: 'utf8',
   shell: false,
@@ -47,36 +47,41 @@ const result = spawnSync('npm', ['pack', '--dry-run'], {
 
 const out = `${result.stdout || ''}${result.stderr || ''}`;
 if (result.status !== 0) {
-  console.error('npm pack --dry-run failed:\n' + out);
+  console.error('npm pack --dry-run --json failed:\n' + out);
   process.exit(result.status ?? 1);
 }
 
-const lines = out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-// npm prints "npm notice" lines listing package contents
-const hasBin =
-  lines.some((l) => /bin\/agent-receipt\.js/.test(l)) ||
-  lines.some((l) => /\bbin\b/.test(l) && /agent-receipt/.test(l));
-const hasDist =
-  lines.some((l) => /dist\/index\.js/.test(l)) ||
-  lines.some((l) => /dist\//.test(l));
+let packed;
+try {
+  packed = JSON.parse(result.stdout || '');
+} catch {
+  console.error('pack:check failed — npm pack --dry-run --json did not print JSON on stdout');
+  console.error(out);
+  process.exit(1);
+}
+const entry = Array.isArray(packed) ? packed[0] : packed;
+const files = Array.isArray(entry && entry.files)
+  ? entry.files.map((file) => (typeof file === 'string' ? file : file && file.path) || '')
+  : [];
 
 const missing = [];
-if (!hasBin) missing.push('bin/agent-receipt.js (or bin/)');
-if (!hasDist) missing.push('dist/ (e.g. dist/index.js)');
+if (!files.includes('bin/agent-receipt.js')) missing.push('bin/agent-receipt.js');
+if (!files.includes('dist/index.js')) missing.push('dist/index.js');
 for (const pack of ['baseline.yml', 'supply-chain.yml', 'ci-protect.yml', 'strict.yml']) {
   const needle = `policies/${pack}`;
-  if (!lines.some((l) => l.includes(needle))) missing.push(needle);
+  if (!files.includes(needle)) missing.push(needle);
 }
 
 if (missing.length) {
   console.error('pack:check failed — tarball missing required paths:');
   for (const m of missing) console.error('  - ' + m);
-  console.error('\nnpm pack --dry-run output:\n' + out);
+  console.error('\nnpm pack --dry-run --json output:\n' + out);
   process.exit(1);
 }
 
+const errLines = `${result.stderr || ''}`.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 // Flag publish-time auto-correct noise if dry-run surfaces it
-const publishWarn = lines.filter((l) => /warn publish.*bin/i.test(l) || /bin\[.+\]".*invalid|cleaned/i.test(l));
+const publishWarn = errLines.filter((l) => /warn publish.*bin/i.test(l) || /bin\[.+\]".*invalid|cleaned/i.test(l));
 if (publishWarn.length) {
   console.error('pack:check failed — npm would auto-correct/remove bin metadata:');
   for (const w of publishWarn) console.error('  ' + w);
@@ -84,9 +89,7 @@ if (publishWarn.length) {
 }
 
 console.log('pack:check OK — bin + dist present; bin path has no leading "./"');
-const notices = lines.filter((l) => /npm notice/.test(l) || /^agent-receipt-/.test(l) || /pramodreddyboddu-agent-receipt-/.test(l));
-if (notices.length) {
-  console.log(notices.slice(0, 40).join('\n'));
-  if (notices.length > 40) console.log(`… (${notices.length - 40} more lines)`);
-}
+const filename = entry && typeof entry.filename === 'string' ? entry.filename : '';
+if (filename) console.log(filename);
+console.log(`${files.length} paths in npm pack --dry-run --json`);
 process.exit(0);

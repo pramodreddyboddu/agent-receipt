@@ -126,7 +126,7 @@ describe('v1.0.53 exact footer and ASCII trailing whitespace', { concurrency: 1 
       assert.equal(body.verified, true);
       assert.equal(body.trailingIgnored, false);
     } else {
-      assert.match(result.out, /OK/);
+      assert.match(result.out, /✓ OK — receipt integrity verified/);
     }
   }
 
@@ -146,7 +146,7 @@ describe('v1.0.53 exact footer and ASCII trailing whitespace', { concurrency: 1 
       assert.equal(body.reason.includes('signature'), false, label);
     } else {
       assert.match(result.err, /trailing content after the last chained record/);
-      assert.doesNotMatch(result.out, /OK/);
+      assert.doesNotMatch(result.out, /✓ OK — receipt integrity verified/);
     }
   }
 

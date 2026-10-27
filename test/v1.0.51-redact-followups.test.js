@@ -198,8 +198,8 @@ describe('v1.0.51 padded JWT joined by + / _ =', () => {
     assert.equal(redactSecretsInText(`${SAMPLE}-low`), '[REDACTED]');
     assert.equal(redactSecretsInText(`${STD}-suffix`), '[REDACTED]');
     assert.equal(redactSecretsInText(`${STD}-low`), '[REDACTED]');
-    assert.equal(redactSecretsInText(`${SAMPLE}_x`), '[REDACTED]_x');
-    assert.equal(redactSecretsInText(`${SAMPLE}-`), '[REDACTED]-');
+    assert.equal(redactSecretsInText(`${SAMPLE}_x`), '[REDACTED]');
+    assert.equal(redactSecretsInText(`${SAMPLE}-`), '[REDACTED]');
     const url = redactSecretsInText(`https://example.com/${SAMPLE}`);
     assert.equal(url, 'https://example.com/[REDACTED]');
     assertJwtGone(url, SAMPLE, 'url');

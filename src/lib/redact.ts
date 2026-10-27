@@ -342,8 +342,6 @@ export const JWT_SEGMENT_MAX = 256 * 1024;
  */
 export type JwtMaskMode = 'general' | 'strict';
 
-/** `_x` / `_ab`, or a lone `_` / `-`. A hyphen plus a word or token tail is handled separately. */
-const JWT_PRESERVE_SUFFIX = /(_[A-Za-z0-9]{1,2}|[_-])$/;
 /**
  * Extra `eyJ` starts tried inside one header after the first candidate fails.
  * Each try slices the same span. `eyJ-`, `eyJ_`, and `eyJ=` make every
@@ -560,16 +558,13 @@ function hyphenSuffixRun(span: string): { index: number; clear: boolean } | null
 }
 
 /**
- * How much of `span` to replace. `keep` characters at the end stay
- * (`_x`, a lone `_` or `-`, or a whole-word suffix such as `-then`,
- * `-Then`, or `-config-file`). Anything else after a real token is
- * consumed, including `-suffix`, `-low`, `-the`, and `-word9`.
+ * How much of `span` to replace. A whole-word hyphen suffix stays
+ * (`-then`, `-Then`, `-config-file`). A base64url tail split on `_` or
+ * `-` does not: 1, 2, or 3 raw characters (`_`, `-`, `_x`, `_ab`) are
+ * part of the token. Anything else after a real token is consumed,
+ * including `-suffix`, `-low`, `-the`, and `-word9`.
  */
 function jwtMaskCut(span: string, mode: JwtMaskMode): { cut: number; keep: number } | null {
-  const preserve = JWT_PRESERVE_SUFFIX.exec(span);
-  if (preserve && preserve.index > 0 && isJwtToken(span.slice(0, preserve.index), mode)) {
-    return { cut: preserve.index, keep: preserve[0].length };
-  }
   const run = hyphenSuffixRun(span);
   if (run && run.index > 0 && isJwtToken(span.slice(0, run.index), mode)) {
     if (run.clear) return { cut: run.index, keep: span.length - run.index };
@@ -1964,6 +1959,43 @@ function binDirNeedsMoreGround(text: string, at: number, segEnd: number): boolea
 }
 
 /**
+ * A 3-letter path atom (`src`, `app`, `bin`, `lib`). Any letter case.
+ * A leading dot (`.bin`) is not part of the name. One pass over a
+ * segment already inside the 48-character tail.
+ */
+function isThreeLetterAtomName(text: string, from: number, to: number): boolean {
+  let start = from;
+  if (start < to && text.charCodeAt(start) === 46) start += 1;
+  if (to - start !== 3) return false;
+  let word = '';
+  for (let i = start; i < to; i += 1) {
+    let code = text.charCodeAt(i);
+    if (code >= 65 && code <= 90) code += 32;
+    else if (code < 97 || code > 122) return false;
+    word += String.fromCharCode(code);
+  }
+  return PATH_ATOMS.has(word);
+}
+
+/**
+ * One segment, and that segment is a 3-letter directory atom
+ * (`/Src`, `/App`, `/Bin`, `/lib`). The same second ground `bin` needs:
+ * `/Src.ts` and `/App.ts` stay masked, and `/src/app`, `src/App`, and
+ * `app/src/index` have another segment so they stay. One pass over a
+ * tail already capped at 48 characters.
+ */
+function loneThreeLetterDir(text: string, at: number, segEnd: number): boolean {
+  let i = at;
+  if (i < segEnd && text.charCodeAt(i) === 43) i += 1;
+  if (i < segEnd && text.charCodeAt(i) === 47) i += 1;
+  if (i >= segEnd) return false;
+  for (let k = i; k < segEnd; k += 1) {
+    if (text.charCodeAt(k) === 47) return false;
+  }
+  return isThreeLetterAtomName(text, i, segEnd);
+}
+
+/**
  * A project path glued on with no leading `/` or `+`
  * (`src/main/java/com/example/service/UserService`). The first character
  * is a letter and a later character is `/`. A `+` is still signature
@@ -1986,6 +2018,7 @@ function isUnslashedDeepPath(text: string, at: number, segEnd: number): boolean 
 
 function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): boolean {
   if (binDirNeedsMoreGround(text, at, segEnd)) return false;
+  if (loneThreeLetterDir(text, at, segEnd)) return false;
   if (
     !isClearGluedPath(text, at, segEnd) &&
     !isKnownExtensionlessTail(text, at, segEnd) &&
@@ -2077,7 +2110,8 @@ function rsaShortTailIsClearPath(text: string, at: number, segEnd: number): bool
  * one repeated character or an ordinary path word. A tail of 3 to 7
  * characters, measured without the leading `/` or `+`, splits only when
  * a 2-to-4 letter extension follows and every segment of 3 or more
- * letters is a path word (`/App.md`, `/README.md`, `/ab.ts`). A 7-letter
+ * letters is a path word (`/README.md`, `/ab.ts`). A lone 3-letter
+ * directory atom (`/App.md`, `/Src.ts`) stays inside the mask. A 7-letter
  * segment is that short tail. `/Ahs.ts`, `/Qow.md`, `/hnw/x.ts`,
  * `/Ahsqowx.ts`, `/OHALMQO.ts`, and `/QZXWVKT.md` stay inside the mask.
  * A tail with an uppercase letter splits only when that extension follows
@@ -2119,6 +2153,9 @@ function rsaUngluedFilenameCut(
       best = at;
       continue;
     }
+    // A lone 3-letter directory atom (`Src.ts`, `App.ts`) is the same
+    // fragment as `/Src.ts`. It stays inside the mask.
+    if (isThreeLetterAtomName(text, at, sigEnd)) continue;
     if (!filenameExtensionAfter(text, sigEnd)) continue;
     if (dictionaryWordAt(text, at, sigEnd) || dictionaryHumps(text, at, sigEnd) || acronymHumps(text, at, sigEnd)) {
       best = at;
@@ -2295,7 +2332,11 @@ function clearPathSplit(
   // No second scan of the buffer. RSA uses one length compare on that run.
   const runLen = end - (dot2 + 1);
   const alg = jwtHeaderInfo(header, mode).alg;
-  const clearPath = isClearGluedPath(text, i, end) || isKnownExtensionlessTail(text, i, end);
+  const shaped = isClearGluedPath(text, i, end) || isKnownExtensionlessTail(text, i, end);
+  // A lone 3-letter directory atom needs a second segment, on every alg.
+  // `/Bin.ts` already used that rule for RSA. `/Src.ts` and `/App.ts` do too.
+  const clearPath =
+    shaped && !binDirNeedsMoreGround(text, i, end) && !loneThreeLetterDir(text, i, end);
   let measure = runLen;
   if (signatureSizesForAlg(alg) === SIG_RSA) {
     const tailLen = runLen - sigLen;
@@ -2471,9 +2512,10 @@ function isPureEyJPrefixRun(text: string, start: number, end: number): boolean {
  * inside the mask. An unknown or undecodable `alg` never splits. Dotted
  * text whose header does not decode as a JWT (`eyJsee.the.docs`, versions,
  * filenames) is left alone.
- * `_x`, a lone `_` or `-`, and a whole-word suffix such as `-then`,
- * `-Then`, or `-config-file` stay. A token tail, a short stopword, and a
- * mixed tail are consumed. A header that is only `eyJ-` / `eyJ_` / `eyJ=` /
+ * A whole-word suffix such as `-then`, `-Then`, or `-config-file` stays.
+ * A short tail split on `_` or `-` does not: 1, 2, or 3 raw characters
+ * (`_`, `-`, `_x`, `_ab`) stay inside the mask. A token tail, a short
+ * stopword, and a mixed tail are consumed. A header that is only `eyJ-` / `eyJ_` / `eyJ=` /
  * `eyJ+` / `eyJ/` chunks is skipped in one pass.
  */
 export function maskJwtTokens(text: string, mode: JwtMaskMode = 'general'): string {
@@ -2628,22 +2670,123 @@ function isKeyMaterialSpan(line: string, start: number, end: number): boolean {
   return shaped;
 }
 
-/** A full PEM body line: key-shaped base64 only, after ASCII space, tab, and CR. */
-function isPemBodyLine(line: string): boolean {
+/**
+ * How a leading diff marker is removed before key text is read.
+ * 0: none. A leading `+` is base64.
+ * 1: one leading `+` or `-`, and not `++` or `--`. File markers stay.
+ * 2: inside an `@@` hunk. One leading space, `+`, or `-` is a marker
+ * on any line, including when the next character is the same mark.
+ * The BEGIN line does not have to carry the prefix.
+ */
+const PEM_MARK_NONE = 0;
+const PEM_MARK_SIGN = 1;
+const PEM_MARK_HUNK = 2;
+
+/**
+ * Index after one unified-diff marker. A single leading `+` or `-` is
+ * not part of the key line. `+++` and `---` stay, so a file marker is
+ * not stripped into key material. The caller has already skipped
+ * leading space and tab, and only calls this when the block is a diff
+ * that is not an `@@` hunk. One comparison.
+ */
+function pemDiffContentStart(line: string, start: number, end: number): number {
+  if (start >= end) return start;
+  const mark = line.charCodeAt(start);
+  if (mark !== 43 && mark !== 45) return start;
+  const next = start + 1;
+  if (next < end && line.charCodeAt(next) === mark) return start;
+  return next;
+}
+
+/** True when the trimmed line opens with one `+` or one `-`, not `++` or `--`. */
+function hasSingleDiffMark(line: string): boolean {
+  const span = pemBodySpan(line);
+  return pemDiffContentStart(line, span.start, span.end) !== span.start;
+}
+
+/**
+ * Where key text starts. `PEM_MARK_SIGN` skips one `+` or `-`.
+ * `PEM_MARK_HUNK` skips one space, `+`, or `-`. A leading `+` in a
+ * normal PEM line is base64.
+ */
+function pemKeyStart(line: string, start: number, end: number, mark: number): number {
+  if (mark === PEM_MARK_NONE || start >= end) return start;
+  const code = line.charCodeAt(start);
+  if (mark === PEM_MARK_HUNK) {
+    if (code === 32 || code === 43 || code === 45) return start + 1;
+    return start;
+  }
+  return pemDiffContentStart(line, start, end);
+}
+
+/**
+ * A full PEM body line: key-shaped base64 only, after ASCII space, tab,
+ * and CR. Inside an `@@` hunk the first space, `+`, or `-` is the diff
+ * marker and is not trimmed as indentation before that check, so a
+ * second `+` stays base64.
+ */
+function isPemBodyLine(line: string, mark: number): boolean {
   let start = 0;
   let end = line.length;
-  while (start < end) {
-    const code = line.charCodeAt(start);
-    if (code !== 32 && code !== 9 && code !== 13) break;
-    start += 1;
-  }
   while (end > start) {
     const code = line.charCodeAt(end - 1);
     if (code !== 32 && code !== 9 && code !== 13) break;
     end -= 1;
   }
+  if (mark === PEM_MARK_HUNK && start < end) {
+    const code = line.charCodeAt(start);
+    if (code === 32 || code === 43 || code === 45) start += 1;
+  }
+  while (start < end) {
+    const code = line.charCodeAt(start);
+    if (code !== 32 && code !== 9 && code !== 13) break;
+    start += 1;
+  }
+  start = pemKeyStart(line, start, end, mark === PEM_MARK_HUNK ? PEM_MARK_NONE : mark);
   if (end <= start) return false;
   return isKeyMaterialSpan(line, start, end);
+}
+
+/**
+ * Key text of one hunk payload line, after one diff marker.
+ * A leading `+` that is the marker is not part of the span.
+ */
+function hunkKeySpan(line: string): { start: number; end: number } {
+  let start = 0;
+  let end = line.length;
+  while (end > start) {
+    const code = line.charCodeAt(end - 1);
+    if (code !== 32 && code !== 9 && code !== 13) break;
+    end -= 1;
+  }
+  if (start < end) {
+    const code = line.charCodeAt(start);
+    if (code === 32 || code === 43 || code === 45) start += 1;
+  }
+  while (start < end) {
+    const code = line.charCodeAt(start);
+    if (code !== 32 && code !== 9 && code !== 13) break;
+    start += 1;
+  }
+  return { start, end };
+}
+
+/**
+ * A short ordinary token such as `Zm9v`. It is base64-shaped and has a
+ * digit, and it has no `+`, `/`, or `=`, so it is not a padded key
+ * fragment. A letter-only line is not this: that line is already prose.
+ */
+function isShortOrdinaryBase64Span(line: string, start: number, end: number): boolean {
+  const n = end - start;
+  if (n < PEM_BODY_SHORT_MIN || n >= PEM_BODY_MIN || n % 4 !== 0) return false;
+  let digit = false;
+  for (let i = start; i < end; i += 1) {
+    const code = line.charCodeAt(i);
+    if (!isBase64Code(code)) return false;
+    if (code === 43 || code === 47 || code === 61) return false;
+    if (code >= 48 && code <= 57) digit = true;
+  }
+  return digit;
 }
 
 /**
@@ -2651,16 +2794,22 @@ function isPemBodyLine(line: string): boolean {
  * follows on that same line. -1 when the line is a full body line or the
  * run is not key material. The prose must start with ASCII space or tab.
  * A path such as `/src/components/Button.tsx` is not a partial key line.
- * Leading ASCII space and tab are not part of the run. The prose,
- * including the space before it, stays.
+ * Leading ASCII space and tab are not part of the run. When the block
+ * is a diff, one leading `+` or `-` is a marker and is part of the
+ * redacted run. The prose, including the space before it, stays.
  */
-function pemPartialCut(line: string): number {
+function pemPartialCut(line: string, mark: number): number {
   let i = 0;
+  if (mark === PEM_MARK_HUNK && i < line.length) {
+    const code = line.charCodeAt(i);
+    if (code === 32 || code === 43 || code === 45) i += 1;
+  }
   while (i < line.length) {
     const code = line.charCodeAt(i);
     if (code !== 32 && code !== 9) break;
     i += 1;
   }
+  i = pemKeyStart(line, i, line.length, mark === PEM_MARK_HUNK ? PEM_MARK_NONE : mark);
   const start = i;
   while (i < line.length && isBase64Code(line.charCodeAt(i))) i += 1;
   if (i === start || i >= line.length) return -1;
@@ -2704,16 +2853,18 @@ function isHexDigitCode(code: number): boolean {
   );
 }
 
-function pemTrimWidth(line: string): number {
+function pemTrimWidth(line: string, mark: number): number {
   const span = pemBodySpan(line);
-  return span.end - span.start;
+  const start = pemKeyStart(line, span.start, span.end, mark);
+  return span.end - start;
 }
 
-/** Trimmed span is only hex digits. A sha256 line is this shape. */
-function isPureHexLine(line: string): boolean {
+/** Trimmed span is only hex digits. A sha256 line is this shape. A diff mark is not part of the span when the block is a diff. */
+function isPureHexLine(line: string, mark: number): boolean {
   const span = pemBodySpan(line);
-  if (span.end <= span.start) return false;
-  for (let i = span.start; i < span.end; i += 1) {
+  const start = pemKeyStart(line, span.start, span.end, mark);
+  if (span.end <= start) return false;
+  for (let i = start; i < span.end; i += 1) {
     if (!isHexDigitCode(line.charCodeAt(i))) return false;
   }
   return true;
@@ -2723,15 +2874,16 @@ function isPureHexLine(line: string): boolean {
  * A hex digest sitting in prose: MD5 32, SHA-1 40, SHA-256 64, SHA-384 96,
  * SHA-512 128. Other hex widths are body-shaped, not digests.
  */
-function isHexDigestLine(line: string): boolean {
-  if (!isPureHexLine(line)) return false;
-  const n = pemTrimWidth(line);
+function isHexDigestLine(line: string, mark: number): boolean {
+  if (!isPureHexLine(line, mark)) return false;
+  const n = pemTrimWidth(line, mark);
   return n === 32 || n === 40 || n === 64 || n === 96 || n === 128;
 }
 
-function hasPemKeyPunctuation(line: string): boolean {
+function hasPemKeyPunctuation(line: string, mark: number): boolean {
   const span = pemBodySpan(line);
-  for (let i = span.start; i < span.end; i += 1) {
+  const start = pemKeyStart(line, span.start, span.end, mark);
+  for (let i = start; i < span.end; i += 1) {
     const code = line.charCodeAt(i);
     if (code === 43 || code === 47 || code === 61) return true;
   }
@@ -2759,59 +2911,116 @@ function trailingDigitCut(line: string, start: number, end: number): number {
 }
 
 /**
- * A path word, or `config`. `config` is not a path atom: adding it there
- * would keep a signature fragment. It is only a hump of a prose name
- * such as `HTTPServerConfig`. One pass over a hump already cut from one line.
+ * Prose words that are not path atoms. They do not ground a path.
+ * A hump of one letter is only `a` or `i`. One lookup per hump.
  */
-function pemProseWord(line: string, from: number, to: number): boolean {
-  if (dictionaryWordAt(line, from, to, true)) return true;
-  if (to - from !== 6) return false;
-  const word = 'config';
-  for (let i = 0; i < 6; i += 1) {
-    let code = line.charCodeAt(from + i);
+const IDENTIFIER_WORDS = new Set([
+  'a',
+  'camel',
+  'case',
+  'i',
+  'identifier',
+  'is',
+  'long',
+  'name',
+  'now',
+  'response',
+  'this',
+  'value',
+  'very',
+]);
+
+/**
+ * Abbreviations kept in any letter case (`JSON`, `Url`, `id`, `HTTP`).
+ * They do not ground a path. `json` and `http` are also path atoms;
+ * `url` and `id` are not.
+ */
+const IDENTIFIER_ABBREVS = new Set([
+  'http',
+  'id',
+  'json',
+  'url',
+]);
+
+/**
+ * A real word or a common abbreviation. Path words and `config` count.
+ * `config` is not a path atom: adding it there would keep a signature
+ * fragment. All-caps matches an abbreviation or a path atom, not an
+ * ordinary word, so a random capital run stays key material. A hump of
+ * one letter is only `a` or `i`. One pass over a hump already cut from
+ * one line.
+ */
+function identifierWordAt(line: string, from: number, to: number): boolean {
+  const n = to - from;
+  if (n < 1 || n > 24) return false;
+  if (n === 1) {
+    let code = line.charCodeAt(from);
     if (code >= 65 && code <= 90) code += 32;
-    if (code !== word.charCodeAt(i)) return false;
+    return code === 97 || code === 105;
   }
-  return true;
+  if (dictionaryWordAt(line, from, to, true)) return true;
+  if (n === 6) {
+    const config = 'config';
+    let match = true;
+    for (let i = 0; i < 6; i += 1) {
+      let code = line.charCodeAt(from + i);
+      if (code >= 65 && code <= 90) code += 32;
+      if (code !== config.charCodeAt(i)) match = false;
+    }
+    if (match) return true;
+  }
+  let lower = '';
+  let uppers = 0;
+  for (let i = from; i < to; i += 1) {
+    const code = line.charCodeAt(i);
+    if (code >= 97 && code <= 122) lower += String.fromCharCode(code);
+    else if (code >= 65 && code <= 90) {
+      uppers += 1;
+      lower += String.fromCharCode(code + 32);
+    } else return false;
+  }
+  if (IDENTIFIER_ABBREVS.has(lower)) return true;
+  if (uppers === n || uppers > 1) return false;
+  if (uppers === 1 && (line.charCodeAt(from) < 65 || line.charCodeAt(from) > 90)) return false;
+  return IDENTIFIER_WORDS.has(lower);
 }
 
 /**
- * camelCase or PascalCase with one capital per hump
- * (`veryLongCamelCaseIdentifier`). Two capitals in a row are not this
- * shape. The span is letters only; the caller strips a trailing digit run.
- * One pass.
+ * camelCase or PascalCase whose every hump is a real word
+ * (`veryLongCamelCaseIdentifier`, `thisIsAVeryLongCamelCaseIdentifierName`).
+ * A capital starts a hump, including a one-letter word (`A`). Two
+ * capitals in a row are a one-letter hump, not a reason to reject the
+ * shape. The span is letters only; the caller strips a trailing digit
+ * run. One pass.
  */
 function isSingleCapIdentifier(line: string, start: number, end: number): boolean {
   if (end - start < 2) return false;
   const first = line.charCodeAt(start);
-  const firstUpper = first >= 65 && first <= 90;
-  const firstLower = first >= 97 && first <= 122;
-  if (!firstUpper && !firstLower) return false;
+  if (!((first >= 65 && first <= 90) || (first >= 97 && first <= 122))) return false;
   let humps = 0;
-  let lowerInHump = firstLower;
-  for (let i = start + 1; i < end; i += 1) {
-    const code = line.charCodeAt(i);
-    if (code >= 65 && code <= 90) {
-      if (!lowerInHump) return false;
-      humps += 1;
-      lowerInHump = false;
+  let humpFrom = start;
+  for (let i = start + 1; i <= end; i += 1) {
+    const split = i === end || (line.charCodeAt(i) >= 65 && line.charCodeAt(i) <= 90);
+    if (!split) {
+      const code = line.charCodeAt(i);
+      if (code < 97 || code > 122) return false;
       continue;
     }
-    if (code >= 97 && code <= 122) {
-      lowerInHump = true;
-      continue;
-    }
-    return false;
+    if (!identifierWordAt(line, humpFrom, i)) return false;
+    humps += 1;
+    humpFrom = i;
   }
-  return humps >= 1 && lowerInHump;
+  return humps >= 2;
 }
 
 /**
- * An acronym name (`HTTPServerConfig` is `HTTP` + `Server` + `Config`).
- * A run of capitals is one hump. When lowercase follows, the last capital
- * starts the next word. Every hump is a real word, and at least one hump
+ * An acronym name (`HTTPServerConfig` is `HTTP` + `Server` + `Config`,
+ * `parseJSONResponse` is `parse` + `JSON` + `Response`). A run of capitals
+ * is one hump. When lowercase follows, the last capital starts the next
+ * word. Every hump is a real word or abbreviation, and at least one hump
  * is two or more capitals, so a random capital pair stays key material.
- * One pass over a letter span already cut from one line.
+ * A one-letter hump is only `a` or `i`. One pass over a letter span
+ * already cut from one line.
  */
 function isAcronymWordIdentifier(line: string, start: number, end: number): boolean {
   if (end - start < 4) return false;
@@ -2821,8 +3030,8 @@ function isAcronymWordIdentifier(line: string, start: number, end: number): bool
   let acronym = false;
   let i = start;
   const take = (from: number, to: number, caps: number): boolean => {
-    if (to - from < 2) return false;
-    if (!pemProseWord(line, from, to)) return false;
+    if (to <= from) return false;
+    if (!identifierWordAt(line, from, to)) return false;
     if (caps >= 2) acronym = true;
     humps += 1;
     return true;
@@ -2879,25 +3088,219 @@ function isAcronymWordIdentifier(line: string, start: number, end: number): bool
 }
 
 /**
- * camelCase or PascalCase (`veryLongCamelCaseIdentifier`,
- * `IdentifierValue16`, `HTTPServerConfig`). Each hump is letters. Digits
- * are only a trailing run, so a digit mixed into the line stays key
- * material. Two capitals in a row are a name only when every hump is a
- * real word. One leading `+` is a diff marker and is not part of the
- * name. One pass over the trimmed line, then one pass over its humps.
+ * snake_case whose every part is a real word (`user_profile_settings_name`).
+ * A digit in a part is not a word. One pass.
  */
-function isCamelOrPascalIdentifier(line: string): boolean {
-  const span = pemBodySpan(line);
-  let start = span.start;
-  const end = span.end;
-  // A unified-diff addition marker is a single leading `+`. It is not
-  // part of the name. A second `+` is still key material.
-  if (start < end && line.charCodeAt(start) === 43) start += 1;
+function isSnakeCaseIdentifier(line: string, start: number, end: number): boolean {
+  if (line.charCodeAt(start) === 95 || line.charCodeAt(end - 1) === 95) return false;
+  let parts = 0;
+  let i = start;
+  while (i < end) {
+    if (line.charCodeAt(i) === 95) return false;
+    const from = i;
+    while (i < end && line.charCodeAt(i) !== 95) i += 1;
+    if (!identifierWordAt(line, from, i)) return false;
+    parts += 1;
+    if (i < end) i += 1;
+  }
+  return parts >= 2;
+}
+
+/**
+ * Letter pairs from ordinary words and code names. Bit (a * 26 + b) is
+ * set when that lowercase pair may sit inside a camelCase hump. A random
+ * run such as `bc` in `abcdefgh` is unset. 85 bytes. One lookup per pair.
+ */
+const IDENTIFIER_PAIR_BITS: Uint8Array = Buffer.from(
+  '7r/+RW5bVNvt0Ve2Rf/7/8c1exSd59FF/Ed//a5GBBHRlc7BXjJPH/kU9P3/9vbv32e3TwAIEPT3+1Xf/9V/vnd/+Q5EBQEQmedABSRCU/lMRAABAA==',
+  'base64',
+);
+
+function identifierPair(first: number, second: number): boolean {
+  if (first < 97 || first > 122 || second < 97 || second > 122) return false;
+  const index = (first - 97) * 26 + (second - 97);
+  const byte = IDENTIFIER_PAIR_BITS[index >> 3] ?? 0;
+  return (byte & (1 << (index & 7))) !== 0;
+}
+
+/**
+ * One hump of a word-shaped camelCase name. A hump of one letter is only
+ * `a` or `i`. A hump of 2 to 4 letters may be an abbreviation without a
+ * vowel (`Msg`, `Jwt`, `Html`). A longer hump is at most 16 letters,
+ * contains a vowel (`w` counts), has no consonant run longer than 4, and every letter
+ * pair is an ordinary pair. The capital, when present, is the first
+ * letter. One pass.
+ */
+function shapedCamelHump(line: string, from: number, to: number): boolean {
+  const n = to - from;
+  if (n === 1) {
+    let code = line.charCodeAt(from);
+    if (code >= 65 && code <= 90) code += 32;
+    return code === 97 || code === 105;
+  }
+  if (n < 2 || n > 16) return false;
+  let vowel = false;
+  let run = 0;
+  let maxRun = 0;
+  let prev = 0;
+  for (let i = from; i < to; i += 1) {
+    let code = line.charCodeAt(i);
+    if (code >= 65 && code <= 90) {
+      if (i !== from) return false;
+      code += 32;
+    } else if (code < 97 || code > 122) {
+      return false;
+    }
+    // `w` counts with the vowels. It breaks clusters such as `wnstr`
+    // in `downstream` without making a random run of five consonants a word.
+    if (
+      code === 97 || code === 101 || code === 105 || code === 111 ||
+      code === 117 || code === 121 || code === 119
+    ) {
+      vowel = true;
+      run = 0;
+    } else {
+      run += 1;
+      if (run > maxRun) maxRun = run;
+    }
+    if (i > from && !identifierPair(prev, code)) return false;
+    prev = code;
+  }
+  if (n >= 5 && !vowel) return false;
+  if (n > 4 && maxRun > 4) return false;
+  return true;
+}
+
+/**
+ * camelCase whose humps are word-shaped, not a random capital
+ * (`getUserProfileById`, `fetchAccountBalance`, `handleWebSocketMsg`).
+ * At least two humps, and at least one hump is 4 or more letters. The
+ * name is mostly lowercase. Two capitals in a row are an acronym, not
+ * this shape. One pass over a letter span already cut from one line.
+ */
+function isWordShapedCamelIdentifier(line: string, start: number, end: number): boolean {
+  if (end - start < 2) return false;
+  const first = line.charCodeAt(start);
+  if (!((first >= 65 && first <= 90) || (first >= 97 && first <= 122))) return false;
+  let humps = 0;
+  let longHump = false;
+  let lowers = 0;
+  let uppers = 0;
+  let humpFrom = start;
+  for (let i = start + 1; i <= end; i += 1) {
+    const atEnd = i === end;
+    const code = atEnd ? 0 : line.charCodeAt(i);
+    const upper = code >= 65 && code <= 90;
+    if (!atEnd && !upper) {
+      if (code < 97 || code > 122) return false;
+      continue;
+    }
+    if (!atEnd && line.charCodeAt(i - 1) >= 65 && line.charCodeAt(i - 1) <= 90) return false;
+    if (!shapedCamelHump(line, humpFrom, i)) return false;
+    const n = i - humpFrom;
+    if (n >= 4) longHump = true;
+    for (let k = humpFrom; k < i; k += 1) {
+      const humpCode = line.charCodeAt(k);
+      if (humpCode >= 97 && humpCode <= 122) lowers += 1;
+      else uppers += 1;
+    }
+    humps += 1;
+    humpFrom = i;
+  }
+  return humps >= 2 && longHump && lowers > uppers;
+}
+
+/**
+ * camelCase, PascalCase, or snake_case (`veryLongCamelCaseIdentifier`,
+ * `IdentifierValue16`, `HTTPServerConfig`, `parseJSONResponse`,
+ * `getUserProfileById`). A name stays when every part is a real word or
+ * a common abbreviation, or when it is word-shaped camelCase: at least
+ * two humps of 2 to 16 letters, mostly lowercase, each hump of 5 or
+ * more letters containing a vowel. Digits in a camelCase or PascalCase name are only
+ * a trailing run, so a digit mixed into the line stays key material, except a
+ * hump that is exactly `k8s`, `sha256`, or `base64` beside real words
+ * (`k8sNamespaceName`, `sha256DigestValue`, `base64UrlEncoded`).
+ * One leading `+` or `-` is a diff marker only when the block is a diff.
+ * `+++` and `---` are not stripped. One pass over the trimmed line, then
+ * one pass over its parts.
+ */
+/**
+ * Digit humps that are real names, not key text. Anything else with a
+ * digit in the middle stays redacted (`abcDe12fghijklmn`).
+ */
+const DIGIT_NAME_HUMPS = new Set(['base64', 'k8s', 'sha256']);
+
+/** Words used only beside those digit humps. They do not widen the general keep. */
+const DIGIT_NAME_WORDS = new Set(['digest', 'encoded', 'namespace']);
+
+function lowerHump(line: string, from: number, to: number): string {
+  let lower = '';
+  for (let i = from; i < to; i += 1) {
+    const code = line.charCodeAt(i);
+    if (code >= 65 && code <= 90) lower += String.fromCharCode(code + 32);
+    else lower += String.fromCharCode(code);
+  }
+  return lower;
+}
+
+/**
+ * One hump of a digit-bearing name. A hump with a digit must be the
+ * whole token `k8s`, `sha256`, or `base64`. A letter hump is a real
+ * word, or `namespace`, `digest`, or `encoded`.
+ */
+function digitNameHump(line: string, from: number, to: number): boolean {
+  let digit = false;
+  for (let i = from; i < to; i += 1) {
+    const code = line.charCodeAt(i);
+    if (code >= 48 && code <= 57) digit = true;
+    else if (!((code >= 65 && code <= 90) || (code >= 97 && code <= 122))) return false;
+  }
+  if (digit) return DIGIT_NAME_HUMPS.has(lowerHump(line, from, to));
+  if (identifierWordAt(line, from, to)) return true;
+  return DIGIT_NAME_WORDS.has(lowerHump(line, from, to));
+}
+
+/**
+ * `k8sNamespaceName`, `sha256DigestValue`, `base64UrlEncoded`.
+ * A capital starts a hump. Digits stay in the current hump. At least
+ * one hump has a digit, and every hump is a known token. One pass.
+ */
+function isDigitBearingName(line: string, start: number, end: number): boolean {
   if (end - start < 16) return false;
+  const first = line.charCodeAt(start);
+  if (!((first >= 65 && first <= 90) || (first >= 97 && first <= 122))) return false;
+  let humps = 0;
+  let sawDigit = false;
+  let humpFrom = start;
+  for (let i = start + 1; i <= end; i += 1) {
+    const code = i === end ? 0 : line.charCodeAt(i);
+    if (i !== end && !(code >= 65 && code <= 90)) {
+      const ok = (code >= 97 && code <= 122) || (code >= 48 && code <= 57);
+      if (!ok) return false;
+      if (code >= 48 && code <= 57) sawDigit = true;
+      continue;
+    }
+    if (!digitNameHump(line, humpFrom, i)) return false;
+    humps += 1;
+    humpFrom = i;
+  }
+  return humps >= 2 && sawDigit;
+}
+
+function isCamelOrPascalIdentifier(line: string, mark: number): boolean {
+  const span = pemBodySpan(line);
+  const start = pemKeyStart(line, span.start, span.end, mark);
+  const end = span.end;
+  if (end - start < 16) return false;
+  for (let i = start; i < end; i += 1) {
+    if (line.charCodeAt(i) === 95) return isSnakeCaseIdentifier(line, start, end);
+  }
   const letterEnd = trailingDigitCut(line, start, end);
+  if (letterEnd < 0) return isDigitBearingName(line, start, end);
   if (letterEnd <= start) return false;
   if (isSingleCapIdentifier(line, start, letterEnd)) return true;
-  return isAcronymWordIdentifier(line, start, letterEnd);
+  if (isAcronymWordIdentifier(line, start, letterEnd)) return true;
+  return isWordShapedCamelIdentifier(line, start, letterEnd);
 }
 
 /**
@@ -2907,21 +3310,28 @@ function isCamelOrPascalIdentifier(line: string): boolean {
  * or when it is base64-only and at least 16 characters. That line is the
  * key's last line, including 16 to 19 characters and a longer
  * alphanumeric line. A camelCase or PascalCase word does not continue
- * when this line follows the gap directly: letter humps, digits only as
- * a trailing run, or an acronym of real words (`HTTPServerConfig`).
- * Digits mixed into the line do continue. A 48-hex or 56-hex string does
- * not continue. A hex digest does not continue: 40-hex and 64-hex stay
- * prose. One pass over the trimmed line. The caller uses this only while
- * the gap is still open. A line that follows a resumed body line is body,
- * not this exception: a hex digest there is also a legal key line.
+ * when this line follows the gap directly: every camelCase, PascalCase,
+ * or snake_case part is a real word or a common abbreviation
+ * (`HTTPServerConfig`, `parseJSONResponse`) or word-shaped camelCase
+ * (`getUserProfileById`, `kubeletConfigPath`). A random capital is not
+ * enough. Digits in a camelCase or PascalCase name are only a trailing
+ * run. Digits mixed into the line do continue, except
+ * `k8sNamespaceName`, `sha256DigestValue`, and `base64UrlEncoded`.
+ * One leading `+` or `-`
+ * is a diff marker only when the block is a diff. A 48-hex or 56-hex
+ * string does not continue. A hex digest does not continue: 40-hex and
+ * 64-hex stay prose. One pass over the trimmed line. The caller uses
+ * this only while the gap is still open. A line that follows a resumed
+ * body line is body, not this exception: a hex digest there is also a
+ * legal key line.
  */
-function resumesAfterPemGap(line: string, bodyWidth: number): boolean {
-  if (bodyWidth < 1 || !isPemBodyLine(line) || isHexDigestLine(line)) return false;
-  const n = pemTrimWidth(line);
-  if (isPureHexLine(line) && (n === 48 || n === 56)) return false;
+function resumesAfterPemGap(line: string, bodyWidth: number, mark: number): boolean {
+  if (bodyWidth < 1 || !isPemBodyLine(line, mark) || isHexDigestLine(line, mark)) return false;
+  const n = pemTrimWidth(line, mark);
+  if (isPureHexLine(line, mark) && (n === 48 || n === 56)) return false;
   if (n >= bodyWidth) return true;
-  if (isCamelOrPascalIdentifier(line)) return false;
-  if (hasPemKeyPunctuation(line)) return true;
+  if (isCamelOrPascalIdentifier(line, mark)) return false;
+  if (hasPemKeyPunctuation(line, mark)) return true;
   return n >= 16;
 }
 
@@ -3043,10 +3453,21 @@ function readPemLine(text: string, i: number): PemLineBreak {
  * `+`, `/`, or `=`, or when it is base64-only and at least 16 characters
  * (the key's last line). That includes an alphanumeric line of 16 to 43
  * characters after one or two resumed full-width body lines, even when
- * the line looks like a name. A camelCase or PascalCase word does not
- * resume when it follows the gap and no body line has resumed. Digits in
- * that word are only a trailing run. An acronym of real words
- * (`HTTPServerConfig`) does not resume in that same place. A name that
+ * the line looks like a name. A camelCase, PascalCase, or snake_case word
+ * does not resume when it follows the gap and no body line has resumed.
+ * It stays when every part is a real word or a common abbreviation
+ * (`JSON`, `URL`, `ID`, `HTTP`), or when it is word-shaped camelCase:
+ * at least two humps, mostly lowercase, each longer hump containing a
+ * vowel (`getUserProfileById`, `fetchAccountBalance`). A random capital
+ * is not enough. Digits in a camelCase or PascalCase word are only a
+ * trailing run. An acronym of real words (`HTTPServerConfig`,
+ * `parseJSONResponse`) does not resume in that same place. A single
+ * leading `+` or `-` is a diff marker when the BEGIN line carries
+ * that prefix or every body line does. Inside an `@@` hunk, one leading
+ * space, `+`, or `-` is a marker on any line, and the BEGIN line does
+ * not have to carry it. `+++` and `---` are not stripped.
+ * A `+` that starts a short final key line in a normal PEM block is
+ * base64 and stays inside the block. A name that
  * follows a resumed body line does resume: the identifier keep does not
  * apply there. A 48-hex or 56-hex string does not resume while the gap
  * is open. A hex digest (32, 40, 64, 96, or 128 hex digits) does not
@@ -3062,9 +3483,96 @@ function readPemLine(text: string, i: number): PemLineBreak {
  * ends, so `Next`, `README`, `npm`, `test`, `TODO`, and a short mixed-case
  * line such as `Ab1` stay, and so does a letter-only fragment such as
  * `QUJD`. The scan does not read past the line that stops it. Returns
- * `from` when there is no body line. One forward pass.
+ * `from` when there is no body line. One forward pass, plus one look at
+ * the BEGIN line and the body lines to decide whether a leading `+` or
+ * `-` is a diff mark. Inside an `@@` hunk that look is skipped: one
+ * leading space, `+`, or `-` on any line is a marker, and the BEGIN
+ * line does not have to carry it.
  */
-function pemBodyEnd(text: string, from: number): number {
+function pemHeaderLine(text: string, headerEnd: number): string {
+  let lineStart = headerEnd;
+  while (lineStart > 0) {
+    const code = text.charCodeAt(lineStart - 1);
+    if (code === 10 || code === 13) break;
+    lineStart -= 1;
+  }
+  const br = readPemLine(text, lineStart);
+  return text.slice(lineStart, br.contentEnd);
+}
+
+/** A key line with no diff mark. An identifier is not a key line. */
+function isUnmarkedKeyLine(line: string): boolean {
+  if (hasSingleDiffMark(line)) return false;
+  if (isCamelOrPascalIdentifier(line, PEM_MARK_NONE)) return false;
+  return isPemBodyLine(line, PEM_MARK_NONE) || pemPartialCut(line, PEM_MARK_NONE) >= 0;
+}
+
+/**
+ * A key line whose single leading `+` or `-` is a diff mark.
+ * A line that is already key text without stripping is base64 that
+ * starts with `+`, not evidence of a diff. One or two such lines do
+ * not make the block a diff.
+ */
+function isMarkedKeyLine(line: string): boolean {
+  if (!hasSingleDiffMark(line)) return false;
+  if (isPemBodyLine(line, PEM_MARK_NONE) || pemPartialCut(line, PEM_MARK_NONE) >= 0) return false;
+  if (isCamelOrPascalIdentifier(line, PEM_MARK_SIGN)) return false;
+  return isPemBodyLine(line, PEM_MARK_SIGN) || pemPartialCut(line, PEM_MARK_SIGN) >= 0;
+}
+
+/**
+ * True when every key line after the header carries one diff mark.
+ * A short gap and a legacy header do not count. The walk stops at the
+ * first other line, so it does not read past this block. False when no
+ * key line was seen.
+ */
+function everyDiffBodyLineIsMarked(text: string, from: number): boolean {
+  let i = from;
+  let onHeaderLine = true;
+  let saw = false;
+  while (i < text.length) {
+    const br = readPemLine(text, i);
+    if (br.next === i) break;
+    const line = text.slice(i, br.contentEnd);
+    if (onHeaderLine) {
+      onHeaderLine = false;
+      let onlySpace = true;
+      for (let p = 0; p < line.length; p += 1) {
+        const code = line.charCodeAt(p);
+        if (code !== 32 && code !== 9 && code !== 13) {
+          onlySpace = false;
+          break;
+        }
+      }
+      if (onlySpace) {
+        i = br.next;
+        continue;
+      }
+    }
+    if (isUnmarkedKeyLine(line)) return false;
+    if (isMarkedKeyLine(line)) {
+      saw = true;
+      if (!br.hasBreak) break;
+      i = br.next;
+      continue;
+    }
+    if (isShortOrBlankPemLine(line) || isLegacyPemHeader(line)) {
+      if (!br.hasBreak) break;
+      i = br.next;
+      continue;
+    }
+    break;
+  }
+  return saw;
+}
+
+function pemBodyEnd(text: string, from: number, inHunk: boolean): number {
+  // Inside an @@ hunk every line may carry its own marker. A context
+  // space on BEGIN, or a mix of space, +, and -, is still one block.
+  let mark = PEM_MARK_NONE;
+  if (inHunk) mark = PEM_MARK_HUNK;
+  else if (hasSingleDiffMark(pemHeaderLine(text, from))) mark = PEM_MARK_SIGN;
+  else if (everyDiffBodyLineIsMarked(text, from)) mark = PEM_MARK_SIGN;
   let i = from;
   let consumed = from;
   let onHeaderLine = true;
@@ -3090,18 +3598,18 @@ function pemBodyEnd(text: string, from: number): number {
         continue;
       }
     }
-    if (isPemBodyLine(line)) {
+    if (isPemBodyLine(line, mark)) {
       // The identifier keep applies only while the gap is still open.
       // A line that follows a resumed body line is the key's next line,
       // even when it looks like a camelCase name.
-      if (seenBody && pendingGap && !resumesAfterPemGap(line, bodyWidth)) {
+      if (seenBody && pendingGap && !resumesAfterPemGap(line, bodyWidth, mark)) {
         // A hex-only body-shaped line is not prose and not a stopping
         // line. Keep the gap open so a later body line is still masked.
         // A 48-hex or 56-hex string does not resume. With only prose
         // after it, that line stays. A later body line is still masked,
         // and the hex line stays inside that span.
         // A digest with only prose after it is not consumed.
-        if (isPureHexLine(line)) {
+        if (isPureHexLine(line, mark)) {
           if (!br.hasBreak) break;
           pendingGap = true;
           i = br.next;
@@ -3109,7 +3617,7 @@ function pemBodyEnd(text: string, from: number): number {
         }
         break;
       }
-      if (bodyWidth === 0) bodyWidth = pemTrimWidth(line);
+      if (bodyWidth === 0) bodyWidth = pemTrimWidth(line, mark);
       if (!br.hasBreak || br.next >= text.length) {
         consumed = br.next;
         break;
@@ -3120,7 +3628,7 @@ function pemBodyEnd(text: string, from: number): number {
       i = br.next;
       continue;
     }
-    const partial = pemPartialCut(line);
+    const partial = pemPartialCut(line, mark);
     if (partial >= 0) {
       if (seenBody && pendingGap) break;
       consumed = i + partial;
@@ -3137,6 +3645,76 @@ function pemBodyEnd(text: string, from: number): number {
   return consumed;
 }
 
+/** Digits at `i`, or `i` when there are none. */
+function readPemDecimal(line: string, i: number): number {
+  const start = i;
+  const n = line.length;
+  while (i < n) {
+    const code = line.charCodeAt(i);
+    if (code < 48 || code > 57) break;
+    i += 1;
+  }
+  return i === start ? start : i;
+}
+
+/**
+ * Index just after the closing `@@` of a hunk header, or -1.
+ * `@@ -1,5 +1,5 @@` and `@@ -1 +1 @@` both match. Function-context
+ * text after the closing `@@` is allowed. One forward pass.
+ */
+function unifiedHunkHeadEnd(line: string): number {
+  const n = line.length;
+  if (n < 8 || line.charCodeAt(0) !== 64 || line.charCodeAt(1) !== 64 || line.charCodeAt(2) !== 32) {
+    return -1;
+  }
+  let i = 3;
+  if (line.charCodeAt(i) !== 45) return -1;
+  const first = readPemDecimal(line, i + 1);
+  if (first === i + 1) return -1;
+  i = first;
+  if (i < n && line.charCodeAt(i) === 44) {
+    const after = readPemDecimal(line, i + 1);
+    if (after === i + 1) return -1;
+    i = after;
+  }
+  if (i + 1 >= n || line.charCodeAt(i) !== 32 || line.charCodeAt(i + 1) !== 43) return -1;
+  const plus = i + 2;
+  i = readPemDecimal(line, plus);
+  if (i === plus) return -1;
+  if (i < n && line.charCodeAt(i) === 44) {
+    const after = readPemDecimal(line, i + 1);
+    if (after === i + 1) return -1;
+    i = after;
+  }
+  if (i + 2 < n && line.charCodeAt(i) === 32 && line.charCodeAt(i + 1) === 64 && line.charCodeAt(i + 2) === 64) {
+    return i + 3;
+  }
+  return -1;
+}
+
+/** A unified-diff hunk header: `@@ -1,5 +1,5 @@` or `@@ -1 +1 @@`. */
+function isUnifiedHunkHeader(line: string): boolean {
+  return unifiedHunkHeadEnd(line) >= 0;
+}
+
+/** A diff body line. A space, `+`, `-`, or `\` keeps the current hunk open. */
+function isUnifiedDiffPayload(line: string): boolean {
+  if (line.length < 1) return false;
+  const code = line.charCodeAt(0);
+  return code === 32 || code === 43 || code === 45 || code === 92;
+}
+
+/**
+ * Hunk state after `line`. Only an `@@` header opens a hunk. A payload
+ * line keeps it open. Any other line closes it, so a later PEM block
+ * outside the hunk is not marked.
+ */
+function hunkStateAfterLine(line: string, inHunk: boolean): boolean {
+  if (isUnifiedHunkHeader(line)) return true;
+  if (isUnifiedDiffPayload(line)) return inHunk;
+  return false;
+}
+
 /**
  * Replace private-key PEM blocks. One left-to-right scan.
  * A complete block, BEGIN through a private-key END, is replaced. The END
@@ -3151,15 +3729,30 @@ function pemBodyEnd(text: string, from: number): number {
  * line, or the same width, on a shorter final line that contains `+`,
  * `/`, or `=`, and on a base64-only final line of at least 16 characters.
  * That final line stays redacted after one or two resumed full-width
- * body lines, including when it looks like an identifier. A hex digest
+ * body lines, including when it looks like an identifier. A single
+ * leading `+` or `-` on a body line is a diff marker when the BEGIN
+ * line carries that prefix or every body line does. Inside an `@@` hunk
+ * a leading space, `+`, or `-` is a diff marker on any line, so a
+ * context BEGIN and a mix of those prefixes are still one block. The
+ * hunk may end before the END line. A private key in an unfenced unified
+ * diff is still one block. `+++` and `---` are file markers and are not
+ * stripped. A leading `+` on a short final line of a normal PEM block is
+ * key text, so that line stays inside the block. A line that is already
+ * key text without stripping is not evidence that the block is a diff.
+ * A hex digest
  * stays visible when it follows the gap. A 48-hex or 56-hex string does
  * not resume while the gap is open, so it stays visible when prose
  * follows, and it does not end the block when a later body line still
  * has to be masked. Directly after a resumed body line, a hex digest is
- * body, because it is also a legal key line. A camelCase or PascalCase
- * word ends the block when it follows the gap and no body line has
- * resumed. Digits in that word are only a trailing run. An acronym of
- * real words (`HTTPServerConfig`) ends the block in that same place.
+ * body, because it is also a legal key line. A camelCase, PascalCase, or
+ * snake_case word ends the block when it follows the gap and no body line
+ * has resumed. It ends the block when every part is a real word or a
+ * common abbreviation (`JSON`, `URL`, `ID`, `HTTP`), and also when the
+ * name is word-shaped camelCase (`getUserProfileById`,
+ * `fetchAccountBalance`, `handleWebSocketMsg`). A random capital is not
+ * enough. Digits in a camelCase or PascalCase word are only a trailing
+ * run. An acronym of real words (`HTTPServerConfig`, `parseJSONResponse`)
+ * ends the block in that same place.
  * A hex-only body-shaped line does not end the block. The first
  * other line stops the scan and stays visible, including a 64-hex or
  * 40-hex hash, a 16-character identifier, a longer camelCase or
@@ -3173,13 +3766,37 @@ function pemBodyEnd(text: string, from: number): number {
  * so that text does not glue to the marker. A truncated block at the end
  * of the input is still replaced. A header with no body line is copied
  * through. The END search never rewinds: a miss covers the rest of the buffer.
+ * A later hunk of the same file can have no BEGIN line. That pass does
+ * not see it. `redactKeyHunkLines` redacts those body lines when the
+ * file has a key block or a private-key-block, secret-looking-path, or
+ * high-entropy-secret finding. The `@@` function context is redacted
+ * only when that context is base64-like.
  */
-function redactPrivateKeyBlocks(text: string): string {
+function redactPrivateKeyBlocks(
+  text: string,
+  keyPaths?: readonly string[],
+  secretFilePaths?: readonly string[],
+): string {
   const parts: string[] = [];
   let i = 0;
   // Next -----END at or after endCursor. -2 means none remains.
   let endCursor = 0;
   let nextEnd = -1;
+  // Lines already classified for the hunk state. One forward pass.
+  let hunkScan = 0;
+  let inHunk = false;
+  const syncHunk = (to: number): void => {
+    while (hunkScan < to) {
+      const br = readPemLine(text, hunkScan);
+      if (br.contentEnd >= to) break;
+      inHunk = hunkStateAfterLine(text.slice(hunkScan, br.contentEnd), inHunk);
+      if (!br.hasBreak) {
+        hunkScan = br.next;
+        break;
+      }
+      hunkScan = br.next;
+    }
+  };
   const peekEnd = (from: number): number => {
     if (nextEnd === -2) return -1;
     if (nextEnd >= from) return nextEnd;
@@ -3199,6 +3816,7 @@ function redactPrivateKeyBlocks(text: string): string {
       parts.push(text.slice(i));
       break;
     }
+    syncHunk(start);
     parts.push(text.slice(i, start));
     const headerAt = start + PEM_BEGIN.length;
     const headerEnd = pemPrivateKeyEnd(text, headerAt);
@@ -3207,6 +3825,7 @@ function redactPrivateKeyBlocks(text: string): string {
       i = headerAt;
       continue;
     }
+    const beginInHunk = inHunk;
     let cursor = headerEnd;
     let matched = false;
     while (cursor < text.length) {
@@ -3224,7 +3843,7 @@ function redactPrivateKeyBlocks(text: string): string {
       if (nextEnd === endAt) nextEnd = -1;
     }
     if (!matched) {
-      const bodyEnd = pemBodyEnd(text, headerEnd);
+      const bodyEnd = pemBodyEnd(text, headerEnd, beginInHunk);
       if (bodyEnd > headerEnd) {
         parts.push(PEM_BLOCK_REPLACEMENT);
         i = bodyEnd;
@@ -3234,15 +3853,417 @@ function redactPrivateKeyBlocks(text: string): string {
       }
     }
   }
+  return redactKeyHunkLines(parts.join(''), keyPaths, secretFilePaths);
+}
+
+interface PemTextLine {
+  start: number;
+  contentEnd: number;
+  next: number;
+}
+
+function collectPemLines(text: string): PemTextLine[] {
+  const lines: PemTextLine[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const br = readPemLine(text, i);
+    lines.push({ start: i, contentEnd: br.contentEnd, next: br.next });
+    if (!br.hasBreak) break;
+    i = br.next;
+  }
+  return lines;
+}
+
+/** End index of a private-key BEGIN or END marker at `from`, or -1. */
+function privateKeyMarkerEnd(line: string, from: number): number {
+  if (from < 0 || from >= line.length) return -1;
+  const begin = line.startsWith(PEM_BEGIN, from);
+  if (!begin && !line.startsWith(PEM_END, from)) return -1;
+  const kindAt = from + (begin ? PEM_BEGIN.length : PEM_END.length);
+  return pemPrivateKeyEnd(line, kindAt);
+}
+
+function isDiffGitLine(line: string): boolean {
+  return line.startsWith('diff --git ');
+}
+
+/** `--- a/path` or `+++ b/path`. A deleted line that starts with `--` is not this. */
+function isGitDiffFileMarker(line: string): boolean {
+  return (
+    line.startsWith('--- a/') ||
+    line.startsWith('--- b/') ||
+    line.startsWith('+++ a/') ||
+    line.startsWith('+++ b/') ||
+    line.startsWith('--- /dev/null') ||
+    line.startsWith('+++ /dev/null')
+  );
+}
+
+function pathFromDiffGit(line: string): string | null {
+  const prefix = 'diff --git ';
+  if (!line.startsWith(prefix)) return null;
+  const rest = line.slice(prefix.length);
+  if (rest.startsWith('"')) {
+    const endQuote = rest.indexOf('"', 1);
+    if (endQuote < 0) return null;
+    const after = rest.slice(endQuote + 1).trim();
+    if (after.startsWith('"') && after.endsWith('"')) {
+      const inner = after.slice(1, -1);
+      return inner.startsWith('b/') ? inner.slice(2) : inner;
+    }
+    return null;
+  }
+  const at = rest.lastIndexOf(' b/');
+  if (at < 0) return null;
+  return rest.slice(at + 3);
+}
+
+function pathFromFileMarker(line: string): string | null {
+  if (line.startsWith('+++ b/')) return line.slice(6);
+  if (line.startsWith('+++ a/')) return line.slice(6);
+  if (line.startsWith('--- a/')) return line.slice(6);
+  if (line.startsWith('--- b/')) return line.slice(6);
+  if (line.startsWith('+++ /dev/null') || line.startsWith('--- /dev/null')) return null;
+  return null;
+}
+
+function noteDiffPath(path: string | null, line: string): string | null {
+  const gitPath = pathFromDiffGit(line);
+  if (gitPath) return gitPath;
+  if (line.startsWith('+++ ')) return pathFromFileMarker(line) ?? path;
+  if (!path && line.startsWith('--- ')) return pathFromFileMarker(line);
+  return path;
+}
+
+/** A markdown fence or heading. A diff payload line is not a heading. */
+function endsDiffRegion(line: string): boolean {
+  if (line.trim() === '```') return true;
+  return line.startsWith('#');
+}
+
+function isDiffRegionStart(line: string): boolean {
+  return isDiffGitLine(line) || isUnifiedHunkHeader(line) || isGitDiffFileMarker(line);
+}
+
+function sameKeyPath(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (left.endsWith(`/${right}`)) return true;
+  if (right.endsWith(`/${left}`)) return true;
+  return false;
+}
+
+function pathMatchesFinding(path: string, findings: Set<string>): boolean {
+  for (const found of findings) {
+    if (sameKeyPath(path, found)) return true;
+  }
+  return false;
+}
+
+/**
+ * Same paths `risk.ts` flags as `secret-looking-path`. A `.pem` file is
+ * one. `app.py` is not. The check is the path text only.
+ */
+function isSecretLookingPath(path: string): boolean {
+  const n = path.replace(/\\/g, '/');
+  if (/(^|\/)(secrets?|credentials?)\.(json|ya?ml|toml|env)$/i.test(n)) return true;
+  if (/(^|\/).*\.(pem|p12|pfx)$/i.test(n)) return true;
+  if (/(^|\/).*(?<!\.pub)\.key$/i.test(n)) return true;
+  if (/(^|\/)id_rsa$/i.test(n)) return true;
+  if (/(^|\/)\.npmrc$/i.test(n)) return true;
+  if (/(^|\/)aws[_-]?credentials$/i.test(n)) return true;
+  if (/(^|\/)\.netrc$/i.test(n)) return true;
+  return false;
+}
+
+/** A risk-table row or a numbered review line. A diff payload is not one. */
+function isRiskFindingLine(line: string): boolean {
+  if (line.charCodeAt(0) === 124) return true;
+  let i = 0;
+  const n = line.length;
+  while (i < n) {
+    const code = line.charCodeAt(i);
+    if (code < 48 || code > 57) break;
+    i += 1;
+  }
+  return i > 0 && line.startsWith('. **', i);
+}
+
+function trimFindingPath(raw: string): string {
+  let path = raw.trim();
+  const bar = path.indexOf('|');
+  if (bar >= 0) path = path.slice(0, bar).trim();
+  if (path.endsWith('\\')) path = path.slice(0, -1).trim();
+  return path;
+}
+
+interface KeyHunkFindings {
+  all: Set<string>;
+  secretFile: Set<string>;
+}
+
+/**
+ * Paths named by a finding that makes a later key hunk sensitive.
+ * `private-key-block` detail is `private key block appears in diff: <path>`.
+ * `secret-looking-path` detail is `Secret-looking path (<label>): <path>`.
+ * `high-entropy-secret` detail ends with ` in <path>`.
+ * A private-key-block or secret-looking-path path is a secret file, and so
+ * is a high-entropy path whose name already looks like key material.
+ * A diff line that merely mentions the code is not a finding. One forward pass.
+ */
+function collectKeyHunkFindings(text: string): KeyHunkFindings {
+  const all = new Set<string>();
+  const secretFile = new Set<string>();
+  const add = (path: string, secret: boolean): void => {
+    if (!path) return;
+    all.add(path);
+    if (secret || isSecretLookingPath(path)) secretFile.add(path);
+  };
+  let i = 0;
+  while (i < text.length) {
+    const br = readPemLine(text, i);
+    const line = text.slice(i, br.contentEnd);
+    if (isRiskFindingLine(line)) {
+      if (line.includes('private-key-block')) {
+        const marker = 'appears in diff: ';
+        const markAt = line.indexOf(marker);
+        if (markAt >= 0) add(trimFindingPath(line.slice(markAt + marker.length)), true);
+      }
+      if (line.includes('secret-looking-path')) {
+        const prefix = line.indexOf('Secret-looking path (');
+        if (prefix >= 0) {
+          const close = line.indexOf('): ', prefix);
+          if (close >= 0) add(trimFindingPath(line.slice(close + 3)), true);
+        }
+      }
+      if (line.includes('high-entropy-secret')) {
+        const markAt = line.lastIndexOf(' in ');
+        if (markAt >= 0) add(trimFindingPath(line.slice(markAt + 4)), false);
+      }
+    }
+    if (!br.hasBreak) break;
+    i = br.next;
+  }
+  return { all, secretFile };
+}
+
+/** True when the line is a BEGIN or END private-key marker, with one diff mark. */
+function lineSignalsPrivateKey(line: string): boolean {
+  if (privateKeyMarkerEnd(line, 0) >= 0) return true;
+  if (line.length > 1 && !isGitDiffFileMarker(line)) {
+    const code = line.charCodeAt(0);
+    if ((code === 32 || code === 43 || code === 45) && privateKeyMarkerEnd(line, 1) >= 0) {
+      return true;
+    }
+  }
+  const headEnd = unifiedHunkHeadEnd(line);
+  if (headEnd >= 0) {
+    let ctx = headEnd;
+    if (ctx < line.length && line.charCodeAt(ctx) === 32) ctx += 1;
+    if (privateKeyMarkerEnd(line, ctx) >= 0) return true;
+  }
+  return false;
+}
+
+function hunkPayloadMarkLength(line: string): number {
+  if (line.length < 1) return 0;
+  const code = line.charCodeAt(0);
+  if (code === 32 || code === 43 || code === 45) return 1;
+  return 0;
+}
+
+function isHunkPayloadLine(line: string): boolean {
+  return isUnifiedDiffPayload(line) && !isGitDiffFileMarker(line);
+}
+
+/**
+ * Replace function-context text on a hunk of a key file when that text
+ * is base64-like. Git copies the previous line into
+ * `@@ -1,5 +1,5 @@ <that line>`. A mid-body hunk has no BEGIN line, so
+ * a key line copied there is raw key material. Ordinary code such as
+ * `def handler(event):` stays. An empty context stays empty. A short
+ * ordinary token such as `Zm9v` stays on a file that is not a secret file.
+ */
+function redactHunkHeaderContext(line: string, secretFile: boolean): string {
+  const headEnd = unifiedHunkHeadEnd(line);
+  if (headEnd < 0 || headEnd >= line.length) return line;
+  let ctxFrom = headEnd;
+  if (line.charCodeAt(ctxFrom) === 32) ctxFrom += 1;
+  let ctxEnd = line.length;
+  while (ctxEnd > ctxFrom) {
+    const code = line.charCodeAt(ctxEnd - 1);
+    if (code !== 32 && code !== 9 && code !== 13) break;
+    ctxEnd -= 1;
+  }
+  if (ctxEnd <= ctxFrom) return line;
+  const context = line.slice(ctxFrom, ctxEnd);
+  if (!isPemBodyLine(context, PEM_MARK_NONE)) return line;
+  if (!secretFile && isShortOrdinaryBase64Span(context, 0, context.length)) return line;
+  const lead = ctxFrom > headEnd ? ' ' : '';
+  return `${line.slice(0, headEnd)}${lead}[REDACTED]`;
+}
+
+/**
+ * Redact one hunk payload line. The diff marker stays. Prose after a
+ * partial key stays. A short ordinary token such as `Zm9v` stays when
+ * the file is not a secret file.
+ */
+function redactHunkPayloadLine(line: string, secretFile: boolean): string {
+  if (line.charCodeAt(0) === 92) return line;
+  if (!secretFile) {
+    const span = hunkKeySpan(line);
+    if (isShortOrdinaryBase64Span(line, span.start, span.end)) return line;
+  }
+  if (isPemBodyLine(line, PEM_MARK_HUNK)) {
+    return `${line.slice(0, hunkPayloadMarkLength(line))}[REDACTED]`;
+  }
+  const partial = pemPartialCut(line, PEM_MARK_HUNK);
+  if (partial >= 0) {
+    return `${line.slice(0, hunkPayloadMarkLength(line))}[REDACTED]${line.slice(partial)}`;
+  }
+  return line;
+}
+
+interface KeyDiffRegion {
+  start: number;
+  end: number;
+  sensitive: boolean;
+  secretFile: boolean;
+}
+
+function findKeyDiffRegions(
+  text: string,
+  lines: PemTextLine[],
+  findings: Set<string>,
+  secretFiles: Set<string>,
+): KeyDiffRegion[] {
+  const regions: KeyDiffRegion[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const content = text.slice(lines[i].start, lines[i].contentEnd);
+    if (!isDiffRegionStart(content)) {
+      i += 1;
+      continue;
+    }
+    const start = i;
+    let path = noteDiffPath(null, content);
+    let signalsKey = lineSignalsPrivateKey(content);
+    i += 1;
+    while (i < lines.length) {
+      const line = text.slice(lines[i].start, lines[i].contentEnd);
+      if (isDiffGitLine(line) || endsDiffRegion(line)) break;
+      path = noteDiffPath(path, line);
+      if (lineSignalsPrivateKey(line)) signalsKey = true;
+      i += 1;
+    }
+    const flagged = Boolean(path && pathMatchesFinding(path, findings));
+    const sensitive = signalsKey || flagged;
+    const secretFile = path
+      ? isSecretLookingPath(path) || pathMatchesFinding(path, secretFiles)
+      : signalsKey;
+    regions.push({ start, end: i, sensitive, secretFile });
+  }
+  return regions;
+}
+
+function redactSensitiveDiff(text: string, lines: PemTextLine[], region: KeyDiffRegion): string {
+  const parts: string[] = [];
+  let inHunk = false;
+  for (let i = region.start; i < region.end; i += 1) {
+    const rec = lines[i];
+    const content = text.slice(rec.start, rec.contentEnd);
+    const br = text.slice(rec.contentEnd, rec.next);
+    if (isUnifiedHunkHeader(content)) {
+      inHunk = true;
+      parts.push(redactHunkHeaderContext(content, region.secretFile), br);
+      continue;
+    }
+    if (inHunk && isHunkPayloadLine(content)) {
+      parts.push(redactHunkPayloadLine(content, region.secretFile), br);
+      continue;
+    }
+    inHunk = false;
+    parts.push(content, br);
+  }
   return parts.join('');
 }
 
-export function redactSecretsInText(text: string): string {
+/**
+ * Redact base64-like key lines in every hunk of a file that has a
+ * private-key block, or that a secret-looking-path or high-entropy-secret
+ * finding already names. The block may sit in another hunk. A hunk with
+ * only END, or with neither marker, is still covered. The `@@` function
+ * context is redacted only when it is base64-like. A short ordinary token
+ * such as `Zm9v` stays in a file that is not a secret file. A file with
+ * no key block and no such finding is left alone, so an ordinary base64
+ * diff stays visible. One forward pass over the lines.
+ */
+function redactKeyHunkLines(
+  text: string,
+  keyPaths?: readonly string[],
+  secretFilePaths?: readonly string[],
+): string {
+  if (!text.includes('@@')) return text;
+  const hinted =
+    (keyPaths !== undefined && keyPaths.length > 0) ||
+    (secretFilePaths !== undefined && secretFilePaths.length > 0);
+  if (
+    !hinted &&
+    !text.includes('PRIVATE KEY-----') &&
+    !text.includes('private-key-block') &&
+    !text.includes('secret-looking-path') &&
+    !text.includes('high-entropy-secret')
+  ) {
+    return text;
+  }
+  const lines = collectPemLines(text);
+  if (lines.length === 0) return text;
+  const found = collectKeyHunkFindings(text);
+  if (keyPaths) {
+    for (const path of keyPaths) {
+      if (!path) continue;
+      found.all.add(path);
+      if (isSecretLookingPath(path)) found.secretFile.add(path);
+    }
+  }
+  if (secretFilePaths) {
+    for (const path of secretFilePaths) {
+      if (!path) continue;
+      found.all.add(path);
+      found.secretFile.add(path);
+    }
+  }
+  const regions = findKeyDiffRegions(text, lines, found.all, found.secretFile);
+  let sensitive = false;
+  for (const region of regions) {
+    if (region.sensitive) {
+      sensitive = true;
+      break;
+    }
+  }
+  if (!sensitive) return text;
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const region of regions) {
+    if (!region.sensitive) continue;
+    const start = lines[region.start].start;
+    const end = lines[region.end - 1].next;
+    parts.push(text.slice(cursor, start));
+    parts.push(redactSensitiveDiff(text, lines, region));
+    cursor = end;
+  }
+  parts.push(text.slice(cursor));
+  return parts.join('');
+}
+
+export function redactSecretsInText(
+  text: string,
+  opts?: { keyPaths?: readonly string[]; secretFilePaths?: readonly string[] },
+): string {
   let out = redactSecretAssignments(text);
   out = maskJwtTokens(out);
   for (const { re, replacement } of SECRET_VALUE_PATTERNS) {
     if (re.source.startsWith('-----BEGIN ')) {
-      out = redactPrivateKeyBlocks(out);
+      out = redactPrivateKeyBlocks(out, opts?.keyPaths, opts?.secretFilePaths);
       continue;
     }
     out = typeof replacement === 'function'
@@ -3337,6 +4358,12 @@ export function redactMarkdownBody(
 ): string {
   const maskHost = opts.maskHost !== false;
   const normalized = markdown.replace(/\r\n/g, '\n');
+  // Risk findings sit above the diff fence. A later hunk of that file
+  // may not contain BEGIN. The fence redaction still needs the path.
+  // secret-looking-path and high-entropy-secret name the file too.
+  const keyFindings = collectKeyHunkFindings(normalized);
+  const keyFindingPaths = [...keyFindings.all];
+  const secretFilePaths = [...keyFindings.secretFile];
   const all = normalized.split('\n');
   const lines = all.slice(0, integrityCutIndex(all));
   const out: string[] = [];
@@ -3407,7 +4434,13 @@ export function redactMarkdownBody(
         } else if (!inNestedArtifactDiff && diffBuf.length > 0) {
           // One pass over the fence. A private-key block spans lines, so
           // redacting each diff line alone would leave the body in place.
-          const redacted = redactSecretsInText(diffBuf.join('\n'));
+          // keyPaths covers a hunk that has no BEGIN line when a
+          // private-key-block, secret-looking-path, or high-entropy-secret
+          // finding names this file.
+          const redacted = redactSecretsInText(diffBuf.join('\n'), {
+            keyPaths: keyFindingPaths,
+            secretFilePaths,
+          });
           if (redacted.length > 0) out.push(...redacted.split('\n'));
         }
         diffBuf.length = 0;

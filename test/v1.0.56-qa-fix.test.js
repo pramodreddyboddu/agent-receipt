@@ -198,7 +198,6 @@ describe('v1.0.56 mixed-case extension tails do not use the digit rule', () => {
   const kept = [
     '/ab.ts',
     '/a/b.js',
-    '/App.md',
     '/README.md',
     '/src/app.ts',
     '+/src/app.ts',
@@ -319,7 +318,6 @@ describe('v1.0.56 short-tail signature chars stay masked', () => {
   ];
   const kept = [
     '/ab.ts',
-    '/App.md',
     '/README.md',
     '/src/index',
     '/bin/run',
