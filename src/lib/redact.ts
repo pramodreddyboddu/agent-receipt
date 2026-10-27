@@ -2748,6 +2748,48 @@ function isPemBodyLine(line: string, mark: number): boolean {
 }
 
 /**
+ * Key text of one hunk payload line, after one diff marker.
+ * A leading `+` that is the marker is not part of the span.
+ */
+function hunkKeySpan(line: string): { start: number; end: number } {
+  let start = 0;
+  let end = line.length;
+  while (end > start) {
+    const code = line.charCodeAt(end - 1);
+    if (code !== 32 && code !== 9 && code !== 13) break;
+    end -= 1;
+  }
+  if (start < end) {
+    const code = line.charCodeAt(start);
+    if (code === 32 || code === 43 || code === 45) start += 1;
+  }
+  while (start < end) {
+    const code = line.charCodeAt(start);
+    if (code !== 32 && code !== 9 && code !== 13) break;
+    start += 1;
+  }
+  return { start, end };
+}
+
+/**
+ * A short ordinary token such as `Zm9v`. It is base64-shaped and has a
+ * digit, and it has no `+`, `/`, or `=`, so it is not a padded key
+ * fragment. A letter-only line is not this: that line is already prose.
+ */
+function isShortOrdinaryBase64Span(line: string, start: number, end: number): boolean {
+  const n = end - start;
+  if (n < PEM_BODY_SHORT_MIN || n >= PEM_BODY_MIN || n % 4 !== 0) return false;
+  let digit = false;
+  for (let i = start; i < end; i += 1) {
+    const code = line.charCodeAt(i);
+    if (!isBase64Code(code)) return false;
+    if (code === 43 || code === 47 || code === 61) return false;
+    if (code >= 48 && code <= 57) digit = true;
+  }
+  return digit;
+}
+
+/**
  * End index of a key-shaped base64 run at the start of `line`, when prose
  * follows on that same line. -1 when the line is a full body line or the
  * run is not key material. The prose must start with ASCII space or tab.
@@ -3725,11 +3767,16 @@ function hunkStateAfterLine(line: string, inHunk: boolean): boolean {
  * of the input is still replaced. A header with no body line is copied
  * through. The END search never rewinds: a miss covers the rest of the buffer.
  * A later hunk of the same file can have no BEGIN line. That pass does
- * not see it. `redactKeyHunkLines` redacts those body lines, and the
- * `@@` function context, when the file has a key block or a
- * private-key-block finding.
+ * not see it. `redactKeyHunkLines` redacts those body lines when the
+ * file has a key block or a private-key-block, secret-looking-path, or
+ * high-entropy-secret finding. The `@@` function context is redacted
+ * only when that context is base64-like.
  */
-function redactPrivateKeyBlocks(text: string, keyPaths?: readonly string[]): string {
+function redactPrivateKeyBlocks(
+  text: string,
+  keyPaths?: readonly string[],
+  secretFilePaths?: readonly string[],
+): string {
   const parts: string[] = [];
   let i = 0;
   // Next -----END at or after endCursor. -2 means none remains.
@@ -3806,7 +3853,7 @@ function redactPrivateKeyBlocks(text: string, keyPaths?: readonly string[]): str
       }
     }
   }
-  return redactKeyHunkLines(parts.join(''), keyPaths);
+  return redactKeyHunkLines(parts.join(''), keyPaths, secretFilePaths);
 }
 
 interface PemTextLine {
@@ -3913,35 +3960,90 @@ function pathMatchesFinding(path: string, findings: Set<string>): boolean {
 }
 
 /**
- * Paths named by a `private-key-block` finding.
- * The detail cell is `private key block appears in diff: <path>`.
+ * Same paths `risk.ts` flags as `secret-looking-path`. A `.pem` file is
+ * one. `app.py` is not. The check is the path text only.
  */
-function collectPrivateKeyFindingPaths(text: string): Set<string> {
-  const paths = new Set<string>();
-  const needle = 'private-key-block';
-  const marker = 'appears in diff: ';
-  let from = 0;
-  while (from < text.length) {
-    const at = text.indexOf(needle, from);
-    if (at < 0) break;
-    let lineStart = at;
-    while (lineStart > 0) {
-      const code = text.charCodeAt(lineStart - 1);
-      if (code === 10 || code === 13) break;
-      lineStart -= 1;
-    }
-    const br = readPemLine(text, lineStart);
-    const line = text.slice(lineStart, br.contentEnd);
-    const markAt = line.indexOf(marker);
-    if (markAt >= 0) {
-      let path = line.slice(markAt + marker.length).trim();
-      const bar = path.indexOf('|');
-      if (bar >= 0) path = path.slice(0, bar).trim();
-      if (path) paths.add(path);
-    }
-    from = at + needle.length;
+function isSecretLookingPath(path: string): boolean {
+  const n = path.replace(/\\/g, '/');
+  if (/(^|\/)(secrets?|credentials?)\.(json|ya?ml|toml|env)$/i.test(n)) return true;
+  if (/(^|\/).*\.(pem|p12|pfx)$/i.test(n)) return true;
+  if (/(^|\/).*(?<!\.pub)\.key$/i.test(n)) return true;
+  if (/(^|\/)id_rsa$/i.test(n)) return true;
+  if (/(^|\/)\.npmrc$/i.test(n)) return true;
+  if (/(^|\/)aws[_-]?credentials$/i.test(n)) return true;
+  if (/(^|\/)\.netrc$/i.test(n)) return true;
+  return false;
+}
+
+/** A risk-table row or a numbered review line. A diff payload is not one. */
+function isRiskFindingLine(line: string): boolean {
+  if (line.charCodeAt(0) === 124) return true;
+  let i = 0;
+  const n = line.length;
+  while (i < n) {
+    const code = line.charCodeAt(i);
+    if (code < 48 || code > 57) break;
+    i += 1;
   }
-  return paths;
+  return i > 0 && line.startsWith('. **', i);
+}
+
+function trimFindingPath(raw: string): string {
+  let path = raw.trim();
+  const bar = path.indexOf('|');
+  if (bar >= 0) path = path.slice(0, bar).trim();
+  if (path.endsWith('\\')) path = path.slice(0, -1).trim();
+  return path;
+}
+
+interface KeyHunkFindings {
+  all: Set<string>;
+  secretFile: Set<string>;
+}
+
+/**
+ * Paths named by a finding that makes a later key hunk sensitive.
+ * `private-key-block` detail is `private key block appears in diff: <path>`.
+ * `secret-looking-path` detail is `Secret-looking path (<label>): <path>`.
+ * `high-entropy-secret` detail ends with ` in <path>`.
+ * A private-key-block or secret-looking-path path is a secret file, and so
+ * is a high-entropy path whose name already looks like key material.
+ * A diff line that merely mentions the code is not a finding. One forward pass.
+ */
+function collectKeyHunkFindings(text: string): KeyHunkFindings {
+  const all = new Set<string>();
+  const secretFile = new Set<string>();
+  const add = (path: string, secret: boolean): void => {
+    if (!path) return;
+    all.add(path);
+    if (secret || isSecretLookingPath(path)) secretFile.add(path);
+  };
+  let i = 0;
+  while (i < text.length) {
+    const br = readPemLine(text, i);
+    const line = text.slice(i, br.contentEnd);
+    if (isRiskFindingLine(line)) {
+      if (line.includes('private-key-block')) {
+        const marker = 'appears in diff: ';
+        const markAt = line.indexOf(marker);
+        if (markAt >= 0) add(trimFindingPath(line.slice(markAt + marker.length)), true);
+      }
+      if (line.includes('secret-looking-path')) {
+        const prefix = line.indexOf('Secret-looking path (');
+        if (prefix >= 0) {
+          const close = line.indexOf('): ', prefix);
+          if (close >= 0) add(trimFindingPath(line.slice(close + 3)), true);
+        }
+      }
+      if (line.includes('high-entropy-secret')) {
+        const markAt = line.lastIndexOf(' in ');
+        if (markAt >= 0) add(trimFindingPath(line.slice(markAt + 4)), false);
+      }
+    }
+    if (!br.hasBreak) break;
+    i = br.next;
+  }
+  return { all, secretFile };
 }
 
 /** True when the line is a BEGIN or END private-key marker, with one diff mark. */
@@ -3974,12 +4076,14 @@ function isHunkPayloadLine(line: string): boolean {
 }
 
 /**
- * Replace function-context text on a hunk of a key file.
- * Git copies the previous line into `@@ -1,5 +1,5 @@ <that line>`.
- * A mid-body hunk has no BEGIN line, so that copy is a raw key line.
- * An empty context stays empty.
+ * Replace function-context text on a hunk of a key file when that text
+ * is base64-like. Git copies the previous line into
+ * `@@ -1,5 +1,5 @@ <that line>`. A mid-body hunk has no BEGIN line, so
+ * a key line copied there is raw key material. Ordinary code such as
+ * `def handler(event):` stays. An empty context stays empty. A short
+ * ordinary token such as `Zm9v` stays on a file that is not a secret file.
  */
-function redactHunkHeaderContext(line: string): string {
+function redactHunkHeaderContext(line: string, secretFile: boolean): string {
   const headEnd = unifiedHunkHeadEnd(line);
   if (headEnd < 0 || headEnd >= line.length) return line;
   let ctxFrom = headEnd;
@@ -3991,13 +4095,24 @@ function redactHunkHeaderContext(line: string): string {
     ctxEnd -= 1;
   }
   if (ctxEnd <= ctxFrom) return line;
+  const context = line.slice(ctxFrom, ctxEnd);
+  if (!isPemBodyLine(context, PEM_MARK_NONE)) return line;
+  if (!secretFile && isShortOrdinaryBase64Span(context, 0, context.length)) return line;
   const lead = ctxFrom > headEnd ? ' ' : '';
   return `${line.slice(0, headEnd)}${lead}[REDACTED]`;
 }
 
-/** Redact one hunk payload line. The diff marker stays. Prose after a partial key stays. */
-function redactHunkPayloadLine(line: string): string {
+/**
+ * Redact one hunk payload line. The diff marker stays. Prose after a
+ * partial key stays. A short ordinary token such as `Zm9v` stays when
+ * the file is not a secret file.
+ */
+function redactHunkPayloadLine(line: string, secretFile: boolean): string {
   if (line.charCodeAt(0) === 92) return line;
+  if (!secretFile) {
+    const span = hunkKeySpan(line);
+    if (isShortOrdinaryBase64Span(line, span.start, span.end)) return line;
+  }
   if (isPemBodyLine(line, PEM_MARK_HUNK)) {
     return `${line.slice(0, hunkPayloadMarkLength(line))}[REDACTED]`;
   }
@@ -4012,12 +4127,14 @@ interface KeyDiffRegion {
   start: number;
   end: number;
   sensitive: boolean;
+  secretFile: boolean;
 }
 
 function findKeyDiffRegions(
   text: string,
   lines: PemTextLine[],
   findings: Set<string>,
+  secretFiles: Set<string>,
 ): KeyDiffRegion[] {
   const regions: KeyDiffRegion[] = [];
   let i = 0;
@@ -4029,17 +4146,21 @@ function findKeyDiffRegions(
     }
     const start = i;
     let path = noteDiffPath(null, content);
-    let sensitive = lineSignalsPrivateKey(content);
+    let signalsKey = lineSignalsPrivateKey(content);
     i += 1;
     while (i < lines.length) {
       const line = text.slice(lines[i].start, lines[i].contentEnd);
       if (isDiffGitLine(line) || endsDiffRegion(line)) break;
       path = noteDiffPath(path, line);
-      if (lineSignalsPrivateKey(line)) sensitive = true;
+      if (lineSignalsPrivateKey(line)) signalsKey = true;
       i += 1;
     }
-    if (path && pathMatchesFinding(path, findings)) sensitive = true;
-    regions.push({ start, end: i, sensitive });
+    const flagged = Boolean(path && pathMatchesFinding(path, findings));
+    const sensitive = signalsKey || flagged;
+    const secretFile = path
+      ? isSecretLookingPath(path) || pathMatchesFinding(path, secretFiles)
+      : signalsKey;
+    regions.push({ start, end: i, sensitive, secretFile });
   }
   return regions;
 }
@@ -4053,11 +4174,11 @@ function redactSensitiveDiff(text: string, lines: PemTextLine[], region: KeyDiff
     const br = text.slice(rec.contentEnd, rec.next);
     if (isUnifiedHunkHeader(content)) {
       inHunk = true;
-      parts.push(redactHunkHeaderContext(content), br);
+      parts.push(redactHunkHeaderContext(content, region.secretFile), br);
       continue;
     }
     if (inHunk && isHunkPayloadLine(content)) {
-      parts.push(redactHunkPayloadLine(content), br);
+      parts.push(redactHunkPayloadLine(content, region.secretFile), br);
       continue;
     }
     inHunk = false;
@@ -4068,27 +4189,50 @@ function redactSensitiveDiff(text: string, lines: PemTextLine[], region: KeyDiff
 
 /**
  * Redact base64-like key lines in every hunk of a file that has a
- * private-key block, and redact that hunk's `@@` function context.
- * The block may sit in another hunk. A hunk with only END, or with
- * neither marker, is still covered. A file with no key block and no
- * private-key-block finding is left alone, so an ordinary base64 diff
- * stays visible. One forward pass over the lines.
+ * private-key block, or that a secret-looking-path or high-entropy-secret
+ * finding already names. The block may sit in another hunk. A hunk with
+ * only END, or with neither marker, is still covered. The `@@` function
+ * context is redacted only when it is base64-like. A short ordinary token
+ * such as `Zm9v` stays in a file that is not a secret file. A file with
+ * no key block and no such finding is left alone, so an ordinary base64
+ * diff stays visible. One forward pass over the lines.
  */
-function redactKeyHunkLines(text: string, keyPaths?: readonly string[]): string {
+function redactKeyHunkLines(
+  text: string,
+  keyPaths?: readonly string[],
+  secretFilePaths?: readonly string[],
+): string {
   if (!text.includes('@@')) return text;
-  const hinted = keyPaths !== undefined && keyPaths.length > 0;
-  if (!hinted && !text.includes('PRIVATE KEY-----') && !text.includes('private-key-block')) {
+  const hinted =
+    (keyPaths !== undefined && keyPaths.length > 0) ||
+    (secretFilePaths !== undefined && secretFilePaths.length > 0);
+  if (
+    !hinted &&
+    !text.includes('PRIVATE KEY-----') &&
+    !text.includes('private-key-block') &&
+    !text.includes('secret-looking-path') &&
+    !text.includes('high-entropy-secret')
+  ) {
     return text;
   }
   const lines = collectPemLines(text);
   if (lines.length === 0) return text;
-  const findings = collectPrivateKeyFindingPaths(text);
+  const found = collectKeyHunkFindings(text);
   if (keyPaths) {
     for (const path of keyPaths) {
-      if (path) findings.add(path);
+      if (!path) continue;
+      found.all.add(path);
+      if (isSecretLookingPath(path)) found.secretFile.add(path);
     }
   }
-  const regions = findKeyDiffRegions(text, lines, findings);
+  if (secretFilePaths) {
+    for (const path of secretFilePaths) {
+      if (!path) continue;
+      found.all.add(path);
+      found.secretFile.add(path);
+    }
+  }
+  const regions = findKeyDiffRegions(text, lines, found.all, found.secretFile);
   let sensitive = false;
   for (const region of regions) {
     if (region.sensitive) {
@@ -4113,13 +4257,13 @@ function redactKeyHunkLines(text: string, keyPaths?: readonly string[]): string 
 
 export function redactSecretsInText(
   text: string,
-  opts?: { keyPaths?: readonly string[] },
+  opts?: { keyPaths?: readonly string[]; secretFilePaths?: readonly string[] },
 ): string {
   let out = redactSecretAssignments(text);
   out = maskJwtTokens(out);
   for (const { re, replacement } of SECRET_VALUE_PATTERNS) {
     if (re.source.startsWith('-----BEGIN ')) {
-      out = redactPrivateKeyBlocks(out, opts?.keyPaths);
+      out = redactPrivateKeyBlocks(out, opts?.keyPaths, opts?.secretFilePaths);
       continue;
     }
     out = typeof replacement === 'function'
@@ -4216,7 +4360,10 @@ export function redactMarkdownBody(
   const normalized = markdown.replace(/\r\n/g, '\n');
   // Risk findings sit above the diff fence. A later hunk of that file
   // may not contain BEGIN. The fence redaction still needs the path.
-  const keyFindingPaths = [...collectPrivateKeyFindingPaths(normalized)];
+  // secret-looking-path and high-entropy-secret name the file too.
+  const keyFindings = collectKeyHunkFindings(normalized);
+  const keyFindingPaths = [...keyFindings.all];
+  const secretFilePaths = [...keyFindings.secretFile];
   const all = normalized.split('\n');
   const lines = all.slice(0, integrityCutIndex(all));
   const out: string[] = [];
@@ -4287,10 +4434,12 @@ export function redactMarkdownBody(
         } else if (!inNestedArtifactDiff && diffBuf.length > 0) {
           // One pass over the fence. A private-key block spans lines, so
           // redacting each diff line alone would leave the body in place.
-          // keyPaths covers a hunk that has no BEGIN line when the finding
-          // names this file.
+          // keyPaths covers a hunk that has no BEGIN line when a
+          // private-key-block, secret-looking-path, or high-entropy-secret
+          // finding names this file.
           const redacted = redactSecretsInText(diffBuf.join('\n'), {
             keyPaths: keyFindingPaths,
+            secretFilePaths,
           });
           if (redacted.length > 0) out.push(...redacted.split('\n'));
         }

@@ -1159,7 +1159,7 @@ describe('v1.0.60 a later @@ hunk with no BEGIN line redacts the private key', (
     assert.equal(out.includes(ident), true);
   });
 
-  function receiptAround(diff, withFinding) {
+  function receiptAround(diff, withFinding, pathFindings) {
     const lines = [
       '# Receipt',
       '',
@@ -1170,6 +1170,10 @@ describe('v1.0.60 a later @@ hunk with no BEGIN line redacts the private key', (
     ];
     if (withFinding) {
       lines.push('| high | `private-key-block` | private key block appears in diff: key.pem |');
+    }
+    if (pathFindings) {
+      lines.push('| high | `secret-looking-path` | Secret-looking path (key / cert material): key.pem |');
+      lines.push('| high | `high-entropy-secret` | High-entropy token (5.80 bits/char, len 64): AAAAAAAAAAAA… in key.pem |');
     }
     lines.push(
       '',
@@ -1313,11 +1317,12 @@ describe('v1.0.60 a later @@ hunk with no BEGIN line redacts the private key', (
     let endNoBeginHunks = 0;
     let endOnlyProbes = 0;
     let findingOnlyProbes = 0;
+    let singleHunkProbes = 0;
     const surfaces = ['redact', 'show', 'show --json', 'html'];
     for (let n = 0; n < 192; n += 1) {
       const context = 1 + (next() % 3);
       const nl = n % 2 === 0 ? '\n' : '\r\n';
-      const shape = n % 3;
+      const shape = n % 4;
       const editSet = new Set();
       const deleteSet = new Set();
       let withFinding = false;
@@ -1334,7 +1339,7 @@ describe('v1.0.60 a later @@ hunk with no BEGIN line redacts the private key', (
       } else if (shape === 1) {
         editSet.add(24);
         if (next() % 2 === 0) deleteSet.add(22);
-      } else {
+      } else if (shape === 2) {
         const mid = 8 + (next() % 8);
         editSet.add(mid);
         if (next() % 2 === 0) {
@@ -1342,6 +1347,10 @@ describe('v1.0.60 a later @@ hunk with no BEGIN line redacts the private key', (
           if (second <= 20) editSet.add(second);
         }
         withFinding = true;
+      } else {
+        const mid = 8 + (next() % 8);
+        editSet.add(mid);
+        withFinding = false;
       }
       const hunks = renderHunks(oldLines, editSet, deleteSet, context);
       assert.ok(hunks.length > 0);
@@ -1374,6 +1383,12 @@ describe('v1.0.60 a later @@ hunk with no BEGIN line redacts the private key', (
         assert.equal(sawEnd, false, `shape 2 end ${n}`);
         findingOnlyProbes += 1;
       }
+      if (shape === 3) {
+        assert.equal(hunks.length, 1, `shape 3 hunks ${n}`);
+        assert.equal(sawBegin, false, `shape 3 begin ${n}`);
+        assert.equal(sawEnd, false, `shape 3 end ${n}`);
+        singleHunkProbes += 1;
+      }
       const other = `R${n.toString(36).padStart(3, '0')}${'A'.repeat(60)}`;
       assert.equal(other.length, 64);
       diffLines.push(
@@ -1397,11 +1412,14 @@ describe('v1.0.60 a later @@ hunk with no BEGIN line redacts the private key', (
         if (diff.includes(edited)) secrets.push(edited);
       }
       assert.ok(secrets.length > 0, `probe ${n}`);
-      const receipt = receiptAround(diff, withFinding || sawBegin || sawEnd);
-      const redacted = withFinding && !sawBegin && !sawEnd
-        ? redactSecretsInText(diff, { keyPaths: ['key.pem'] })
-        : redactSecretsInText(diff);
-      if (withFinding && !sawBegin && !sawEnd) {
+      const pathFindings = shape === 3;
+      const receipt = receiptAround(diff, withFinding || sawBegin || sawEnd, pathFindings);
+      const redacted = pathFindings
+        ? redactSecretsInText(receipt)
+        : withFinding && !sawBegin && !sawEnd
+          ? redactSecretsInText(diff, { keyPaths: ['key.pem'] })
+          : redactSecretsInText(diff);
+      if ((withFinding || pathFindings) && !sawBegin && !sawEnd) {
         assert.equal(redactSecretsInText(diff).includes(secrets[0]), true, `bare ${n}`);
       }
       const shown = redactSecretsInText(receipt);
@@ -1436,6 +1454,7 @@ describe('v1.0.60 a later @@ hunk with no BEGIN line redacts the private key', (
     assert.ok(endNoBeginHunks > 0, `end-no-begin ${endNoBeginHunks}`);
     assert.ok(endOnlyProbes > 0, `end-only ${endOnlyProbes}`);
     assert.ok(findingOnlyProbes > 0, `finding-only ${findingOnlyProbes}`);
+    assert.ok(singleHunkProbes > 0, `single-hunk ${singleHunkProbes}`);
   });
 
   it('show, show --json, and share HTML redact hunk-mid-body for LF and CRLF', () => {
@@ -1493,6 +1512,302 @@ describe('v1.0.60 a later @@ hunk with no BEGIN line redacts the private key', (
       assert.equal(html.includes('+++ b/key.pem'), true);
     }
   });
+
+  function singleMidBody(nl) {
+    const funcKey = bodyLine(7);
+    const before = [bodyLine(8), bodyLine(9), bodyLine(10)];
+    const oldLine = bodyLine(11);
+    const newLine = editedBody(oldLine);
+    const after = [bodyLine(12), bodyLine(13), bodyLine(14)];
+    const payload = [
+      ` ${before[0]}`,
+      ` ${before[1]}`,
+      ` ${before[2]}`,
+      `-${oldLine}`,
+      `+${newLine}`,
+      ` ${after[0]}`,
+      ` ${after[1]}`,
+      ` ${after[2]}`,
+    ];
+    const diffLines = [
+      'diff --git a/key.pem b/key.pem',
+      'index 1111111..2222222 100644',
+      '--- a/key.pem',
+      '+++ b/key.pem',
+      `@@ -10,7 +10,7 @@ ${funcKey}`,
+      ...payload,
+    ];
+    const secrets = [funcKey, ...before, oldLine, newLine, ...after];
+    const redactedPayload = [
+      ' [REDACTED]',
+      ' [REDACTED]',
+      ' [REDACTED]',
+      '-[REDACTED]',
+      '+[REDACTED]',
+      ' [REDACTED]',
+      ' [REDACTED]',
+      ' [REDACTED]',
+    ];
+    return { diffLines, secrets, redactedPayload, funcKey, oldLine, newLine };
+  }
+
+  for (const nl of ['\n', '\r\n']) {
+    it(`single mid-body hunk with neither marker redacts exactly (${JSON.stringify(nl)})`, () => {
+      const { diffLines, secrets, redactedPayload } = singleMidBody(nl);
+      const finding = '| high | `secret-looking-path` | Secret-looking path (key / cert material): key.pem |';
+      const rawLines = [finding, ...diffLines, note, ident];
+      const raw = `${rawLines.join(nl)}${nl}`;
+      assert.equal(raw.includes('-----BEGIN '), false);
+      assert.equal(raw.includes('-----END '), false);
+      assert.equal(diffLines.filter((line) => line.startsWith('@@')).length, 1);
+      const bare = redactSecretsInText(diffLines.concat([note, ident]).join(nl) + nl);
+      assert.equal(bare.includes(secrets[0]), true, 'bare diff stays raw');
+      const expected = [
+        finding,
+        'diff --git a/key.pem b/key.pem',
+        'index 1111111..2222222 100644',
+        '--- a/key.pem',
+        '+++ b/key.pem',
+        '@@ -10,7 +10,7 @@ [REDACTED]',
+        ...redactedPayload,
+        note,
+        ident,
+      ].join(nl) + nl;
+      const out = redactSecretsInText(raw);
+      assert.equal(out, expected);
+      for (const secret of secrets) {
+        assert.equal(out.includes(secret), false, secret.slice(0, 12));
+      }
+      const entropy = '| high | `high-entropy-secret` | High-entropy token (5.80 bits/char, len 64): AAAAAAAAAAAA… in key.pem |';
+      const entropyRaw = `${[entropy, ...diffLines, note, ident].join(nl)}${nl}`;
+      const entropyExpected = expected.replace(finding, entropy.replace('AAAAAAAAAAAA…', '[REDACTED]…'));
+      assert.equal(redactSecretsInText(entropyRaw), entropyExpected);
+      const review = '1. **high** `secret-looking-path` — Secret-looking path (key / cert material): key.pem';
+      const reviewOut = redactSecretsInText(`${[review, ...diffLines].join(nl)}${nl}`);
+      assert.equal(reviewOut.includes('@@ -10,7 +10,7 @@ [REDACTED]'), true);
+      assert.equal(reviewOut.includes(secrets[3]), false);
+      const receipt = receiptAround(`${diffLines.join(nl)}${nl}`, false, false).replace(
+        '|-----|------|--------|',
+        `|-----|------|--------|\n${finding}`,
+      );
+      const shown = redactSecretsInText(receipt);
+      const published = publishRedactedReceipt(receipt);
+      const html = markdownToHtml(published);
+      for (const secret of secrets) {
+        assert.equal(shown.includes(secret), false, `show ${secret.slice(0, 8)}`);
+        assert.equal(published.includes(secret), false, `share ${secret.slice(0, 8)}`);
+        assert.equal(html.includes(secret), false, `html ${secret.slice(0, 8)}`);
+      }
+      const header = '@@ -10,7 +10,7 @@ [REDACTED]';
+      assert.equal(shown.includes(header), true);
+      assert.equal(published.includes(header), true);
+      assert.equal(html.includes(header), true);
+      assert.equal(shown.includes('--- a/key.pem'), true);
+      assert.equal(shown.includes('+++ b/key.pem'), true);
+    });
+  }
+
+  it('keeps ordinary @@ function context and Zm9v outside a secret file', () => {
+    const handler = 'def handler(event):';
+    const oldLine = bodyLine(0);
+    const newLine = editedBody(oldLine);
+    const later = bodyLine(12);
+    const keySecret = bodyLine(11);
+    const keyEdited = editedBody(keySecret);
+    const keyFunc = bodyLine(10);
+    for (const nl of ['\n', '\r\n']) {
+      const labeled = JSON.stringify(nl);
+      const withKey = [
+        'diff --git a/app.py b/app.py',
+        '--- a/app.py',
+        '+++ b/app.py',
+        `@@ -1,4 +1,4 @@ ${handler}`,
+        ' -----BEGIN PRIVATE KEY-----',
+        `-${oldLine}`,
+        `+${newLine}`,
+        ` ${bodyLine(1)}`,
+        `@@ -30,3 +30,3 @@ ${handler}`,
+        ' Zm9v',
+        ' YQ==',
+        ` ${later}`,
+        note,
+        ident,
+      ].join(nl) + nl;
+      const out = redactSecretsInText(withKey);
+      assert.equal(out.includes(`@@ -1,4 +1,4 @@ ${handler}`), true, labeled);
+      assert.equal(out.includes(`@@ -30,3 +30,3 @@ ${handler}`), true, labeled);
+      assert.equal(out.includes('@@ -1,4 +1,4 @@ [REDACTED]'), false, labeled);
+      assert.equal(out.includes('@@ -30,3 +30,3 @@ [REDACTED]'), false, labeled);
+      assert.equal(out.includes(oldLine), false, labeled);
+      assert.equal(out.includes(newLine), false, labeled);
+      assert.equal(out.includes(bodyLine(1)), false, labeled);
+      assert.equal(out.includes(later), false, labeled);
+      assert.equal(hasLine(out, ' Zm9v'), true, labeled);
+      assert.equal(hasLine(out, ' YQ=='), false, labeled);
+      assert.equal(hasLine(out, ' [REDACTED]'), true, labeled);
+      assert.equal(out.includes(note), true, labeled);
+      assert.equal(out.includes(ident), true, labeled);
+
+      const flaggedKey = [
+        '| high | `secret-looking-path` | Secret-looking path (key / cert material): key.pem |',
+        'diff --git a/key.pem b/key.pem',
+        '--- a/key.pem',
+        '+++ b/key.pem',
+        `@@ -12,4 +12,4 @@ ${handler}`,
+        ' Zm9v',
+        ' YQ==',
+        ` ${keySecret}`,
+        `+${keyEdited}`,
+        'diff --git a/app.py b/app.py',
+        '--- a/app.py',
+        '+++ b/app.py',
+        `@@ -3,3 +3,3 @@ ${handler}`,
+        ' Zm9v',
+        ' YQ==',
+        '+hello',
+        note,
+      ].join(nl) + nl;
+      const flagged = redactSecretsInText(flaggedKey);
+      assert.equal(flagged.includes(`@@ -12,4 +12,4 @@ ${handler}`), true, labeled);
+      assert.equal(flagged.includes(`@@ -3,3 +3,3 @@ ${handler}`), true, labeled);
+      assert.equal(flagged.includes('@@ -12,4 +12,4 @@ [REDACTED]'), false, labeled);
+      assert.equal(flagged.includes(keySecret), false, labeled);
+      assert.equal(flagged.includes(keyEdited), false, labeled);
+      assert.equal(flagged.includes(keyFunc), false, labeled);
+      const zm9v = flagged.split(/\r?\n/).filter((line) => line === ' Zm9v');
+      assert.equal(zm9v.length, 1, labeled);
+      assert.equal(flagged.includes('+hello'), true, labeled);
+      assert.equal(flagged.includes(note), true, labeled);
+    }
+
+    const appDiff = [
+      'diff --git a/app.py b/app.py',
+      '--- a/app.py',
+      '+++ b/app.py',
+      `@@ -4,4 +4,4 @@ ${handler}`,
+      ` ${bodyLine(4)}`,
+      ' Zm9v',
+      ' YQ==',
+      '+hello',
+      note,
+      ident,
+    ].join('\n') + '\n';
+    const viaPath = redactSecretsInText(appDiff, { keyPaths: ['app.py'] });
+    assert.equal(viaPath.includes(`@@ -4,4 +4,4 @@ ${handler}`), true);
+    assert.equal(viaPath.includes(bodyLine(4)), false);
+    assert.equal(hasLine(viaPath, ' Zm9v'), true);
+    assert.equal(hasLine(viaPath, ' YQ=='), false);
+    assert.equal(viaPath.includes('+hello'), true);
+    assert.equal(viaPath.includes(note), true);
+    assert.equal(viaPath.includes(ident), true);
+    const entropyFinding = '| high | `high-entropy-secret` | High-entropy token (5.80 bits/char, len 64): AAAAAAAAAAAA… in app.py |';
+    const entropyReceipt = [
+      '# Receipt',
+      '',
+      '## Risk findings',
+      '',
+      '| Sev | Code | Detail |',
+      '|-----|------|--------|',
+      entropyFinding,
+      '',
+      '## Diff summaries',
+      '',
+      '### `app.py`',
+      '',
+      '```diff',
+      appDiff.replace(/\n$/, ''),
+      '```',
+      '',
+      note,
+      ident,
+      '',
+    ].join('\n');
+    const shown = redactSecretsInText(entropyReceipt);
+    const published = publishRedactedReceipt(entropyReceipt);
+    const html = markdownToHtml(published);
+    for (const surface of [shown, published, html]) {
+      assert.equal(surface.includes(handler), true);
+      assert.equal(surface.includes('Zm9v'), true);
+      assert.equal(surface.includes(bodyLine(4)), false);
+      assert.equal(surface.includes('YQ=='), false);
+      assert.equal(surface.includes(note), true);
+      assert.equal(surface.includes(ident), true);
+    }
+  });
+
+  it('a diff payload that only mentions a finding does not flag the file', () => {
+    const secret = bodyLine(11);
+    const raw = [
+      'diff --git a/notes.md b/notes.md',
+      '--- a/notes.md',
+      '+++ b/notes.md',
+      '@@ -1,2 +1,2 @@ def handler(event):',
+      '+| high | `secret-looking-path` | Secret-looking path (key / cert material): notes.md |',
+      ` ${secret}`,
+      ' Zm9v',
+      '',
+    ].join('\n');
+    const out = redactSecretsInText(raw);
+    assert.equal(out.includes(secret), true);
+    assert.equal(hasLine(out, ' Zm9v'), true);
+    assert.equal(out.includes('@@ -1,2 +1,2 @@ def handler(event):'), true);
+  });
+
+  it('show, show --json, and share HTML redact one mid-body edit of body line 12', () => {
+    for (const nl of ['\n', '\r\n']) {
+      const dir = gitRepo(`ar1060-one-${nl === '\n' ? 'lf' : 'cr'}-`);
+      git(dir, ['config', 'core.autocrlf', 'false']);
+      git(dir, ['config', 'core.safecrlf', 'false']);
+      const bodies = [];
+      for (let i = 0; i < 24; i += 1) bodies.push(bodyLine(i));
+      const lines = ['-----BEGIN PRIVATE KEY-----', ...bodies, '-----END PRIVATE KEY-----'];
+      assert.equal(lines.length, 26);
+      writeFileSync(join(dir, 'key.pem'), `${lines.join(nl)}${nl}`);
+      git(dir, ['add', 'key.pem']);
+      git(dir, ['commit', '-m', 'add key']);
+      const editedLine = editedBody(lines[12]);
+      const edited = lines.slice();
+      edited[12] = editedLine;
+      assert.equal(edited.length, 26);
+      writeFileSync(join(dir, 'key.pem'), `${edited.join(nl)}${nl}`);
+      git(dir, ['add', 'key.pem']);
+      git(dir, ['commit', '-m', 'edit body line 12']);
+      const cap = cli(dir, ['capture', '--agent', 'cursor', '--message', 'single mid-body hunk']);
+      assert.equal(cap.code, 0, cap.err + cap.out);
+      const storedPath = latestReceipt(dir);
+      const stored = readFileSync(storedPath, 'utf8');
+      assert.equal(stored.includes('secret-looking-path'), true);
+      assert.equal(stored.includes('high-entropy-secret'), true);
+      assert.equal(stored.includes('private-key-block'), false);
+      assert.equal(stored.includes(lines[12]), true, 'stored receipt stays raw');
+      assert.equal(stored.includes(lines[8]), true, 'function context stays raw on disk');
+      const shown = cli(dir, ['show', storedPath]);
+      assert.equal(shown.code, 0, shown.err + shown.out);
+      const shownJson = cli(dir, ['show', storedPath, '--json']);
+      assert.equal(shownJson.code, 0, shownJson.err + shownJson.out);
+      assert.equal(shownJson.out, shown.out);
+      const share = cli(dir, ['share', storedPath, '--out', 'shared.html']);
+      assert.equal(share.code, 0, share.err + share.out);
+      const html = readFileSync(join(dir, 'shared.html'), 'utf8');
+      const secrets = [...bodies, editedLine];
+      const label = JSON.stringify(nl);
+      for (const line of secrets) {
+        assert.equal(shown.out.includes(line), false, `show ${label} ${line.slice(0, 8)}`);
+        assert.equal(shownJson.out.includes(line), false, `json ${label} ${line.slice(0, 8)}`);
+        assert.equal(html.includes(line), false, `html ${label} ${line.slice(0, 8)}`);
+      }
+      const redactedHeader = '@@ -10,7 +10,7 @@ [REDACTED]';
+      assert.equal(shown.out.includes(redactedHeader), true, label);
+      assert.equal(shownJson.out.includes(redactedHeader), true, label);
+      assert.equal(html.includes(redactedHeader), true, label);
+      assert.equal(shown.out.includes('-----BEGIN '), false, label);
+      assert.equal(shown.out.includes('-----END '), false, label);
+      assert.equal(shown.out.includes('--- a/key.pem'), true, label);
+      assert.equal(shown.out.includes('+++ b/key.pem'), true, label);
+      assert.equal(html.includes('--- a/key.pem'), true, label);
+      assert.equal(html.includes('+++ b/key.pem'), true, label);
+    }
+  });
 });
 
 describe('v1.0.60 changelog', () => {
@@ -1524,5 +1839,14 @@ describe('v1.0.60 changelog', () => {
     assert.match(entry, /0x1060a11/);
     assert.match(entry, /at most 4/);
     assert.match(entry, /private-key-block/);
+    assert.match(entry, /def handler\(event\)/);
+    assert.match(entry, /Zm9v/);
+    assert.match(entry, /secret-looking-path/);
+    assert.match(entry, /high-entropy-secret/);
+    assert.match(entry, /pack-check/);
+    assert.match(entry, /npm pack --dry-run --json/);
+    assert.match(entry, /base64-like/);
+    assert.match(entry, /body line 12/);
+    assert.match(entry, /neither marker/);
   });
 });
