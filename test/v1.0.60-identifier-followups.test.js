@@ -18,7 +18,8 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { maskJwtTokens, redactMarkdownBody, redactSecretsInText } from '../dist/lib/redact.js';
+import { markdownToHtml } from '../dist/lib/html.js';
+import { maskJwtTokens, publishRedactedReceipt, redactMarkdownBody, redactSecretsInText } from '../dist/lib/redact.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, 'bin', 'agent-receipt.js');
@@ -658,8 +659,270 @@ ingressController certificateManager horizontalPodAutoscaler
   });
 });
 
+describe('v1.0.60 a mixed @@ hunk redacts the private key', () => {
+  const oldLine = `${LINE64.slice(0, 62)}01`;
+  const newLine = `${LINE64.slice(0, 62)}0x`;
+  const ctx = [`${LINE64.slice(0, 62)}02`, `${LINE64.slice(0, 62)}03`, `${LINE64.slice(0, 62)}04`];
+  const note = 'note: keep this visible';
+  const ident = 'thisIsAVeryLongCamelCaseIdentifierName';
+  const hunkLines = [
+    'diff --git a/key.pem b/key.pem',
+    '--- a/key.pem',
+    '+++ b/key.pem',
+    '@@ -1,5 +1,5 @@',
+    ' -----BEGIN PRIVATE KEY-----',
+    `-${oldLine}`,
+    `+${newLine}`,
+    ` ${ctx[0]}`,
+    ` ${ctx[1]}`,
+    ` ${ctx[2]}`,
+    note,
+    ident,
+  ];
+
+  function raw(nl) {
+    return `${hunkLines.join(nl)}${nl}`;
+  }
+
+  function expected(nl) {
+    const head = [
+      'diff --git a/key.pem b/key.pem',
+      '--- a/key.pem',
+      '+++ b/key.pem',
+      '@@ -1,5 +1,5 @@',
+      ' -----BEGIN PRIVATE KEY-----',
+    ].join(nl);
+    return `${head}\n[REDACTED]\n-----END PRIVATE KEY-----${nl}${note}${nl}${ident}${nl}`;
+  }
+
+  for (const nl of ['\n', '\r\n']) {
+    it(`redacts the mixed hunk exactly (${JSON.stringify(nl)})`, () => {
+      const out = redactSecretsInText(raw(nl));
+      assert.equal(out, expected(nl));
+      for (const line of [oldLine, newLine, ...ctx]) {
+        assert.equal(out.includes(line), false, line);
+      }
+      assert.equal(out.includes('--- a/key.pem'), true);
+      assert.equal(out.includes('+++ b/key.pem'), true);
+      assert.equal(out.includes('@@ -1,5 +1,5 @@'), true);
+      assert.equal(out.includes(note), true);
+      assert.equal(out.includes(ident), true);
+    });
+  }
+
+  function bodyLine(i) {
+    const tag = i.toString(36).padStart(3, '0');
+    let line = `M${tag}/`;
+    while (line.length < 64) line += ALPHABET[(i * 3 + line.length) % ALPHABET.length];
+    return line;
+  }
+
+  function editedBody(line) {
+    return `${line.slice(0, 63)}${line.charCodeAt(63) === 120 ? 'y' : 'x'}`;
+  }
+
+  function receiptAround(diff) {
+    return [
+      '# Receipt',
+      '',
+      '## Session',
+      '',
+      '- **Agent**: cursor',
+      '',
+      '## Diff summaries',
+      '',
+      '### `key.pem`',
+      '',
+      '```diff',
+      diff,
+      '```',
+      '',
+    ].join('\n');
+  }
+
+  it('seeded sweep leaves no hunk body line raw in redact, show, or share HTML', () => {
+    const bodyCount = 24;
+    const bodies = [];
+    for (let i = 0; i < bodyCount; i += 1) bodies.push(bodyLine(i));
+    assert.equal(new Set(bodies).size, bodyCount);
+    const next = lcg(0x1060c3);
+    let probes = 0;
+    for (let n = 0; n < 256; n += 1) {
+      const edit = next() % bodyCount;
+      const endBody = edit + (next() % (bodyCount - edit));
+      const prologue = next() % 3;
+      const cut = next() % 3;
+      const nl = n % 2 === 0 ? '\n' : '\r\n';
+      const changed = editedBody(bodies[edit]);
+      assert.notEqual(changed, bodies[edit]);
+      const shown = [' -----BEGIN PRIVATE KEY-----'];
+      for (let i = 0; i <= endBody; i += 1) {
+        if (i === edit) {
+          shown.push(`-${bodies[i]}`);
+          shown.push(`+${changed}`);
+        } else {
+          shown.push(` ${bodies[i]}`);
+        }
+      }
+      const drop = Math.min(cut, shown.length - 2);
+      const visible = drop > 0 ? shown.slice(0, shown.length - drop) : shown;
+      let oldCount = 0;
+      let newCount = 0;
+      for (const line of visible) {
+        const mark = line.charCodeAt(0);
+        if (mark === 43) newCount += 1;
+        else if (mark === 45) oldCount += 1;
+        else {
+          oldCount += 1;
+          newCount += 1;
+        }
+      }
+      const start = prologue + 1;
+      const header = n % 5 === 0
+        ? `@@ -${start},${oldCount} +${start},${newCount} @@ key.pem`
+        : `@@ -${start},${oldCount} +${start},${newCount} @@`;
+      const trunc = drop > 0 ? `… (${drop} more lines truncated; use --full)` : '';
+      const diffLines = [
+        'diff --git a/key.pem b/key.pem',
+        'index 1111111..2222222 100644',
+        '--- a/key.pem',
+        '+++ b/key.pem',
+        header,
+        ...visible,
+      ];
+      if (trunc) diffLines.push(trunc);
+      diffLines.push(note, ident);
+      const diff = `${diffLines.join(nl)}${nl}`;
+      const secrets = [];
+      for (const line of visible) {
+        const content = line.slice(1);
+        if (content.startsWith('-----')) continue;
+        secrets.push(content);
+      }
+      assert.ok(secrets.length > 0);
+      const receipt = receiptAround(diff);
+      const redacted = redactSecretsInText(diff);
+      const shownText = redactSecretsInText(receipt);
+      const html = markdownToHtml(publishRedactedReceipt(receipt));
+      const label = `edit ${edit} end ${endBody} start ${start} drop ${drop} ${JSON.stringify(nl)}`;
+      for (const secret of secrets) {
+        assert.equal(redacted.includes(secret), false, `redact ${label} ${secret.slice(0, 8)}`);
+        assert.equal(shownText.includes(secret), false, `show ${label} ${secret.slice(0, 8)}`);
+        assert.equal(html.includes(secret), false, `html ${label} ${secret.slice(0, 8)}`);
+      }
+      assert.equal(redacted.includes('[REDACTED]'), true, label);
+      assert.equal(shownText.includes('[REDACTED]'), true, label);
+      assert.equal(html.includes('[REDACTED]'), true, label);
+      assert.equal(redacted.includes('--- a/key.pem'), true, label);
+      assert.equal(redacted.includes('+++ b/key.pem'), true, label);
+      assert.equal(redacted.includes(note), true, label);
+      assert.equal(redacted.includes(ident), true, label);
+      if (trunc) assert.equal(redacted.includes(trunc), true, label);
+      probes += 1;
+    }
+    assert.equal(probes, 256);
+  });
+
+  it('show and share HTML redact a 26-line key after editing line 2', () => {
+    const dir = gitRepo('ar1060-hunk-');
+    const lines = ['-----BEGIN PRIVATE KEY-----'];
+    for (let i = 0; i < 24; i += 1) lines.push(bodyLine(i));
+    lines.push('-----END PRIVATE KEY-----');
+    assert.equal(lines.length, 26);
+    const changed = editedBody(lines[1]);
+    writeFileSync(join(dir, 'key.pem'), `${lines.join('\n')}\n`);
+    writeFileSync(join(dir, 'README.md'), '# qa\n');
+    git(dir, ['add', 'key.pem', 'README.md']);
+    git(dir, ['commit', '-m', 'add key']);
+    const edited = lines.slice();
+    edited[1] = changed;
+    writeFileSync(join(dir, 'key.pem'), `${edited.join('\n')}\n`);
+    const cap = cli(dir, ['capture', '--uncommitted', '--agent', 'cursor', '--message', 'edit line 2']);
+    assert.equal(cap.code, 0, cap.err + cap.out);
+    const storedPath = latestReceipt(dir);
+    const stored = readFileSync(storedPath, 'utf8');
+    assert.equal(stored.includes(lines[1]), true, 'stored receipt stays raw');
+    const shown = cli(dir, ['show', storedPath]);
+    assert.equal(shown.code, 0, shown.err + shown.out);
+    const share = cli(dir, ['share', storedPath, '--out', 'shared.html']);
+    assert.equal(share.code, 0, share.err + share.out);
+    const html = readFileSync(join(dir, 'shared.html'), 'utf8');
+    const secrets = [...lines.slice(1, -1), changed];
+    for (const line of secrets) {
+      assert.equal(shown.out.includes(line), false, `show leaked ${line.slice(-8)}`);
+      assert.equal(html.includes(line), false, `html leaked ${line.slice(-8)}`);
+    }
+    assert.equal(shown.out.includes('[REDACTED]'), true);
+    assert.equal(html.includes('[REDACTED]'), true);
+    assert.equal(shown.out.includes('@@ -1,5 +1,5 @@'), true);
+    assert.equal(html.includes('@@ -1,5 +1,5 @@'), true);
+    assert.equal(shown.out.includes('--- a/key.pem'), true);
+    assert.equal(shown.out.includes('+++ b/key.pem'), true);
+  });
+});
+
+describe('v1.0.60 plus-leading key lines are not a diff by themselves', () => {
+  const plusLong = `+${LINE64.slice(0, 63)}`;
+
+  it('redacts one or two plus lines, including a 4, 8, or 12 character final', () => {
+    const alone = `+${'A'.repeat(63)}`;
+    const second = `+${'B'.repeat(63)}`;
+    assert.equal(
+      redactSecretsInText(`-----BEGIN PRIVATE KEY-----\n${alone}\n${second}\nNext\n`),
+      `${PEM_REPLACEMENT}\nNext\n`,
+    );
+    for (const len of [4, 8, 12]) {
+      const finalLine = '+AbCdEfGhIjK'.slice(0, len);
+      assert.equal(finalLine.length, len);
+      const raw = `-----BEGIN PRIVATE KEY-----\n${plusLong}\n${finalLine}\nNext\n`;
+      const out = redactSecretsInText(raw);
+      assert.equal(out, `${PEM_REPLACEMENT}\nNext\n`, finalLine);
+      assert.equal(out.includes(plusLong), false, finalLine);
+      assert.equal(out.includes(finalLine), false, finalLine);
+      assert.equal(out.includes('Next'), true, finalLine);
+    }
+  });
+});
+
+describe('v1.0.60 digit-bearing names stay after a gap', () => {
+  const kept = ['k8sNamespaceName', 'sha256DigestValue', 'base64UrlEncoded'];
+  const masked = ['abcDe12fghijklmn', 'k8sNotARealNameXX'];
+
+  it('keeps k8s, sha256, and base64 names only before a resumed body line', () => {
+    for (const nl of ['\n', '\r\n', '\r']) {
+      for (const name of kept) {
+        const gap = redactSecretsInText(block(nl, [LINE64, '', name, 'Next']));
+        const label = `${name} ${JSON.stringify(nl)}`;
+        assert.equal(gap.includes(name), true, label);
+        assert.equal(gap.includes(LINE64), false, label);
+        assert.equal(gap.includes('Next'), true, label);
+        const wide = redactSecretsInText(block(nl, [LINE64, '', LINE64, name, 'Next']));
+        assert.equal(wide.includes(name), false, `wide ${label}`);
+        assert.equal(wide.includes(LINE64), false, `wide ${label}`);
+        assert.equal(wide.includes('Next'), true, `wide ${label}`);
+      }
+      for (const name of masked) {
+        const gap = redactSecretsInText(block(nl, [LINE64, '', name, 'Next']));
+        assert.equal(gap.includes(name), false, name);
+        assert.equal(gap.includes('Next'), true, name);
+      }
+    }
+    const prefixed = [
+      '+-----BEGIN PRIVATE KEY-----',
+      `+${LINE64}`,
+      '+',
+      '+k8sNamespaceName',
+      '+Next',
+    ].join('\n');
+    const out = redactSecretsInText(prefixed);
+    assert.equal(out.includes('+k8sNamespaceName'), true);
+    assert.equal(out.includes(LINE64), false);
+    assert.equal(out.includes('+Next'), true);
+  });
+});
+
 describe('v1.0.60 changelog', () => {
-  it('lists the five Release QA follow-ups', () => {
+  it('lists the Release QA follow-ups', () => {
     const note = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     const entry = note.slice(note.indexOf('## [1.0.60]'), note.indexOf('## [1.0.59]'));
     assert.match(entry, /real word/);
@@ -675,5 +938,10 @@ describe('v1.0.60 changelog', () => {
     assert.match(entry, /encodeURIComponent/);
     assert.match(entry, /version was not bumped again/);
     assert.match(entry, /4, 8, 12, or 16/);
+    assert.match(entry, /@@/);
+    assert.match(entry, /k8sNamespaceName/);
+    assert.match(entry, /sha256DigestValue/);
+    assert.match(entry, /base64UrlEncoded/);
+    assert.match(entry, /abcDe12fghijklmn/);
   });
 });
