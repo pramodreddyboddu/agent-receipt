@@ -18,7 +18,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { maskJwtTokens, redactSecretsInText } from '../dist/lib/redact.js';
+import { maskJwtTokens, redactMarkdownBody, redactSecretsInText } from '../dist/lib/redact.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, 'bin', 'agent-receipt.js');
@@ -484,6 +484,180 @@ describe('v1.0.60 long identifiers stay on plain and JSON surfaces', { timeout: 
   });
 });
 
+describe('v1.0.60 a short final PEM line that starts with + stays inside the block', () => {
+  const note = 'note: keep this visible';
+  const ident = 'thisIsAVeryLongCamelCaseIdentifierName';
+  const notice = '> **Redacted** — high/secret findings masked for safer sharing';
+
+  function plusLine(len) {
+    const line = `+AbCdEfGhIjKlMnO`.slice(0, len);
+    assert.equal(line.length, len);
+    assert.equal(line.startsWith('+'), true);
+    return line;
+  }
+
+  function unfencedRaw(nl, body) {
+    return `-----BEGIN PRIVATE KEY-----${nl}${LINE64}${nl}${body}${nl}${note}${nl}${ident}${nl}`;
+  }
+
+  function unfencedExpected(nl) {
+    return `${PEM_REPLACEMENT}${nl}${note}${nl}${ident}${nl}`;
+  }
+
+  function fencedRaw(nl, body) {
+    return `\`\`\`diff${nl}${unfencedRaw(nl, body)}\`\`\`${nl}`;
+  }
+
+  function fencedExpected(nl) {
+    if (nl === '\r') {
+      const body = `\`\`\`diff\r-----BEGIN PRIVATE KEY-----\n[REDACTED]\n-----END PRIVATE KEY-----\r${note}\r${ident}\r\`\`\`\r`;
+      return `${notice}\n\n${body}\n`;
+    }
+    return `${notice}\n\n\`\`\`diff\n${PEM_REPLACEMENT}\n${note}\n${ident}\n\`\`\`\n`;
+  }
+
+  for (const len of [4, 8, 12, 16]) {
+    for (const nl of ['\n', '\r\n', '\r']) {
+      const body = plusLine(len);
+      it(`redacts a ${len}-character + line (${JSON.stringify(nl)}) and keeps the note`, () => {
+        const raw = unfencedRaw(nl, body);
+        const out = redactSecretsInText(raw);
+        assert.equal(out, unfencedExpected(nl));
+        assert.equal(out.includes(body), false);
+        assert.equal(out.includes(LINE64), false);
+        assert.equal(out.includes(note), true);
+        assert.equal(out.includes(ident), true);
+
+        const fenced = redactMarkdownBody(fencedRaw(nl, body));
+        assert.equal(fenced, fencedExpected(nl));
+        assert.equal(fenced.includes(body), false);
+        assert.equal(fenced.includes(LINE64), false);
+        assert.equal(fenced.includes(note), true);
+        assert.equal(fenced.includes(ident), true);
+      });
+    }
+  }
+
+  it('seeded sweep leaves no + final key line raw, fenced or unfenced', () => {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const next = lcg(0x1060b1);
+    const breaks = ['\n', '\r\n', '\r'];
+    const lengths = [4, 8, 12, 16];
+    let probes = 0;
+    for (let n = 0; n < 2048; n += 1) {
+      const len = lengths[n % lengths.length];
+      let body = '+';
+      while (body.length < len) body += alphabet[next() % alphabet.length];
+      const nl = breaks[n % breaks.length];
+      const plain = redactSecretsInText(unfencedRaw(nl, body));
+      const label = `${len} ${JSON.stringify(nl)} ${body}`;
+      assert.equal(plain, unfencedExpected(nl), label);
+      assert.equal(plain.includes(body), false, label);
+      assert.equal(plain.includes(LINE64), false, label);
+      const fenced = redactMarkdownBody(fencedRaw(nl, body));
+      assert.equal(fenced, fencedExpected(nl), `fence ${label}`);
+      assert.equal(fenced.includes(body), false, `fence ${label}`);
+      assert.equal(fenced.includes(LINE64), false, `fence ${label}`);
+      assert.equal(fenced.includes(note), true, `fence ${label}`);
+      assert.equal(fenced.includes(ident), true, `fence ${label}`);
+      probes += 1;
+    }
+    assert.equal(probes, 2048);
+  });
+});
+
+describe('v1.0.60 realistic identifiers stay after a gap', () => {
+  // 134 names of at least 16 letters. Main's shape rule masks 4 of them.
+  // This cut masks 2, and both of those are in main's masked set.
+  const MAIN_MASKS = 4;
+  const kept = `
+getUserProfileById fetchAccountBalance handleWebSocketMsg dockerComposeFile webpackDevServer kubeletConfigPath
+getUserProfileSettingsNow veryLongCamelCaseIdentifier parseJSONResponse HTTPServerConfig IdentifierValue16
+renderReportHtml decodeJwtPayload parseYamlDocument uncommittedBadge canonicalizedBody
+activePolicyRefs adapterBackupDir addEventListener addTrustedFingerprint allocateRelPaths
+allowShareReceipt allowedHostValue createPersonalSite fetchUserSettings handleIncomingMessage
+loadKubernetesConfig openDatabaseConnection parseConfigDocument readEnvironmentFile renderHtmlReport
+saveUserPreferences sendWebSocketFrame startBackgroundWorker stopBackgroundWorker updateAccountBalance
+validateUserSession writeAuditRecord dockerComposeService kubernetesDeployment postgresConnection
+redisCacheClient webpackDevMiddleware eslintConfigPath typescriptProject getCustomerOrderById
+fetchInvoiceDetails handlePaymentWebhook createCheckoutSession listRepositoryFiles readPackageManifest
+writeCoverageReport computeFileChecksum normalizeRequestPath resolveModuleSpecifier formatErrorMessage
+parseCommandArguments buildDependencyGraph collectTestResults publishReleaseNotes verifySignatureBlock
+loadServiceAccount rotateSigningKey storeRefreshToken clearSessionCookie applySecurityPolicy
+checkPermissionSet grantAccessToken revokeAccessToken renderDashboardView toggleFeatureFlag
+enqueueBackgroundTask decompressResponseBody serializeJsonPayload deserializeJsonPayload
+sendEmailNotification buildEmailTemplate applyOrderDiscount resizeImageAsset cacheQueryResult
+invalidateQueryCache refreshQueryCache formatDisplayName parseDisplayName generateAccessKey
+validateAccessKey bootstrapApplication shutdownApplication configureMiddleware registerMiddleware
+handleRouteChange matchRoutePattern compileStyleSheet bundleStyleSheet installDependency
+updateDependency measurePerformance recordPerformance traceRequestSpan exportRequestSpan
+thisIsAVeryLongCamelCaseIdentifierName passwordStrength downstreamConsumer upstreamProducer
+asynchronousTask synchronizationLock throughputLimiter javascriptBundle postgresqlClient
+backgroundWorker nginxUpstreamHost kafkaConsumerGroup workloadIdentity stylesheetLoader
+screenshotCapture oauthCallbackUrl websocketGateway openTelemetrySpan prometheusScrape
+circuitBreakerPolicy rateLimiterConfig retryBackoffPolicy messageBrokerHost objectStorageKey
+serviceAccountKey refreshTokenStore accessControlList persistentVolumeClaim storageClassName
+ingressController certificateManager horizontalPodAutoscaler
+`.trim().split(/\s+/);
+  const masked = ['encodeURIComponent', 'decodeURIComponent'];
+
+  it('keeps the corpus after a gap and redacts it after a resumed body line', () => {
+    assert.ok(kept.length >= 78, String(kept.length));
+    assert.equal(new Set(kept).size, kept.length);
+    assert.ok(masked.length <= MAIN_MASKS);
+    for (const name of kept) assert.ok(name.length >= 16, name);
+    for (const nl of ['\n', '\r\n', '\r']) {
+      for (const name of kept) {
+        const gap = redactSecretsInText(block(nl, [LINE64, '', name, 'Next']));
+        const label = `${name} ${JSON.stringify(nl)}`;
+        assert.equal(gap.includes(name), true, label);
+        assert.equal(gap.includes(LINE64), false, label);
+        assert.equal(gap.includes('Next'), true, label);
+        const wide = redactSecretsInText(block(nl, [LINE64, '', LINE64, name, 'Next']));
+        assert.equal(wide.includes(name), false, `wide ${label}`);
+        assert.equal(wide.includes(LINE64), false, `wide ${label}`);
+        assert.equal(wide.includes('Next'), true, `wide ${label}`);
+      }
+      for (const name of masked) {
+        const gap = redactSecretsInText(block(nl, [LINE64, '', name, 'Next']));
+        const label = `${name} ${JSON.stringify(nl)}`;
+        assert.equal(gap.includes(name), false, label);
+        assert.equal(gap.includes('Next'), true, label);
+        assert.equal(gap.includes(LINE64), false, label);
+      }
+    }
+  });
+
+  it('seeded letters-only lines stay redacted on more than one seed', () => {
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+    const seeds = [0x1060a11, 0x60b2, 0xabcdef];
+    for (const seed of seeds) {
+      const next = lcg(seed);
+      let keptLines = 0;
+      for (let n = 0; n < 2048; n += 1) {
+        const len = 16 + (next() % 4);
+        let line = '';
+        if (n % 4 === 0) {
+          line = letters[26 + (next() % 26)];
+          const capAt = 1 + (next() % (len - 2));
+          for (let i = 1; i < len; i += 1) {
+            if (i === capAt) line += letters[next() % 26];
+            else line += letters[26 + (next() % 26)];
+          }
+        } else {
+          for (let i = 0; i < len; i += 1) line += letters[next() % letters.length];
+        }
+        const out = redactSecretsInText(block('\n', [LINE64, '', line, 'Next']));
+        if (out.includes(line)) keptLines += 1;
+        assert.equal(out.includes(LINE64), false, line);
+        assert.equal(out.includes('Next'), true, line);
+      }
+      const limit = seed === 0x1060a11 ? 0 : 4;
+      assert.ok(keptLines <= limit, `seed ${seed.toString(16)} kept ${keptLines}`);
+    }
+  });
+});
+
 describe('v1.0.60 changelog', () => {
   it('lists the five Release QA follow-ups', () => {
     const note = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
@@ -497,5 +671,9 @@ describe('v1.0.60 changelog', () => {
     assert.match(entry, /npm publish, which is on hold/);
     assert.match(entry, /v1\.0\.59 Release QA follow-ups/);
     assert.match(entry, /1\.0\.47 through 1\.0\.59/);
+    assert.match(entry, /getUserProfileById/);
+    assert.match(entry, /encodeURIComponent/);
+    assert.match(entry, /version was not bumped again/);
+    assert.match(entry, /4, 8, 12, or 16/);
   });
 });

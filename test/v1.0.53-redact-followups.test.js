@@ -382,7 +382,7 @@ describe('v1.0.53 secret-shaped paths and the example action', () => {
     assert.equal(picked, body.relativePath);
     const verified = cli(repo, ['verify', picked]);
     assert.equal(verified.code, 0, verified.err + verified.out);
-    assert.match(verified.out, /OK/);
+    assert.match(verified.out, /✓ OK — receipt integrity verified/);
 
     const stage = join(repo, 'stage');
     mkdirSync(stage, { recursive: true });
@@ -436,7 +436,7 @@ describe('v1.0.53 trailing content fails verify', () => {
     writeFileSync(receipt, `${original}\n\n`);
     let plain = cli(dir, ['verify', receipt]);
     assert.equal(plain.code, 0, plain.err + plain.out);
-    assert.match(plain.out, /OK/);
+    assert.match(plain.out, /✓ OK — receipt integrity verified/);
 
     writeFileSync(receipt, `${original}\n   \n`);
     json = cli(dir, ['verify', receipt, '--json']);
@@ -447,7 +447,7 @@ describe('v1.0.53 trailing content fails verify', () => {
     plain = cli(dir, ['verify', receipt]);
     assert.equal(plain.code, 2, plain.out + plain.err);
     assert.match(plain.err, /trailing content after the last chained record/);
-    assert.doesNotMatch(plain.out, /OK/);
+    assert.doesNotMatch(plain.out, /✓ OK — receipt integrity verified/);
     assert.doesNotMatch(plain.out + plain.err, /ignored by design/i);
 
     json = cli(dir, ['verify', receipt, '--json']);

@@ -2674,7 +2674,8 @@ function isKeyMaterialSpan(line: string, start: number, end: number): boolean {
  * Index after one unified-diff marker. A single leading `+` or `-` is
  * not part of the key line. `+++` and `---` stay, so a file marker is
  * not stripped into key material. The caller has already skipped
- * leading space and tab. One comparison.
+ * leading space and tab, and only calls this when the block is a diff.
+ * One comparison.
  */
 function pemDiffContentStart(line: string, start: number, end: number): number {
   if (start >= end) return start;
@@ -2685,8 +2686,23 @@ function pemDiffContentStart(line: string, start: number, end: number): number {
   return next;
 }
 
-/** A full PEM body line: key-shaped base64 only, after ASCII space, tab, CR, and one diff mark. */
-function isPemBodyLine(line: string): boolean {
+/** True when the trimmed line opens with one `+` or one `-`, not `++` or `--`. */
+function hasSingleDiffMark(line: string): boolean {
+  const span = pemBodySpan(line);
+  return pemDiffContentStart(line, span.start, span.end) !== span.start;
+}
+
+/**
+ * Where key text starts. A diff mark is skipped only when this block is
+ * a diff (`stripDiff`). A leading `+` in a normal PEM line is base64.
+ */
+function pemKeyStart(line: string, start: number, end: number, stripDiff: boolean): number {
+  if (!stripDiff) return start;
+  return pemDiffContentStart(line, start, end);
+}
+
+/** A full PEM body line: key-shaped base64 only, after ASCII space, tab, and CR. */
+function isPemBodyLine(line: string, stripDiff: boolean): boolean {
   let start = 0;
   let end = line.length;
   while (start < end) {
@@ -2699,7 +2715,7 @@ function isPemBodyLine(line: string): boolean {
     if (code !== 32 && code !== 9 && code !== 13) break;
     end -= 1;
   }
-  start = pemDiffContentStart(line, start, end);
+  start = pemKeyStart(line, start, end, stripDiff);
   if (end <= start) return false;
   return isKeyMaterialSpan(line, start, end);
 }
@@ -2709,18 +2725,18 @@ function isPemBodyLine(line: string): boolean {
  * follows on that same line. -1 when the line is a full body line or the
  * run is not key material. The prose must start with ASCII space or tab.
  * A path such as `/src/components/Button.tsx` is not a partial key line.
- * Leading ASCII space and tab are not part of the run. One leading
- * `+` or `-` is a diff marker and is part of the redacted run. The
- * prose, including the space before it, stays.
+ * Leading ASCII space and tab are not part of the run. When the block
+ * is a diff, one leading `+` or `-` is a marker and is part of the
+ * redacted run. The prose, including the space before it, stays.
  */
-function pemPartialCut(line: string): number {
+function pemPartialCut(line: string, stripDiff: boolean): number {
   let i = 0;
   while (i < line.length) {
     const code = line.charCodeAt(i);
     if (code !== 32 && code !== 9) break;
     i += 1;
   }
-  i = pemDiffContentStart(line, i, line.length);
+  i = pemKeyStart(line, i, line.length, stripDiff);
   const start = i;
   while (i < line.length && isBase64Code(line.charCodeAt(i))) i += 1;
   if (i === start || i >= line.length) return -1;
@@ -2764,16 +2780,16 @@ function isHexDigitCode(code: number): boolean {
   );
 }
 
-function pemTrimWidth(line: string): number {
+function pemTrimWidth(line: string, stripDiff: boolean): number {
   const span = pemBodySpan(line);
-  const start = pemDiffContentStart(line, span.start, span.end);
+  const start = pemKeyStart(line, span.start, span.end, stripDiff);
   return span.end - start;
 }
 
-/** Trimmed span is only hex digits. A sha256 line is this shape. One leading diff mark is not part of the span. */
-function isPureHexLine(line: string): boolean {
+/** Trimmed span is only hex digits. A sha256 line is this shape. A diff mark is not part of the span when the block is a diff. */
+function isPureHexLine(line: string, stripDiff: boolean): boolean {
   const span = pemBodySpan(line);
-  const start = pemDiffContentStart(line, span.start, span.end);
+  const start = pemKeyStart(line, span.start, span.end, stripDiff);
   if (span.end <= start) return false;
   for (let i = start; i < span.end; i += 1) {
     if (!isHexDigitCode(line.charCodeAt(i))) return false;
@@ -2785,15 +2801,15 @@ function isPureHexLine(line: string): boolean {
  * A hex digest sitting in prose: MD5 32, SHA-1 40, SHA-256 64, SHA-384 96,
  * SHA-512 128. Other hex widths are body-shaped, not digests.
  */
-function isHexDigestLine(line: string): boolean {
-  if (!isPureHexLine(line)) return false;
-  const n = pemTrimWidth(line);
+function isHexDigestLine(line: string, stripDiff: boolean): boolean {
+  if (!isPureHexLine(line, stripDiff)) return false;
+  const n = pemTrimWidth(line, stripDiff);
   return n === 32 || n === 40 || n === 64 || n === 96 || n === 128;
 }
 
-function hasPemKeyPunctuation(line: string): boolean {
+function hasPemKeyPunctuation(line: string, stripDiff: boolean): boolean {
   const span = pemBodySpan(line);
-  const start = pemDiffContentStart(line, span.start, span.end);
+  const start = pemKeyStart(line, span.start, span.end, stripDiff);
   for (let i = start; i < span.end; i += 1) {
     const code = line.charCodeAt(i);
     if (code === 43 || code === 47 || code === 61) return true;
@@ -3018,17 +3034,124 @@ function isSnakeCaseIdentifier(line: string, start: number, end: number): boolea
 }
 
 /**
- * camelCase, PascalCase, or snake_case (`veryLongCamelCaseIdentifier`,
- * `IdentifierValue16`, `HTTPServerConfig`, `parseJSONResponse`). Each
- * part is a real word or a common abbreviation. Digits in a camelCase
- * or PascalCase name are only a trailing run, so a digit mixed into the
- * line stays key material. One leading `+` or `-` is a diff marker and
- * is not part of the name. `+++` and `---` are not stripped. One pass
- * over the trimmed line, then one pass over its parts.
+ * Letter pairs from ordinary words and code names. Bit (a * 26 + b) is
+ * set when that lowercase pair may sit inside a camelCase hump. A random
+ * run such as `bc` in `abcdefgh` is unset. 85 bytes. One lookup per pair.
  */
-function isCamelOrPascalIdentifier(line: string): boolean {
+const IDENTIFIER_PAIR_BITS: Uint8Array = Buffer.from(
+  '7r/+RW5bVNvt0Ve2Rf/7/8c1exSd59FF/Ed//a5GBBHRlc7BXjJPH/kU9P3/9vbv32e3TwAIEPT3+1Xf/9V/vnd/+Q5EBQEQmedABSRCU/lMRAABAA==',
+  'base64',
+);
+
+function identifierPair(first: number, second: number): boolean {
+  if (first < 97 || first > 122 || second < 97 || second > 122) return false;
+  const index = (first - 97) * 26 + (second - 97);
+  const byte = IDENTIFIER_PAIR_BITS[index >> 3] ?? 0;
+  return (byte & (1 << (index & 7))) !== 0;
+}
+
+/**
+ * One hump of a word-shaped camelCase name. A hump of one letter is only
+ * `a` or `i`. A hump of 2 to 4 letters may be an abbreviation without a
+ * vowel (`Msg`, `Jwt`, `Html`). A longer hump is at most 16 letters,
+ * contains a vowel (`w` counts), has no consonant run longer than 4, and every letter
+ * pair is an ordinary pair. The capital, when present, is the first
+ * letter. One pass.
+ */
+function shapedCamelHump(line: string, from: number, to: number): boolean {
+  const n = to - from;
+  if (n === 1) {
+    let code = line.charCodeAt(from);
+    if (code >= 65 && code <= 90) code += 32;
+    return code === 97 || code === 105;
+  }
+  if (n < 2 || n > 16) return false;
+  let vowel = false;
+  let run = 0;
+  let maxRun = 0;
+  let prev = 0;
+  for (let i = from; i < to; i += 1) {
+    let code = line.charCodeAt(i);
+    if (code >= 65 && code <= 90) {
+      if (i !== from) return false;
+      code += 32;
+    } else if (code < 97 || code > 122) {
+      return false;
+    }
+    // `w` counts with the vowels. It breaks clusters such as `wnstr`
+    // in `downstream` without making a random run of five consonants a word.
+    if (
+      code === 97 || code === 101 || code === 105 || code === 111 ||
+      code === 117 || code === 121 || code === 119
+    ) {
+      vowel = true;
+      run = 0;
+    } else {
+      run += 1;
+      if (run > maxRun) maxRun = run;
+    }
+    if (i > from && !identifierPair(prev, code)) return false;
+    prev = code;
+  }
+  if (n >= 5 && !vowel) return false;
+  if (n > 4 && maxRun > 4) return false;
+  return true;
+}
+
+/**
+ * camelCase whose humps are word-shaped, not a random capital
+ * (`getUserProfileById`, `fetchAccountBalance`, `handleWebSocketMsg`).
+ * At least two humps, and at least one hump is 4 or more letters. The
+ * name is mostly lowercase. Two capitals in a row are an acronym, not
+ * this shape. One pass over a letter span already cut from one line.
+ */
+function isWordShapedCamelIdentifier(line: string, start: number, end: number): boolean {
+  if (end - start < 2) return false;
+  const first = line.charCodeAt(start);
+  if (!((first >= 65 && first <= 90) || (first >= 97 && first <= 122))) return false;
+  let humps = 0;
+  let longHump = false;
+  let lowers = 0;
+  let uppers = 0;
+  let humpFrom = start;
+  for (let i = start + 1; i <= end; i += 1) {
+    const atEnd = i === end;
+    const code = atEnd ? 0 : line.charCodeAt(i);
+    const upper = code >= 65 && code <= 90;
+    if (!atEnd && !upper) {
+      if (code < 97 || code > 122) return false;
+      continue;
+    }
+    if (!atEnd && line.charCodeAt(i - 1) >= 65 && line.charCodeAt(i - 1) <= 90) return false;
+    if (!shapedCamelHump(line, humpFrom, i)) return false;
+    const n = i - humpFrom;
+    if (n >= 4) longHump = true;
+    for (let k = humpFrom; k < i; k += 1) {
+      const humpCode = line.charCodeAt(k);
+      if (humpCode >= 97 && humpCode <= 122) lowers += 1;
+      else uppers += 1;
+    }
+    humps += 1;
+    humpFrom = i;
+  }
+  return humps >= 2 && longHump && lowers > uppers;
+}
+
+/**
+ * camelCase, PascalCase, or snake_case (`veryLongCamelCaseIdentifier`,
+ * `IdentifierValue16`, `HTTPServerConfig`, `parseJSONResponse`,
+ * `getUserProfileById`). A name stays when every part is a real word or
+ * a common abbreviation, or when it is word-shaped camelCase: at least
+ * two humps of 2 to 16 letters, mostly lowercase, each hump of 5 or
+ * more letters containing a vowel. Digits in a camelCase or PascalCase name are only
+ * a trailing run, so a digit mixed into the line stays key material.
+ * One leading `+` or `-` is a diff marker only when the block is a diff.
+ * `+++` and `---` are not stripped. One pass over the trimmed line, then
+ * one pass over its parts.
+ */
+function isCamelOrPascalIdentifier(line: string, stripDiff: boolean): boolean {
   const span = pemBodySpan(line);
-  const start = pemDiffContentStart(line, span.start, span.end);
+  const start = pemKeyStart(line, span.start, span.end, stripDiff);
   const end = span.end;
   if (end - start < 16) return false;
   for (let i = start; i < end; i += 1) {
@@ -3037,7 +3160,8 @@ function isCamelOrPascalIdentifier(line: string): boolean {
   const letterEnd = trailingDigitCut(line, start, end);
   if (letterEnd <= start) return false;
   if (isSingleCapIdentifier(line, start, letterEnd)) return true;
-  return isAcronymWordIdentifier(line, start, letterEnd);
+  if (isAcronymWordIdentifier(line, start, letterEnd)) return true;
+  return isWordShapedCamelIdentifier(line, start, letterEnd);
 }
 
 /**
@@ -3049,22 +3173,24 @@ function isCamelOrPascalIdentifier(line: string): boolean {
  * alphanumeric line. A camelCase or PascalCase word does not continue
  * when this line follows the gap directly: every camelCase, PascalCase,
  * or snake_case part is a real word or a common abbreviation
- * (`HTTPServerConfig`, `parseJSONResponse`). A random capital is not
+ * (`HTTPServerConfig`, `parseJSONResponse`) or word-shaped camelCase
+ * (`getUserProfileById`, `kubeletConfigPath`). A random capital is not
  * enough. Digits in a camelCase or PascalCase name are only a trailing
  * run. Digits mixed into the line do continue. One leading `+` or `-`
- * is a diff marker and is not part of the line. A 48-hex or 56-hex string does
- * not continue. A hex digest does not continue: 40-hex and 64-hex stay
- * prose. One pass over the trimmed line. The caller uses this only while
- * the gap is still open. A line that follows a resumed body line is body,
- * not this exception: a hex digest there is also a legal key line.
+ * is a diff marker only when the block is a diff. A 48-hex or 56-hex
+ * string does not continue. A hex digest does not continue: 40-hex and
+ * 64-hex stay prose. One pass over the trimmed line. The caller uses
+ * this only while the gap is still open. A line that follows a resumed
+ * body line is body, not this exception: a hex digest there is also a
+ * legal key line.
  */
-function resumesAfterPemGap(line: string, bodyWidth: number): boolean {
-  if (bodyWidth < 1 || !isPemBodyLine(line) || isHexDigestLine(line)) return false;
-  const n = pemTrimWidth(line);
-  if (isPureHexLine(line) && (n === 48 || n === 56)) return false;
+function resumesAfterPemGap(line: string, bodyWidth: number, stripDiff: boolean): boolean {
+  if (bodyWidth < 1 || !isPemBodyLine(line, stripDiff) || isHexDigestLine(line, stripDiff)) return false;
+  const n = pemTrimWidth(line, stripDiff);
+  if (isPureHexLine(line, stripDiff) && (n === 48 || n === 56)) return false;
   if (n >= bodyWidth) return true;
-  if (isCamelOrPascalIdentifier(line)) return false;
-  if (hasPemKeyPunctuation(line)) return true;
+  if (isCamelOrPascalIdentifier(line, stripDiff)) return false;
+  if (hasPemKeyPunctuation(line, stripDiff)) return true;
   return n >= 16;
 }
 
@@ -3188,12 +3314,17 @@ function readPemLine(text: string, i: number): PemLineBreak {
  * characters after one or two resumed full-width body lines, even when
  * the line looks like a name. A camelCase, PascalCase, or snake_case word
  * does not resume when it follows the gap and no body line has resumed.
- * Every part is a real word or a common abbreviation (`JSON`, `URL`, `ID`,
- * `HTTP`). A random capital is not enough. Digits in a camelCase or
- * PascalCase word are only a trailing run. An acronym of real words
- * (`HTTPServerConfig`, `parseJSONResponse`) does not resume in that same
- * place. A single leading `+` or `-` is a diff marker and is not part of
- * the line. `+++` and `---` are not stripped. A name that
+ * It stays when every part is a real word or a common abbreviation
+ * (`JSON`, `URL`, `ID`, `HTTP`), or when it is word-shaped camelCase:
+ * at least two humps, mostly lowercase, each longer hump containing a
+ * vowel (`getUserProfileById`, `fetchAccountBalance`). A random capital
+ * is not enough. Digits in a camelCase or PascalCase word are only a
+ * trailing run. An acronym of real words (`HTTPServerConfig`,
+ * `parseJSONResponse`) does not resume in that same place. A single
+ * leading `+` or `-` is a diff marker only when the BEGIN line carries
+ * that prefix or every body line does. `+++` and `---` are not stripped.
+ * A `+` that starts a short final key line in a normal PEM block is
+ * base64 and stays inside the block. A name that
  * follows a resumed body line does resume: the identifier keep does not
  * apply there. A 48-hex or 56-hex string does not resume while the gap
  * is open. A hex digest (32, 40, 64, 96, or 128 hex digits) does not
@@ -3209,9 +3340,84 @@ function readPemLine(text: string, i: number): PemLineBreak {
  * ends, so `Next`, `README`, `npm`, `test`, `TODO`, and a short mixed-case
  * line such as `Ab1` stay, and so does a letter-only fragment such as
  * `QUJD`. The scan does not read past the line that stops it. Returns
- * `from` when there is no body line. One forward pass.
+ * `from` when there is no body line. One forward pass, plus one look at
+ * the BEGIN line and the body lines to decide whether a leading `+` or
+ * `-` is a diff mark.
  */
+function pemHeaderLine(text: string, headerEnd: number): string {
+  let lineStart = headerEnd;
+  while (lineStart > 0) {
+    const code = text.charCodeAt(lineStart - 1);
+    if (code === 10 || code === 13) break;
+    lineStart -= 1;
+  }
+  const br = readPemLine(text, lineStart);
+  return text.slice(lineStart, br.contentEnd);
+}
+
+/** A key line with no diff mark. An identifier is not a key line. */
+function isUnmarkedKeyLine(line: string): boolean {
+  if (hasSingleDiffMark(line)) return false;
+  if (isCamelOrPascalIdentifier(line, false)) return false;
+  return isPemBodyLine(line, false) || pemPartialCut(line, false) >= 0;
+}
+
+/** A key line whose single leading `+` or `-` is a diff mark. */
+function isMarkedKeyLine(line: string): boolean {
+  if (!hasSingleDiffMark(line)) return false;
+  if (isCamelOrPascalIdentifier(line, true)) return false;
+  return isPemBodyLine(line, true) || pemPartialCut(line, true) >= 0;
+}
+
+/**
+ * True when every key line after the header carries one diff mark.
+ * A short gap and a legacy header do not count. The walk stops at the
+ * first other line, so it does not read past this block. False when no
+ * key line was seen.
+ */
+function everyDiffBodyLineIsMarked(text: string, from: number): boolean {
+  let i = from;
+  let onHeaderLine = true;
+  let saw = false;
+  while (i < text.length) {
+    const br = readPemLine(text, i);
+    if (br.next === i) break;
+    const line = text.slice(i, br.contentEnd);
+    if (onHeaderLine) {
+      onHeaderLine = false;
+      let onlySpace = true;
+      for (let p = 0; p < line.length; p += 1) {
+        const code = line.charCodeAt(p);
+        if (code !== 32 && code !== 9 && code !== 13) {
+          onlySpace = false;
+          break;
+        }
+      }
+      if (onlySpace) {
+        i = br.next;
+        continue;
+      }
+    }
+    if (isUnmarkedKeyLine(line)) return false;
+    if (isMarkedKeyLine(line)) {
+      saw = true;
+      if (!br.hasBreak) break;
+      i = br.next;
+      continue;
+    }
+    if (isShortOrBlankPemLine(line) || isLegacyPemHeader(line)) {
+      if (!br.hasBreak) break;
+      i = br.next;
+      continue;
+    }
+    break;
+  }
+  return saw;
+}
+
 function pemBodyEnd(text: string, from: number): number {
+  let stripDiff = hasSingleDiffMark(pemHeaderLine(text, from));
+  if (!stripDiff) stripDiff = everyDiffBodyLineIsMarked(text, from);
   let i = from;
   let consumed = from;
   let onHeaderLine = true;
@@ -3237,18 +3443,18 @@ function pemBodyEnd(text: string, from: number): number {
         continue;
       }
     }
-    if (isPemBodyLine(line)) {
+    if (isPemBodyLine(line, stripDiff)) {
       // The identifier keep applies only while the gap is still open.
       // A line that follows a resumed body line is the key's next line,
       // even when it looks like a camelCase name.
-      if (seenBody && pendingGap && !resumesAfterPemGap(line, bodyWidth)) {
+      if (seenBody && pendingGap && !resumesAfterPemGap(line, bodyWidth, stripDiff)) {
         // A hex-only body-shaped line is not prose and not a stopping
         // line. Keep the gap open so a later body line is still masked.
         // A 48-hex or 56-hex string does not resume. With only prose
         // after it, that line stays. A later body line is still masked,
         // and the hex line stays inside that span.
         // A digest with only prose after it is not consumed.
-        if (isPureHexLine(line)) {
+        if (isPureHexLine(line, stripDiff)) {
           if (!br.hasBreak) break;
           pendingGap = true;
           i = br.next;
@@ -3256,7 +3462,7 @@ function pemBodyEnd(text: string, from: number): number {
         }
         break;
       }
-      if (bodyWidth === 0) bodyWidth = pemTrimWidth(line);
+      if (bodyWidth === 0) bodyWidth = pemTrimWidth(line, stripDiff);
       if (!br.hasBreak || br.next >= text.length) {
         consumed = br.next;
         break;
@@ -3267,7 +3473,7 @@ function pemBodyEnd(text: string, from: number): number {
       i = br.next;
       continue;
     }
-    const partial = pemPartialCut(line);
+    const partial = pemPartialCut(line, stripDiff);
     if (partial >= 0) {
       if (seenBody && pendingGap) break;
       consumed = i + partial;
@@ -3299,9 +3505,11 @@ function pemBodyEnd(text: string, from: number): number {
  * `/`, or `=`, and on a base64-only final line of at least 16 characters.
  * That final line stays redacted after one or two resumed full-width
  * body lines, including when it looks like an identifier. A single
- * leading `+` or `-` on a body line is a diff marker and is not part of
- * the key text, so a private key in an unfenced unified diff is still
- * one block. `+++` and `---` are file markers and are not stripped.
+ * leading `+` or `-` on a body line is a diff marker only when the BEGIN
+ * line carries that prefix or every body line does. A private key in an
+ * unfenced unified diff is still one block. `+++` and `---` are file
+ * markers and are not stripped. A leading `+` on a short final line of a
+ * normal PEM block is key text, so that line stays inside the block.
  * A hex digest
  * stays visible when it follows the gap. A 48-hex or 56-hex string does
  * not resume while the gap is open, so it stays visible when prose
@@ -3309,8 +3517,10 @@ function pemBodyEnd(text: string, from: number): number {
  * has to be masked. Directly after a resumed body line, a hex digest is
  * body, because it is also a legal key line. A camelCase, PascalCase, or
  * snake_case word ends the block when it follows the gap and no body line
- * has resumed, and only when every part is a real word or a common
- * abbreviation (`JSON`, `URL`, `ID`, `HTTP`). A random capital is not
+ * has resumed. It ends the block when every part is a real word or a
+ * common abbreviation (`JSON`, `URL`, `ID`, `HTTP`), and also when the
+ * name is word-shaped camelCase (`getUserProfileById`,
+ * `fetchAccountBalance`, `handleWebSocketMsg`). A random capital is not
  * enough. Digits in a camelCase or PascalCase word are only a trailing
  * run. An acronym of real words (`HTTPServerConfig`, `parseJSONResponse`)
  * ends the block in that same place.
