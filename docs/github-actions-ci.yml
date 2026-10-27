@@ -75,6 +75,8 @@
 # Post-gap short final PEM lines, 3-letter directory grounding, and post-gap identifier and hex keeps are local. This smoke still does not listen and does not push.
 # v1.0.60 left that live file unchanged for the same reason.
 # Post-gap identifier words, base64url short tails, unfenced diff key lines, and glued 3-letter paths are local. This smoke still does not listen and does not push.
+# v1.0.61 left that live file unchanged for the same reason.
+# Lone-hunk low-entropy keys, findings-free base64 hunks, early PEM end, post-JWT paths, and word-like humps are local. This smoke still does not listen and does not push.
 name: CI
 
 on:
