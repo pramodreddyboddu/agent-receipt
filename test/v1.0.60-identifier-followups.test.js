@@ -568,8 +568,8 @@ describe('v1.0.60 a short final PEM line that starts with + stays inside the blo
 });
 
 describe('v1.0.60 realistic identifiers stay after a gap', () => {
-  // 134 names of at least 16 letters. Main's shape rule masks 4 of them.
-  // This cut masks 2, and both of those are in main's masked set.
+  // 132 kept names plus encodeURIComponent and decodeURIComponent.
+  // masked.length stays at most MAIN_MASKS. This file does not run main.
   const MAIN_MASKS = 4;
   const kept = `
 getUserProfileById fetchAccountBalance handleWebSocketMsg dockerComposeFile webpackDevServer kubeletConfigPath
@@ -921,6 +921,580 @@ describe('v1.0.60 digit-bearing names stay after a gap', () => {
   });
 });
 
+describe('v1.0.60 a later @@ hunk with no BEGIN line redacts the private key', () => {
+  const note = 'note: keep this visible';
+  const ident = 'thisIsAVeryLongCamelCaseIdentifierName';
+
+  function bodyLine(i) {
+    const tag = i.toString(36).padStart(3, '0');
+    let line = `M${tag}/`;
+    while (line.length < 64) line += ALPHABET[(i * 3 + line.length) % ALPHABET.length];
+    return line;
+  }
+
+  function editedBody(line) {
+    return `${line.slice(0, 63)}${line.charCodeAt(63) === 120 ? 'y' : 'x'}`;
+  }
+
+  function hasLine(text, line) {
+    return text.split(/\r?\n/).includes(line);
+  }
+
+  const shortKept = [' QUJD', ' abcdefgh', ' abcdefghijkl'];
+  const shortMasked = [' YQ==', ' QUJDRA==', ' QUJDREVGR0g='];
+
+  function midBody(nl) {
+    const oldLine = bodyLine(0);
+    const newLine = editedBody(oldLine);
+    const ctx = [bodyLine(1), bodyLine(2), bodyLine(3)];
+    const funcKey = bodyLine(8);
+    const keptBody = bodyLine(9);
+    const removedBody = bodyLine(10);
+    const addedBody = editedBody(removedBody);
+    const partial = bodyLine(4);
+    const head = [
+      'diff --git a/key.pem b/key.pem',
+      'index 1111111..2222222 100644',
+      '--- a/key.pem',
+      '+++ b/key.pem',
+      '@@ -1,5 +1,5 @@',
+      ' -----BEGIN PRIVATE KEY-----',
+      `-${oldLine}`,
+      `+${newLine}`,
+      ` ${ctx[0]}`,
+      ` ${ctx[1]}`,
+      ` ${ctx[2]}`,
+    ];
+    const second = [
+      `@@ -12,11 +12,11 @@ ${funcKey}`,
+      ` ${keptBody}`,
+      `-${removedBody}`,
+      `+${addedBody}`,
+      ...shortMasked,
+      ...shortKept,
+      ` ${partial} trailing note`,
+      ' Next',
+      '+hello',
+      '-removed ordinary line',
+    ];
+    const tail = [note, ident];
+    const raw = `${[...head, ...second, ...tail].join(nl)}${nl}`;
+    const expectedHead = [
+      'diff --git a/key.pem b/key.pem',
+      'index 1111111..2222222 100644',
+      '--- a/key.pem',
+      '+++ b/key.pem',
+      '@@ -1,5 +1,5 @@',
+      ' -----BEGIN PRIVATE KEY-----',
+    ].join(nl);
+    const expectedSecond = [
+      '@@ -12,11 +12,11 @@ [REDACTED]',
+      ' [REDACTED]',
+      '-[REDACTED]',
+      '+[REDACTED]',
+      ' [REDACTED]',
+      ' [REDACTED]',
+      ' [REDACTED]',
+      ...shortKept,
+      ' [REDACTED] trailing note',
+      ' Next',
+      '+hello',
+      '-removed ordinary line',
+      note,
+      ident,
+    ].join(nl);
+    const expected = `${expectedHead}\n[REDACTED]\n-----END PRIVATE KEY-----${nl}${expectedSecond}${nl}`;
+    const secrets = [oldLine, newLine, ...ctx, funcKey, keptBody, removedBody, addedBody, partial];
+    return { raw, expected, secrets };
+  }
+
+  for (const nl of ['\n', '\r\n']) {
+    it(`hunk-mid-body redacts exactly (${JSON.stringify(nl)})`, () => {
+      const { raw, expected, secrets } = midBody(nl);
+      const out = redactSecretsInText(raw);
+      assert.equal(out, expected);
+      for (const secret of secrets) {
+        assert.equal(out.includes(secret), false, secret.slice(0, 12));
+      }
+      for (const line of shortMasked) {
+        assert.equal(hasLine(out, line), false, line);
+        assert.equal(hasLine(out, ` ${'[REDACTED]'}`), true, line);
+      }
+      for (const line of shortKept) assert.equal(hasLine(out, line), true, line);
+      assert.equal(out.includes('--- a/key.pem'), true);
+      assert.equal(out.includes('+++ b/key.pem'), true);
+      assert.equal(out.includes('+hello'), true);
+      assert.equal(out.includes('-removed ordinary line'), true);
+      assert.equal(out.includes(note), true);
+      assert.equal(out.includes(ident), true);
+      assert.equal(out.includes('trailing note'), true);
+    });
+  }
+
+  function endOnly(nl) {
+    const funcKey = bodyLine(16);
+    const keptBody = bodyLine(17);
+    const removedBody = bodyLine(18);
+    const addedBody = editedBody(removedBody);
+    const afterEnd = bodyLine(19);
+    const partial = bodyLine(20);
+    const lines = [
+      'diff --git a/key.pem b/key.pem',
+      'index 1111111..2222222 100644',
+      '--- a/key.pem',
+      '+++ b/key.pem',
+      `@@ -20,12 +20,12 @@ ${funcKey}`,
+      ` ${keptBody}`,
+      `-${removedBody}`,
+      `+${addedBody}`,
+      ' -----END PRIVATE KEY-----',
+      ` ${afterEnd}`,
+      ...shortMasked,
+      ...shortKept,
+      ` ${partial} trailing note`,
+      ' Next',
+      '+hello',
+      '-removed ordinary line',
+      note,
+      ident,
+    ];
+    const raw = `${lines.join(nl)}${nl}`;
+    const expectedLines = [
+      'diff --git a/key.pem b/key.pem',
+      'index 1111111..2222222 100644',
+      '--- a/key.pem',
+      '+++ b/key.pem',
+      '@@ -20,12 +20,12 @@ [REDACTED]',
+      ' [REDACTED]',
+      '-[REDACTED]',
+      '+[REDACTED]',
+      ' -----END PRIVATE KEY-----',
+      ' [REDACTED]',
+      ' [REDACTED]',
+      ' [REDACTED]',
+      ' [REDACTED]',
+      ...shortKept,
+      ' [REDACTED] trailing note',
+      ' Next',
+      '+hello',
+      '-removed ordinary line',
+      note,
+      ident,
+    ];
+    const expected = `${expectedLines.join(nl)}${nl}`;
+    const secrets = [funcKey, keptBody, removedBody, addedBody, afterEnd, partial];
+    return { raw, expected, secrets };
+  }
+
+  for (const nl of ['\n', '\r\n']) {
+    it(`hunk-with-END-no-BEGIN redacts exactly (${JSON.stringify(nl)})`, () => {
+      const { raw, expected, secrets } = endOnly(nl);
+      assert.equal(raw.includes('-----BEGIN '), false);
+      const out = redactSecretsInText(raw);
+      assert.equal(out, expected);
+      for (const secret of secrets) {
+        assert.equal(out.includes(secret), false, secret.slice(0, 12));
+      }
+      assert.equal(out.includes('-----END PRIVATE KEY-----'), true);
+      assert.equal(out.includes('-----BEGIN '), false);
+      for (const line of shortKept) assert.equal(hasLine(out, line), true, line);
+      for (const line of shortMasked) assert.equal(hasLine(out, line), false, line);
+      assert.equal(out.includes('--- a/key.pem'), true);
+      assert.equal(out.includes('+++ b/key.pem'), true);
+      assert.equal(out.includes('+hello'), true);
+      assert.equal(out.includes('-removed ordinary line'), true);
+      assert.equal(out.includes(note), true);
+      assert.equal(out.includes(ident), true);
+    });
+  }
+
+  it('a second file keeps its base64 line', () => {
+    const secret = bodyLine(9);
+    const funcKey = bodyLine(8);
+    const other = `R${'A'.repeat(63)}`;
+    assert.equal(other.length, 64);
+    const raw = [
+      'diff --git a/key.pem b/key.pem',
+      '--- a/key.pem',
+      '+++ b/key.pem',
+      '@@ -1,2 +1,2 @@',
+      ' -----BEGIN PRIVATE KEY-----',
+      ` ${bodyLine(0)}`,
+      `@@ -9,1 +9,1 @@ ${funcKey}`,
+      ` ${secret}`,
+      'diff --git a/readme.md b/readme.md',
+      '--- a/readme.md',
+      '+++ b/readme.md',
+      '@@ -1 +1 @@',
+      ` ${other}`,
+      note,
+      ident,
+      '',
+    ].join('\n');
+    const expected = [
+      'diff --git a/key.pem b/key.pem',
+      '--- a/key.pem',
+      '+++ b/key.pem',
+      '@@ -1,2 +1,2 @@',
+      ' -----BEGIN PRIVATE KEY-----',
+      '[REDACTED]',
+      '-----END PRIVATE KEY-----',
+      '@@ -9,1 +9,1 @@ [REDACTED]',
+      ' [REDACTED]',
+      'diff --git a/readme.md b/readme.md',
+      '--- a/readme.md',
+      '+++ b/readme.md',
+      '@@ -1 +1 @@',
+      ` ${other}`,
+      note,
+      ident,
+      '',
+    ].join('\n');
+    const out = redactSecretsInText(raw);
+    assert.equal(out, expected);
+    assert.equal(out.includes(secret), false);
+    assert.equal(out.includes(funcKey), false);
+    assert.equal(hasLine(out, ` ${other}`), true);
+    assert.equal(out.includes(note), true);
+    assert.equal(out.includes(ident), true);
+  });
+
+  function receiptAround(diff, withFinding) {
+    const lines = [
+      '# Receipt',
+      '',
+      '## Risk findings',
+      '',
+      '| Sev | Code | Detail |',
+      '|-----|------|--------|',
+    ];
+    if (withFinding) {
+      lines.push('| high | `private-key-block` | private key block appears in diff: key.pem |');
+    }
+    lines.push(
+      '',
+      '## Diff summaries',
+      '',
+      '### `key.pem`',
+      '',
+      '```diff',
+      diff.replace(/\r?\n$/, ''),
+      '```',
+      '',
+      note,
+      ident,
+      '',
+    );
+    return lines.join('\n');
+  }
+
+  it('a private-key-block finding redacts a hunk that has neither marker', () => {
+    const secret = bodyLine(11);
+    const funcKey = bodyLine(10);
+    const edited = editedBody(secret);
+    const diff = [
+      'diff --git a/key.pem b/key.pem',
+      '--- a/key.pem',
+      '+++ b/key.pem',
+      `@@ -12,2 +12,2 @@ ${funcKey}`,
+      ` ${secret}`,
+      `-${secret}`,
+      `+${edited}`,
+      '',
+    ].join('\n');
+    assert.equal(diff.includes('PRIVATE KEY-----'), false);
+    assert.equal(redactSecretsInText(diff).includes(secret), true);
+    assert.equal(redactSecretsInText(diff).includes(funcKey), true);
+    const viaPath = redactSecretsInText(diff, { keyPaths: ['key.pem'] });
+    assert.equal(viaPath.includes(secret), false);
+    assert.equal(viaPath.includes(edited), false);
+    assert.equal(viaPath.includes(funcKey), false);
+    assert.equal(viaPath.includes('@@ -12,2 +12,2 @@ [REDACTED]'), true);
+    assert.equal(viaPath.includes('--- a/key.pem'), true);
+    assert.equal(viaPath.includes('+++ b/key.pem'), true);
+    const nested = redactSecretsInText(diff, { keyPaths: ['src/key.pem'] });
+    assert.equal(nested.includes(secret), false, 'suffix path');
+    const receipt = receiptAround(diff, true);
+    const shown = redactSecretsInText(receipt);
+    const html = markdownToHtml(publishRedactedReceipt(receipt));
+    for (const secretLine of [secret, edited, funcKey]) {
+      assert.equal(shown.includes(secretLine), false, `show ${secretLine.slice(0, 8)}`);
+      assert.equal(html.includes(secretLine), false, `html ${secretLine.slice(0, 8)}`);
+    }
+    assert.equal(shown.includes('[REDACTED]'), true);
+    assert.equal(html.includes('[REDACTED]'), true);
+    assert.equal(shown.includes(note), true);
+    assert.equal(shown.includes(ident), true);
+    const unrelated = receiptAround(diff, false).replace('key.pem', 'notes.md');
+    assert.equal(redactSecretsInText(unrelated).includes(secret), true);
+  });
+
+  function countPart(count) {
+    return count === 1 ? '' : `,${count}`;
+  }
+
+  function hunkHeader(oldStart, oldCount, newStart, newCount, func) {
+    const head = `@@ -${oldStart}${countPart(oldCount)} +${newStart}${countPart(newCount)} @@`;
+    return func ? `${head} ${func}` : head;
+  }
+
+  function funcName(oldLines, from) {
+    for (let i = from - 1; i >= 0; i -= 1) {
+      const ch = oldLines[i].charCodeAt(0);
+      const letter = (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122);
+      if (letter || ch === 95 || ch === 36) return oldLines[i];
+    }
+    return '';
+  }
+
+  function renderHunks(oldLines, editSet, deleteSet, context) {
+    const changes = [];
+    for (let i = 0; i < oldLines.length; i += 1) {
+      if (editSet.has(i) || deleteSet.has(i)) changes.push(i);
+    }
+    const groups = [];
+    let start = changes[0];
+    let end = changes[0];
+    for (let k = 1; k < changes.length; k += 1) {
+      const cur = changes[k];
+      if (cur - end <= 2 * context) end = cur;
+      else {
+        groups.push([start, end]);
+        start = cur;
+        end = cur;
+      }
+    }
+    groups.push([start, end]);
+    const hunks = [];
+    for (const [changeStart, changeEnd] of groups) {
+      const from = Math.max(0, changeStart - context);
+      const to = Math.min(oldLines.length - 1, changeEnd + context);
+      let newStart = 1;
+      for (let i = 0; i < from; i += 1) if (!deleteSet.has(i)) newStart += 1;
+      let oldCount = 0;
+      let newCount = 0;
+      const payload = [];
+      for (let i = from; i <= to; i += 1) {
+        oldCount += 1;
+        if (deleteSet.has(i)) {
+          payload.push(`-${oldLines[i]}`);
+          continue;
+        }
+        if (editSet.has(i)) {
+          payload.push(`-${oldLines[i]}`);
+          payload.push(`+${editedBody(oldLines[i])}`);
+          newCount += 1;
+          continue;
+        }
+        payload.push(` ${oldLines[i]}`);
+        newCount += 1;
+      }
+      const func = funcName(oldLines, from);
+      hunks.push({
+        header: hunkHeader(from + 1, oldCount, newStart, newCount, func),
+        payload,
+        from,
+        to,
+      });
+    }
+    return hunks;
+  }
+
+  it('seeded sweep leaves no key body line raw across multi-hunk diffs', () => {
+    const bodyCount = 24;
+    const bodies = [];
+    for (let i = 0; i < bodyCount; i += 1) bodies.push(bodyLine(i));
+    assert.equal(new Set(bodies).size, bodyCount);
+    const oldLines = ['-----BEGIN PRIVATE KEY-----', ...bodies, '-----END PRIVATE KEY-----'];
+    assert.equal(oldLines.length, 26);
+    const next = lcg(0x1060d4e);
+    let probes = 0;
+    let neitherHunks = 0;
+    let endNoBeginHunks = 0;
+    let endOnlyProbes = 0;
+    let findingOnlyProbes = 0;
+    const surfaces = ['redact', 'show', 'show --json', 'html'];
+    for (let n = 0; n < 192; n += 1) {
+      const context = 1 + (next() % 3);
+      const nl = n % 2 === 0 ? '\n' : '\r\n';
+      const shape = n % 3;
+      const editSet = new Set();
+      const deleteSet = new Set();
+      let withFinding = false;
+      if (shape === 0) {
+        editSet.add(1);
+        let later = 8 + (next() % 10);
+        if (later - 1 <= 2 * context) later = 2 + 2 * context + (next() % 4);
+        if (later > 22) later = 22;
+        editSet.add(later);
+        if (next() % 2 === 0) {
+          const del = Math.min(24, later + 2 * context + 1 + (next() % 3));
+          if (!editSet.has(del)) deleteSet.add(del);
+        }
+      } else if (shape === 1) {
+        editSet.add(24);
+        if (next() % 2 === 0) deleteSet.add(22);
+      } else {
+        const mid = 8 + (next() % 8);
+        editSet.add(mid);
+        if (next() % 2 === 0) {
+          const second = mid + 2 * context + 2;
+          if (second <= 20) editSet.add(second);
+        }
+        withFinding = true;
+      }
+      const hunks = renderHunks(oldLines, editSet, deleteSet, context);
+      assert.ok(hunks.length > 0);
+      const diffLines = [
+        'diff --git a/key.pem b/key.pem',
+        'index 1111111..2222222 100644',
+        '--- a/key.pem',
+        '+++ b/key.pem',
+      ];
+      let sawBegin = false;
+      let sawEnd = false;
+      for (const hunk of hunks) {
+        const blob = [hunk.header, ...hunk.payload].join('\n');
+        const hasBegin = blob.includes('-----BEGIN ');
+        const hasEnd = blob.includes('-----END ');
+        if (hasBegin) sawBegin = true;
+        if (hasEnd) sawEnd = true;
+        if (!hasBegin && !hasEnd) neitherHunks += 1;
+        if (hasEnd && !hasBegin) endNoBeginHunks += 1;
+        diffLines.push(hunk.header, ...hunk.payload);
+      }
+      if (shape === 0) assert.equal(sawBegin, true, `shape 0 begin ${n}`);
+      if (shape === 1) {
+        assert.equal(sawBegin, false, `shape 1 begin ${n}`);
+        assert.equal(sawEnd, true, `shape 1 end ${n}`);
+        endOnlyProbes += 1;
+      }
+      if (shape === 2) {
+        assert.equal(sawBegin, false, `shape 2 begin ${n}`);
+        assert.equal(sawEnd, false, `shape 2 end ${n}`);
+        findingOnlyProbes += 1;
+      }
+      const other = `R${n.toString(36).padStart(3, '0')}${'A'.repeat(60)}`;
+      assert.equal(other.length, 64);
+      diffLines.push(
+        'diff --git a/readme.md b/readme.md',
+        '--- a/readme.md',
+        '+++ b/readme.md',
+        '@@ -1 +1 @@',
+        ` ${other}`,
+      );
+      if (n % 4 === 0) {
+        const keyAt = diffLines.indexOf('+++ b/key.pem');
+        const insertAt = keyAt + 1 + 1;
+        diffLines.splice(insertAt, 0, ...shortMasked, ...shortKept, ' Next');
+      }
+      diffLines.push(note, ident);
+      const diff = `${diffLines.join(nl)}${nl}`;
+      const secrets = [];
+      for (const line of bodies) if (diff.includes(line)) secrets.push(line);
+      for (const line of bodies) {
+        const edited = editedBody(line);
+        if (diff.includes(edited)) secrets.push(edited);
+      }
+      assert.ok(secrets.length > 0, `probe ${n}`);
+      const receipt = receiptAround(diff, withFinding || sawBegin || sawEnd);
+      const redacted = withFinding && !sawBegin && !sawEnd
+        ? redactSecretsInText(diff, { keyPaths: ['key.pem'] })
+        : redactSecretsInText(diff);
+      if (withFinding && !sawBegin && !sawEnd) {
+        assert.equal(redactSecretsInText(diff).includes(secrets[0]), true, `bare ${n}`);
+      }
+      const shown = redactSecretsInText(receipt);
+      const shownJson = shown;
+      const html = markdownToHtml(publishRedactedReceipt(receipt));
+      const outputs = [redacted, shown, shownJson, html];
+      const label = `n ${n} shape ${shape} ctx ${context} ${JSON.stringify(nl)}`;
+      for (const secret of secrets) {
+        for (let s = 0; s < outputs.length; s += 1) {
+          assert.equal(outputs[s].includes(secret), false, `${surfaces[s]} ${label} ${secret.slice(0, 8)}`);
+        }
+      }
+      for (const output of outputs) {
+        assert.equal(output.includes('[REDACTED]'), true, label);
+      }
+      assert.equal(hasLine(redacted, ` ${other}`), true, label);
+      assert.equal(shown.includes(other), true, label);
+      assert.equal(html.includes(other), true, label);
+      assert.equal(redacted.includes('--- a/key.pem'), true, label);
+      assert.equal(redacted.includes('+++ b/key.pem'), true, label);
+      assert.equal(redacted.includes(note), true, label);
+      assert.equal(redacted.includes(ident), true, label);
+      if (n % 4 === 0) {
+        for (const line of shortMasked) assert.equal(hasLine(redacted, line), false, `${label} ${line}`);
+        for (const line of shortKept) assert.equal(hasLine(redacted, line), true, `${label} ${line}`);
+        assert.equal(hasLine(redacted, ' Next'), true, label);
+      }
+      probes += 1;
+    }
+    assert.equal(probes, 192);
+    assert.ok(neitherHunks > 0, `neither ${neitherHunks}`);
+    assert.ok(endNoBeginHunks > 0, `end-no-begin ${endNoBeginHunks}`);
+    assert.ok(endOnlyProbes > 0, `end-only ${endOnlyProbes}`);
+    assert.ok(findingOnlyProbes > 0, `finding-only ${findingOnlyProbes}`);
+  });
+
+  it('show, show --json, and share HTML redact hunk-mid-body for LF and CRLF', () => {
+    for (const nl of ['\n', '\r\n']) {
+      const dir = gitRepo(`ar1060-mid-${nl === '\n' ? 'lf' : 'cr'}-`);
+      git(dir, ['config', 'core.autocrlf', 'false']);
+      git(dir, ['config', 'core.safecrlf', 'false']);
+      const bodies = [];
+      for (let i = 0; i < 24; i += 1) bodies.push(bodyLine(i));
+      const lines = ['-----BEGIN PRIVATE KEY-----', ...bodies, '-----END PRIVATE KEY-----'];
+      assert.equal(lines.length, 26);
+      writeFileSync(join(dir, 'key.pem'), `${lines.join(nl)}${nl}`);
+      git(dir, ['add', 'key.pem']);
+      git(dir, ['commit', '-m', 'add key']);
+      const changed2 = editedBody(lines[1]);
+      const changed14 = editedBody(lines[13]);
+      const edited = lines.slice();
+      edited[1] = changed2;
+      edited[13] = changed14;
+      edited.splice(19, 1);
+      assert.equal(edited.length, 25);
+      writeFileSync(join(dir, 'key.pem'), `${edited.join(nl)}${nl}`);
+      git(dir, ['add', 'key.pem']);
+      git(dir, ['commit', '-m', 'edit lines 2 and 14, delete line 20']);
+      const cap = cli(dir, ['capture', '--agent', 'cursor', '--message', 'mid-body hunk']);
+      assert.equal(cap.code, 0, cap.err + cap.out);
+      const storedPath = latestReceipt(dir);
+      const stored = readFileSync(storedPath, 'utf8');
+      assert.equal(stored.includes(lines[1]), true, 'stored receipt stays raw');
+      assert.equal(stored.includes(bodies[8]), true, 'function context stays raw on disk');
+      const shown = cli(dir, ['show', storedPath]);
+      assert.equal(shown.code, 0, shown.err + shown.out);
+      const shownJson = cli(dir, ['show', storedPath, '--json']);
+      assert.equal(shownJson.code, 0, shownJson.err + shownJson.out);
+      assert.equal(shownJson.out, shown.out);
+      const share = cli(dir, ['share', storedPath, '--out', 'shared.html']);
+      assert.equal(share.code, 0, share.err + share.out);
+      const html = readFileSync(join(dir, 'shared.html'), 'utf8');
+      const secrets = [...bodies, changed2, changed14];
+      const label = JSON.stringify(nl);
+      for (const line of secrets) {
+        assert.equal(shown.out.includes(line), false, `show ${label} ${line.slice(0, 8)}`);
+        assert.equal(shownJson.out.includes(line), false, `json ${label} ${line.slice(0, 8)}`);
+        assert.equal(html.includes(line), false, `html ${label} ${line.slice(0, 8)}`);
+      }
+      const redactedHeader = '@@ -11,13 +11,12 @@ [REDACTED]';
+      assert.equal(shown.out.includes(redactedHeader), true, label);
+      assert.equal(shownJson.out.includes(redactedHeader), true, label);
+      assert.equal(html.includes(redactedHeader), true, label);
+      assert.equal(shown.out.includes('[REDACTED]'), true);
+      assert.equal(html.includes('[REDACTED]'), true);
+      assert.equal(shown.out.includes('--- a/key.pem'), true);
+      assert.equal(shown.out.includes('+++ b/key.pem'), true);
+      assert.equal(html.includes('--- a/key.pem'), true);
+      assert.equal(html.includes('+++ b/key.pem'), true);
+    }
+  });
+});
+
 describe('v1.0.60 changelog', () => {
   it('lists the Release QA follow-ups', () => {
     const note = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
@@ -943,5 +1517,12 @@ describe('v1.0.60 changelog', () => {
     assert.match(entry, /sha256DigestValue/);
     assert.match(entry, /base64UrlEncoded/);
     assert.match(entry, /abcDe12fghijklmn/);
+    assert.match(entry, /show --json/);
+    assert.match(entry, /function context/);
+    assert.match(entry, /no BEGIN/);
+    assert.match(entry, /QUJD/);
+    assert.match(entry, /0x1060a11/);
+    assert.match(entry, /at most 4/);
+    assert.match(entry, /private-key-block/);
   });
 });

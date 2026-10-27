@@ -3616,34 +3616,43 @@ function readPemDecimal(line: string, i: number): number {
 }
 
 /**
- * A unified-diff hunk header: `@@ -1,5 +1,5 @@` or `@@ -1 +1 @@`.
- * Trailing context after the second `@@` is allowed. One forward pass.
+ * Index just after the closing `@@` of a hunk header, or -1.
+ * `@@ -1,5 +1,5 @@` and `@@ -1 +1 @@` both match. Function-context
+ * text after the closing `@@` is allowed. One forward pass.
  */
-function isUnifiedHunkHeader(line: string): boolean {
+function unifiedHunkHeadEnd(line: string): number {
   const n = line.length;
   if (n < 8 || line.charCodeAt(0) !== 64 || line.charCodeAt(1) !== 64 || line.charCodeAt(2) !== 32) {
-    return false;
+    return -1;
   }
   let i = 3;
-  if (line.charCodeAt(i) !== 45) return false;
+  if (line.charCodeAt(i) !== 45) return -1;
   const first = readPemDecimal(line, i + 1);
-  if (first === i + 1) return false;
+  if (first === i + 1) return -1;
   i = first;
   if (i < n && line.charCodeAt(i) === 44) {
     const after = readPemDecimal(line, i + 1);
-    if (after === i + 1) return false;
+    if (after === i + 1) return -1;
     i = after;
   }
-  if (i + 1 >= n || line.charCodeAt(i) !== 32 || line.charCodeAt(i + 1) !== 43) return false;
+  if (i + 1 >= n || line.charCodeAt(i) !== 32 || line.charCodeAt(i + 1) !== 43) return -1;
   const plus = i + 2;
   i = readPemDecimal(line, plus);
-  if (i === plus) return false;
+  if (i === plus) return -1;
   if (i < n && line.charCodeAt(i) === 44) {
     const after = readPemDecimal(line, i + 1);
-    if (after === i + 1) return false;
+    if (after === i + 1) return -1;
     i = after;
   }
-  return i + 2 < n && line.charCodeAt(i) === 32 && line.charCodeAt(i + 1) === 64 && line.charCodeAt(i + 2) === 64;
+  if (i + 2 < n && line.charCodeAt(i) === 32 && line.charCodeAt(i + 1) === 64 && line.charCodeAt(i + 2) === 64) {
+    return i + 3;
+  }
+  return -1;
+}
+
+/** A unified-diff hunk header: `@@ -1,5 +1,5 @@` or `@@ -1 +1 @@`. */
+function isUnifiedHunkHeader(line: string): boolean {
+  return unifiedHunkHeadEnd(line) >= 0;
 }
 
 /** A diff body line. A space, `+`, `-`, or `\` keeps the current hunk open. */
@@ -3715,8 +3724,12 @@ function hunkStateAfterLine(line: string, inHunk: boolean): boolean {
  * so that text does not glue to the marker. A truncated block at the end
  * of the input is still replaced. A header with no body line is copied
  * through. The END search never rewinds: a miss covers the rest of the buffer.
+ * A later hunk of the same file can have no BEGIN line. That pass does
+ * not see it. `redactKeyHunkLines` redacts those body lines, and the
+ * `@@` function context, when the file has a key block or a
+ * private-key-block finding.
  */
-function redactPrivateKeyBlocks(text: string): string {
+function redactPrivateKeyBlocks(text: string, keyPaths?: readonly string[]): string {
   const parts: string[] = [];
   let i = 0;
   // Next -----END at or after endCursor. -2 means none remains.
@@ -3793,15 +3806,320 @@ function redactPrivateKeyBlocks(text: string): string {
       }
     }
   }
+  return redactKeyHunkLines(parts.join(''), keyPaths);
+}
+
+interface PemTextLine {
+  start: number;
+  contentEnd: number;
+  next: number;
+}
+
+function collectPemLines(text: string): PemTextLine[] {
+  const lines: PemTextLine[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const br = readPemLine(text, i);
+    lines.push({ start: i, contentEnd: br.contentEnd, next: br.next });
+    if (!br.hasBreak) break;
+    i = br.next;
+  }
+  return lines;
+}
+
+/** End index of a private-key BEGIN or END marker at `from`, or -1. */
+function privateKeyMarkerEnd(line: string, from: number): number {
+  if (from < 0 || from >= line.length) return -1;
+  const begin = line.startsWith(PEM_BEGIN, from);
+  if (!begin && !line.startsWith(PEM_END, from)) return -1;
+  const kindAt = from + (begin ? PEM_BEGIN.length : PEM_END.length);
+  return pemPrivateKeyEnd(line, kindAt);
+}
+
+function isDiffGitLine(line: string): boolean {
+  return line.startsWith('diff --git ');
+}
+
+/** `--- a/path` or `+++ b/path`. A deleted line that starts with `--` is not this. */
+function isGitDiffFileMarker(line: string): boolean {
+  return (
+    line.startsWith('--- a/') ||
+    line.startsWith('--- b/') ||
+    line.startsWith('+++ a/') ||
+    line.startsWith('+++ b/') ||
+    line.startsWith('--- /dev/null') ||
+    line.startsWith('+++ /dev/null')
+  );
+}
+
+function pathFromDiffGit(line: string): string | null {
+  const prefix = 'diff --git ';
+  if (!line.startsWith(prefix)) return null;
+  const rest = line.slice(prefix.length);
+  if (rest.startsWith('"')) {
+    const endQuote = rest.indexOf('"', 1);
+    if (endQuote < 0) return null;
+    const after = rest.slice(endQuote + 1).trim();
+    if (after.startsWith('"') && after.endsWith('"')) {
+      const inner = after.slice(1, -1);
+      return inner.startsWith('b/') ? inner.slice(2) : inner;
+    }
+    return null;
+  }
+  const at = rest.lastIndexOf(' b/');
+  if (at < 0) return null;
+  return rest.slice(at + 3);
+}
+
+function pathFromFileMarker(line: string): string | null {
+  if (line.startsWith('+++ b/')) return line.slice(6);
+  if (line.startsWith('+++ a/')) return line.slice(6);
+  if (line.startsWith('--- a/')) return line.slice(6);
+  if (line.startsWith('--- b/')) return line.slice(6);
+  if (line.startsWith('+++ /dev/null') || line.startsWith('--- /dev/null')) return null;
+  return null;
+}
+
+function noteDiffPath(path: string | null, line: string): string | null {
+  const gitPath = pathFromDiffGit(line);
+  if (gitPath) return gitPath;
+  if (line.startsWith('+++ ')) return pathFromFileMarker(line) ?? path;
+  if (!path && line.startsWith('--- ')) return pathFromFileMarker(line);
+  return path;
+}
+
+/** A markdown fence or heading. A diff payload line is not a heading. */
+function endsDiffRegion(line: string): boolean {
+  if (line.trim() === '```') return true;
+  return line.startsWith('#');
+}
+
+function isDiffRegionStart(line: string): boolean {
+  return isDiffGitLine(line) || isUnifiedHunkHeader(line) || isGitDiffFileMarker(line);
+}
+
+function sameKeyPath(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (left.endsWith(`/${right}`)) return true;
+  if (right.endsWith(`/${left}`)) return true;
+  return false;
+}
+
+function pathMatchesFinding(path: string, findings: Set<string>): boolean {
+  for (const found of findings) {
+    if (sameKeyPath(path, found)) return true;
+  }
+  return false;
+}
+
+/**
+ * Paths named by a `private-key-block` finding.
+ * The detail cell is `private key block appears in diff: <path>`.
+ */
+function collectPrivateKeyFindingPaths(text: string): Set<string> {
+  const paths = new Set<string>();
+  const needle = 'private-key-block';
+  const marker = 'appears in diff: ';
+  let from = 0;
+  while (from < text.length) {
+    const at = text.indexOf(needle, from);
+    if (at < 0) break;
+    let lineStart = at;
+    while (lineStart > 0) {
+      const code = text.charCodeAt(lineStart - 1);
+      if (code === 10 || code === 13) break;
+      lineStart -= 1;
+    }
+    const br = readPemLine(text, lineStart);
+    const line = text.slice(lineStart, br.contentEnd);
+    const markAt = line.indexOf(marker);
+    if (markAt >= 0) {
+      let path = line.slice(markAt + marker.length).trim();
+      const bar = path.indexOf('|');
+      if (bar >= 0) path = path.slice(0, bar).trim();
+      if (path) paths.add(path);
+    }
+    from = at + needle.length;
+  }
+  return paths;
+}
+
+/** True when the line is a BEGIN or END private-key marker, with one diff mark. */
+function lineSignalsPrivateKey(line: string): boolean {
+  if (privateKeyMarkerEnd(line, 0) >= 0) return true;
+  if (line.length > 1 && !isGitDiffFileMarker(line)) {
+    const code = line.charCodeAt(0);
+    if ((code === 32 || code === 43 || code === 45) && privateKeyMarkerEnd(line, 1) >= 0) {
+      return true;
+    }
+  }
+  const headEnd = unifiedHunkHeadEnd(line);
+  if (headEnd >= 0) {
+    let ctx = headEnd;
+    if (ctx < line.length && line.charCodeAt(ctx) === 32) ctx += 1;
+    if (privateKeyMarkerEnd(line, ctx) >= 0) return true;
+  }
+  return false;
+}
+
+function hunkPayloadMarkLength(line: string): number {
+  if (line.length < 1) return 0;
+  const code = line.charCodeAt(0);
+  if (code === 32 || code === 43 || code === 45) return 1;
+  return 0;
+}
+
+function isHunkPayloadLine(line: string): boolean {
+  return isUnifiedDiffPayload(line) && !isGitDiffFileMarker(line);
+}
+
+/**
+ * Replace function-context text on a hunk of a key file.
+ * Git copies the previous line into `@@ -1,5 +1,5 @@ <that line>`.
+ * A mid-body hunk has no BEGIN line, so that copy is a raw key line.
+ * An empty context stays empty.
+ */
+function redactHunkHeaderContext(line: string): string {
+  const headEnd = unifiedHunkHeadEnd(line);
+  if (headEnd < 0 || headEnd >= line.length) return line;
+  let ctxFrom = headEnd;
+  if (line.charCodeAt(ctxFrom) === 32) ctxFrom += 1;
+  let ctxEnd = line.length;
+  while (ctxEnd > ctxFrom) {
+    const code = line.charCodeAt(ctxEnd - 1);
+    if (code !== 32 && code !== 9 && code !== 13) break;
+    ctxEnd -= 1;
+  }
+  if (ctxEnd <= ctxFrom) return line;
+  const lead = ctxFrom > headEnd ? ' ' : '';
+  return `${line.slice(0, headEnd)}${lead}[REDACTED]`;
+}
+
+/** Redact one hunk payload line. The diff marker stays. Prose after a partial key stays. */
+function redactHunkPayloadLine(line: string): string {
+  if (line.charCodeAt(0) === 92) return line;
+  if (isPemBodyLine(line, PEM_MARK_HUNK)) {
+    return `${line.slice(0, hunkPayloadMarkLength(line))}[REDACTED]`;
+  }
+  const partial = pemPartialCut(line, PEM_MARK_HUNK);
+  if (partial >= 0) {
+    return `${line.slice(0, hunkPayloadMarkLength(line))}[REDACTED]${line.slice(partial)}`;
+  }
+  return line;
+}
+
+interface KeyDiffRegion {
+  start: number;
+  end: number;
+  sensitive: boolean;
+}
+
+function findKeyDiffRegions(
+  text: string,
+  lines: PemTextLine[],
+  findings: Set<string>,
+): KeyDiffRegion[] {
+  const regions: KeyDiffRegion[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const content = text.slice(lines[i].start, lines[i].contentEnd);
+    if (!isDiffRegionStart(content)) {
+      i += 1;
+      continue;
+    }
+    const start = i;
+    let path = noteDiffPath(null, content);
+    let sensitive = lineSignalsPrivateKey(content);
+    i += 1;
+    while (i < lines.length) {
+      const line = text.slice(lines[i].start, lines[i].contentEnd);
+      if (isDiffGitLine(line) || endsDiffRegion(line)) break;
+      path = noteDiffPath(path, line);
+      if (lineSignalsPrivateKey(line)) sensitive = true;
+      i += 1;
+    }
+    if (path && pathMatchesFinding(path, findings)) sensitive = true;
+    regions.push({ start, end: i, sensitive });
+  }
+  return regions;
+}
+
+function redactSensitiveDiff(text: string, lines: PemTextLine[], region: KeyDiffRegion): string {
+  const parts: string[] = [];
+  let inHunk = false;
+  for (let i = region.start; i < region.end; i += 1) {
+    const rec = lines[i];
+    const content = text.slice(rec.start, rec.contentEnd);
+    const br = text.slice(rec.contentEnd, rec.next);
+    if (isUnifiedHunkHeader(content)) {
+      inHunk = true;
+      parts.push(redactHunkHeaderContext(content), br);
+      continue;
+    }
+    if (inHunk && isHunkPayloadLine(content)) {
+      parts.push(redactHunkPayloadLine(content), br);
+      continue;
+    }
+    inHunk = false;
+    parts.push(content, br);
+  }
   return parts.join('');
 }
 
-export function redactSecretsInText(text: string): string {
+/**
+ * Redact base64-like key lines in every hunk of a file that has a
+ * private-key block, and redact that hunk's `@@` function context.
+ * The block may sit in another hunk. A hunk with only END, or with
+ * neither marker, is still covered. A file with no key block and no
+ * private-key-block finding is left alone, so an ordinary base64 diff
+ * stays visible. One forward pass over the lines.
+ */
+function redactKeyHunkLines(text: string, keyPaths?: readonly string[]): string {
+  if (!text.includes('@@')) return text;
+  const hinted = keyPaths !== undefined && keyPaths.length > 0;
+  if (!hinted && !text.includes('PRIVATE KEY-----') && !text.includes('private-key-block')) {
+    return text;
+  }
+  const lines = collectPemLines(text);
+  if (lines.length === 0) return text;
+  const findings = collectPrivateKeyFindingPaths(text);
+  if (keyPaths) {
+    for (const path of keyPaths) {
+      if (path) findings.add(path);
+    }
+  }
+  const regions = findKeyDiffRegions(text, lines, findings);
+  let sensitive = false;
+  for (const region of regions) {
+    if (region.sensitive) {
+      sensitive = true;
+      break;
+    }
+  }
+  if (!sensitive) return text;
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const region of regions) {
+    if (!region.sensitive) continue;
+    const start = lines[region.start].start;
+    const end = lines[region.end - 1].next;
+    parts.push(text.slice(cursor, start));
+    parts.push(redactSensitiveDiff(text, lines, region));
+    cursor = end;
+  }
+  parts.push(text.slice(cursor));
+  return parts.join('');
+}
+
+export function redactSecretsInText(
+  text: string,
+  opts?: { keyPaths?: readonly string[] },
+): string {
   let out = redactSecretAssignments(text);
   out = maskJwtTokens(out);
   for (const { re, replacement } of SECRET_VALUE_PATTERNS) {
     if (re.source.startsWith('-----BEGIN ')) {
-      out = redactPrivateKeyBlocks(out);
+      out = redactPrivateKeyBlocks(out, opts?.keyPaths);
       continue;
     }
     out = typeof replacement === 'function'
@@ -3896,6 +4214,9 @@ export function redactMarkdownBody(
 ): string {
   const maskHost = opts.maskHost !== false;
   const normalized = markdown.replace(/\r\n/g, '\n');
+  // Risk findings sit above the diff fence. A later hunk of that file
+  // may not contain BEGIN. The fence redaction still needs the path.
+  const keyFindingPaths = [...collectPrivateKeyFindingPaths(normalized)];
   const all = normalized.split('\n');
   const lines = all.slice(0, integrityCutIndex(all));
   const out: string[] = [];
@@ -3966,7 +4287,11 @@ export function redactMarkdownBody(
         } else if (!inNestedArtifactDiff && diffBuf.length > 0) {
           // One pass over the fence. A private-key block spans lines, so
           // redacting each diff line alone would leave the body in place.
-          const redacted = redactSecretsInText(diffBuf.join('\n'));
+          // keyPaths covers a hunk that has no BEGIN line when the finding
+          // names this file.
+          const redacted = redactSecretsInText(diffBuf.join('\n'), {
+            keyPaths: keyFindingPaths,
+          });
           if (redacted.length > 0) out.push(...redacted.split('\n'));
         }
         diffBuf.length = 0;
