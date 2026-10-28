@@ -6,7 +6,8 @@
 # in the hump list. It is not a real-identifier over-mask rate.
 # The node_modules count is the script's `real-masked` line. It depends
 # on the lockfile and the installed node_modules. The reproducible
-# over-mask count is `frozen-masked`, from real-identifiers.txt.
+# over-mask count is `frozen-masked`, from real-identifiers.txt, which
+# is Release QA's rq74b real.txt corpus, not type declarations.
 # Do not add a gap word to hump-words.ts.
 
 # dictionary

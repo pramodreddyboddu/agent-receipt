@@ -2878,12 +2878,11 @@ function isUrlKeySpan(line: string, start: number, end: number): boolean {
  * Shape alone kept a random 16-letter run glued to a path, so the next
  * secret line stayed visible. A dictionary word, an identifier word,
  * camelCase or an acronym whose humps are those words, or a digit name
- * such as `sha256DigestValue` still counts. A camelCase run of 16 to 19
- * letters needs one dictionary hump of 3 or more letters, and a
- * code-word hump does not count unless the other humps are dictionary
- * words. A run of 20 or more letters whose humps are all 6 letters or
- * shorter needs a dictionary hump. A longer hump still keeps the run
- * on shape. One pass per check.
+ * such as `sha256DigestValue` still counts. A camelCase run stays only
+ * when every hump is a dictionary word or a documented identifier
+ * variant. One dictionary hump does not keep the neighboring humps.
+ * A hump of 7 or more letters does not keep the run on shape.
+ * One pass per check.
  */
 function isKeptGluedRun(line: string, from: number, to: number): boolean {
   if (to - from < 2) return false;
@@ -2901,10 +2900,9 @@ function isKeptGluedRun(line: string, from: number, to: number): boolean {
  * `/` and `.` split the span, so a `+` or `=` inside a shorter segment
  * is still key material. A run of 16 or more characters is key material
  * unless it is a real identifier: a dictionary word, or camelCase whose
- * humps are word-shaped. A 16-to-19 letter camelCase run still needs one
- * dictionary hump, and a code-word hump does not keep random neighbors.
- * A 20-letter run of only short humps needs a dictionary hump too.
- * One pass over the span.
+ * every hump is a dictionary word or a documented identifier variant.
+ * One dictionary hump does not keep random neighbors. A hump of 7 or
+ * more letters does not keep the run on shape. One pass over the span.
  */
 function isGluedKeyPathSpan(line: string, start: number, end: number): boolean {
   if (end - start < PEM_BODY_MIN) return false;
@@ -3629,8 +3627,9 @@ function identifierPair(first: number, second: number): boolean {
  * vowel (`Msg`, `Jwt`, `Html`). A longer hump is at most 16 letters,
  * contains a vowel (`w` counts), has no consonant run longer than 4, and every letter
  * pair is an ordinary pair. The capital, when present, is the first
- * letter. Shape alone is not a dictionary word. The caller decides
- * whether a dictionary hump is also required. One pass.
+ * letter. Shape alone is not a dictionary word. The caller also requires
+ * every hump to be a dictionary word or a documented identifier variant.
+ * One pass.
  */
 function shapedCamelHump(line: string, from: number, to: number): boolean {
   const n = to - from;
@@ -3678,18 +3677,15 @@ function shapedCamelHump(line: string, from: number, to: number): boolean {
  * At least two humps, and at least one hump is 4 or more letters. The
  * name is mostly lowercase. Two capitals in a row are an acronym, not
  * this shape. Every hump is still word-shaped, so a random
- * vowel-consonant run stays key material. A name of 16 to 19 letters
- * also needs one dictionary hump of 3 or more letters, which is what
- * keeps the seeded 16-to-19 sweep masked. A code-word hump does not
- * count by itself: the other humps have to be dictionary words, so
- * `TosiliWibuSelector` stays key material and `initLoggerReducer` stays
- * visible. A name of 20 or more letters whose humps are all 6 letters
- * or shorter needs a dictionary hump of 2 or more letters. Shape alone
- * kept a pronounceable run of those short humps. A longer hump is a
- * real identifier stem, and that name still stays on shape, because
- * requiring a dictionary hump for every 20-letter name masks the frozen
- * sample past 773 of 3000. One pass over a letter span already cut from
- * one line.
+ * vowel-consonant run stays key material. Every hump also has to be a
+ * dictionary word or a documented variant. A documented variant is an
+ * identifier word, a code word, or an abbreviation already accepted by
+ * `identifierWordAt`: `config`, `api`, `db`, `fn`, `http`, `id`, `json`,
+ * `url`, `uuid`, and the one-letter words `a` and `i`. One dictionary
+ * hump does not keep the neighboring humps, so `TosiliWibuHandler` stays
+ * key material and `initLoggerReducer` stays visible. A hump of 7 or
+ * more letters does not stay on shape. One pass over a letter span
+ * already cut from one line.
  */
 function isWordShapedCamelIdentifier(line: string, start: number, end: number): boolean {
   if (end - start < 2) return false;
@@ -3700,10 +3696,6 @@ function isWordShapedCamelIdentifier(line: string, start: number, end: number): 
   let lowers = 0;
   let uppers = 0;
   let allDict = true;
-  let anchor = false;
-  let shortAnchor = false;
-  let sawCode = false;
-  let maxHump = 0;
   let humpFrom = start;
   for (let i = start + 1; i <= end; i += 1) {
     const atEnd = i === end;
@@ -3716,12 +3708,7 @@ function isWordShapedCamelIdentifier(line: string, start: number, end: number): 
     if (!atEnd && line.charCodeAt(i - 1) >= 65 && line.charCodeAt(i - 1) <= 90) return false;
     if (!shapedCamelHump(line, humpFrom, i)) return false;
     const n = i - humpFrom;
-    const known = humpWordAt(line, humpFrom, i) || identifierWordAt(line, humpFrom, i);
-    if (!known) allDict = false;
-    if (known && n >= 2) shortAnchor = true;
-    if (known && n >= 3) anchor = true;
-    if (codeWordHump(line, humpFrom, i)) sawCode = true;
-    if (n > maxHump) maxHump = n;
+    if (!humpWordAt(line, humpFrom, i) && !identifierWordAt(line, humpFrom, i)) allDict = false;
     if (n >= 4) longHump = true;
     for (let k = humpFrom; k < i; k += 1) {
       const humpCode = line.charCodeAt(k);
@@ -3732,48 +3719,7 @@ function isWordShapedCamelIdentifier(line: string, start: number, end: number): 
     humpFrom = i;
   }
   if (!(humps >= 2 && longHump && lowers > uppers)) return false;
-  if (allDict) return true;
-  // `Selector` or `Executable` alone must not keep the neighboring humps.
-  if (sawCode) return false;
-  if (end - start >= 20 && maxHump <= 6) return shortAnchor;
-  if (end - start >= 20) return true;
-  return anchor;
-}
-
-/** v1.0.62 code-word humps. A code word does not keep the other humps. */
-const CODE_WORD_HUMPS = new Set([
-  'auth',
-  'btn',
-  'cfg',
-  'ctx',
-  'descriptor',
-  'dst',
-  'enum',
-  'env',
-  'executable',
-  'idx',
-  'impl',
-  'init',
-  'len',
-  'logger',
-  'msg',
-  'num',
-  'params',
-  'pkg',
-  'reducer',
-  'repo',
-  'req',
-  'res',
-  'selector',
-  'src',
-  'str',
-  'tmp',
-  'util',
-  'widget',
-]);
-
-function codeWordHump(line: string, from: number, to: number): boolean {
-  return CODE_WORD_HUMPS.has(lowerHump(line, from, to));
+  return allDict;
 }
 
 /**
@@ -3782,12 +3728,10 @@ function codeWordHump(line: string, from: number, to: number): boolean {
  * `getUserProfileById`, `handleClickEvent`). A name stays when every
  * part is a dictionary word or a common abbreviation, or when it is
  * word-shaped camelCase: at least two humps of 2 to 16 letters, mostly
- * lowercase, each hump of 5 or more letters containing a vowel. A name
- * of 16 to 19 letters also needs one dictionary hump of 3 or more
- * letters, and a code-word hump does not keep the other humps unless
- * those humps are dictionary words. A name of 20 or more letters whose
- * humps are all 6 letters or shorter needs a dictionary hump. A longer
- * hump still keeps that name on shape. Digits in a camelCase or PascalCase name are only
+ * lowercase, each hump of 5 or more letters containing a vowel. Every
+ * hump has to be a dictionary word or a documented identifier variant.
+ * One dictionary hump does not keep the other humps. A hump of 7 or
+ * more letters does not keep the name on shape. Digits in a camelCase or PascalCase name are only
  * a trailing run, so a digit mixed into the line stays key material, except a
  * hump that is exactly `k8s`, `sha256`, or `base64` beside real words
  * (`k8sNamespaceName`, `sha256DigestValue`, `base64UrlEncoded`).

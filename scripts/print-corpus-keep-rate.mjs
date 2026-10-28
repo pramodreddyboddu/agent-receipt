@@ -18,13 +18,14 @@
  * sorts them, and keeps the first 3000. That walk depends on the
  * lockfile and the installed node_modules. 551 vs 901 is v1.0.61 on
  * the same sample: 901 is what v1.0.61 prints for this walk, and 551
- * is what the previous tip of this branch printed for it. The
- * changelog figure 773 is v1.0.61 on the frozen 16-to-24 sample, not
- * on this walk.
+ * is what the previous tip of this branch printed for it. 773 of 3000
+ * is what v1.0.61 masks on Release QA's rq74b real.txt corpus, not on
+ * this walk.
  *
  * The third count is the frozen file
- * test/fixtures/v1.0.62/real-identifiers.txt. Same 3000 names the
- * release check uses. The harness is two PEM body lines, a gap, the
+ * test/fixtures/v1.0.62/real-identifiers.txt. Those 3000 names are
+ * Release QA's rq74b real.txt corpus, length 16 to 24. They are not
+ * type declarations. The harness is two PEM body lines, a gap, the
  * name, then "~ ctx". v1.0.61 masks 773 of those 3000.
  * A name is masked when it does not stay after a truncated PEM and a gap.
  */

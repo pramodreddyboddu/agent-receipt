@@ -1,12 +1,13 @@
 # Frozen real-identifier sample for the v1.0.62 over-mask count.
-# 3000 camelCase names, length 16 to 24, taken from installed type
-# declarations and frozen here so the count does not move when
-# node_modules changes. scripts/print-corpus-keep-rate.mjs prints
+# These 3000 camelCase names, length 16 to 24, are Release QA's rq74b real.txt
+# corpus. They are not type declarations and they were not
+# taken from node_modules. scripts/print-corpus-keep-rate.mjs prints
 # `frozen-masked N of 3000` for this file. The harness is a truncated
 # PEM: two body lines, a blank gap, the name, then `~ ctx`.
-# v1.0.61 masks 773 of these 3000. This cut stays at or below that.
-# The separate `real-masked` line still walks node_modules and depends
-# on the lockfile.
+# 773 of 3000 is what v1.0.61 masks on this corpus. This cut's count is
+# the `frozen-masked` line. Do not add names from this file to the hump
+# list. The separate `real-masked` line still walks node_modules and
+# depends on the lockfile.
 
 getUnpackedSettings
 appendIfCommentDirective
