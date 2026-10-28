@@ -503,9 +503,10 @@ resolveModuleSpecifier
     }
     // These names are built from dictionary words in hump-words.ts.
     // v1.0.60 shape-only masking on this seed is 116. A short hand list
-    // masked 1205. Do not pin 116. Third-party real identifiers are a
-    // different rate: this cut masks 773 of 3000, and main masks 246 of 3000.
-    assert.ok(masked <= 300, `masked ${masked} of ${names.size}`);
+    // masked 1205. Do not pin 116. The bound is 135 (that count plus
+    // about 10). Do not loosen it. Third-party real identifiers are a
+    // different rate: v1.0.61 masks 773 of 3000, and main masks 246 of 3000.
+    assert.ok(masked <= 135, `masked ${masked} of ${names.size}`);
     assert.equal(keptAfterGap('handleClickEvent'), true);
     assert.equal(keptAfterGap('computeTaxAmount'), true);
     assert.equal(keptAfterGap('encodeURIComponent'), false);
@@ -538,12 +539,14 @@ describe('v1.0.61 changelog', () => {
     assert.match(entry, /computeTaxAmount/);
     assert.match(entry, /5000/);
     assert.match(entry, /hump-words\.ts/);
+    assert.match(entry, /73 of 78 identifiers stay/);
     assert.match(entry, /773 of 3000/);
     assert.match(entry, /246 of 3000/);
     assert.match(entry, /CorrectHorseBatteryStaple/);
     assert.match(entry, /16 to 24/);
     assert.match(entry, /about 69%/);
     assert.match(entry, /same as main/);
+    assert.equal(entry.includes('The 78 identifiers stay'), false);
     assert.equal(
       entry.includes('A 1500-name corpus of ordinary camelCase identifiers stays near the v1.0.60 keep rate'),
       false,

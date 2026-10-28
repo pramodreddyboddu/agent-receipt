@@ -1,0 +1,90 @@
+# Circular gap-word fixture for scripts/print-corpus-keep-rate.mjs
+# Seed 0x1062c15. LCG: state = (Math.imul(1664525, state) + 1013904223) >>> 0
+# The script builds 3000 camelCase names, length 16 to 48, 2 to 7 parts,
+# from `dictionary` plus `gap`, and prints `masked N of 3000`.
+# This count is circular: `gap` words are defined as words that are not
+# in the hump list. It is not a real-identifier over-mask rate.
+# The node_modules count is the script's `real-masked` line. It depends
+# on the lockfile and the installed node_modules. The reproducible
+# over-mask count is `frozen-masked`, from real-identifiers.txt, which
+# is Release QA's rq74b real.txt corpus, not type declarations.
+# Do not add a gap word to hump-words.ts.
+
+# dictionary
+handle
+click
+event
+compute
+tax
+amount
+user
+profile
+account
+balance
+order
+report
+summary
+file
+path
+name
+value
+data
+record
+item
+price
+total
+count
+index
+list
+table
+field
+column
+query
+result
+request
+response
+message
+error
+status
+code
+token
+session
+cookie
+header
+client
+server
+service
+method
+module
+package
+reducer
+logger
+widget
+selector
+res
+
+# gap
+accrual
+amortized
+brokerage
+cadastral
+escrow
+garnishment
+notary
+refinance
+underwriter
+annuity
+collateral
+foreclosure
+tranche
+beneficiary
+fiduciary
+grantor
+custodian
+reconciliation
+remittance
+amortization
+clearinghouse
+premium
+maturity
+quixotic
