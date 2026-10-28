@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.61] — 2026-10-27
+
+### Fixed
+
+- A low-entropy private-key body in one mid-body `@@` hunk on a secret-looking path, such as `key.pem`, is redacted when that hunk has no BEGIN line, no END line, and no secret finding. The line is at least 32 characters and either uses fewer than 10 distinct characters or has Shannon entropy under 4.2. The `@@` context is redacted only when that context is the low-entropy key line. Diff markers stay, and so do `+hello`, `-removed ordinary line`, the note, and `thisIsAVeryLongCamelCaseIdentifierName`. A high-entropy line in that same bare `key.pem` hunk stays raw. A low-entropy line on a normal path still leaks, the same as v1.0.60. `readme.md`, `notes.txt`, `config.js`, and `data.txt` stay raw.
+- `redactSecretsInText` redacts that same low-entropy lone base64 hunk when it is called with no findings table. The output matches the call that includes a `secret-looking-path` finding.
+- A truncated PEM block (a BEGIN line and no END line) stays open across a key-body line that begins or ends with `-` or `_`, an interior `-` or `_` that is not a break between real words, and a key run glued to a path. Every body line is redacted until a real END line or a clearly non-key line. `/src/app.ts`, `/src/components/Button.tsx`, `hello world`, `note: done`, and `user_profile_settings_name` stay. `Next` stays. A snake_case name stays after a gap and after a resumed body line.
+- `./src/app.ts`, `src/App.tsx`, and `app/src/index.ts` stay visible after a JWT whose signature contains `+` or `/`, and after a non-RSA signature at that alg's exact length. The JWT stays fully redacted. `/Src.ts`, `/App.ts`, `/Bin.ts`, and `/App.md` stay masked. Ed448 is not split at the Ed25519 length (86). A `+` or `/` at a shorter length inside a longer signature stays inside the mask. An odd RSA run (511, 600, 682) is not split at the next exact length.
+- After a gap, a camelCase line stays when every hump is a dictionary word or a known identifier word, and the hump is word-shaped. A random letters-only line of 16 to 19 characters with word-like camelCase humps is redacted. A seeded sweep (seed `0x1061a11`, 2048 draws) keeps none of those lines, and a 5000-draw sweep keeps none. Realistic identifiers stay, including `handleClickEvent` and `computeTaxAmount`. A 1500-name corpus built from the dictionary in `hump-words.ts` stays near the v1.0.60 keep rate, and so does the earlier 78-name corpus. That near rate holds only on a corpus built from `hump-words.ts`. On third-party real identifiers, this cut masks 773 of 3000 and main (v1.0.60) masks 246 of 3000, about three times as many. A dictionary-word camelCase secret tail of 16 to 24 characters, such as `CorrectHorseBatteryStaple`, after a truncated PEM and a gap is kept about 69% of the time, the same as main. `indexedDBOpenRequest`, `cryptoRandomUUID`, `atobBase64Decode`, `calculationResult`, `graphqlResolverFn`, `downwardAPIVolume`, and `bulkheadIsolation` stay. `encodeURIComponent`, `decodeURIComponent`, and `abcDe12fghijklmn` stay redacted. Those names are redacted when they follow a resumed body line.
+- The leaks fixed in 1.0.47 through 1.0.60 stay closed, including mid-body key hunk redaction, later-hunk no-BEGIN redaction, `@@` context handling, the `Zm9v` over-mask fix, base64url tails, unfenced diff keys, glued 3-letter paths, long identifier keeps, and the post-gap short final line.
+
+### Notes
+
+- These are v1.0.60 Release QA follow-ups.
+- A low-entropy key line is redacted in a lone mid-body hunk only when the diff path is secret-looking, such as `key.pem`. A high-entropy line in a bare hunk with no finding stays raw, the same as v1.0.60. `Zm9v` stays in a file that is not a secret file. Normal paths still leak that low-entropy line. `notes.txt`, `config.js`, and `data.txt` stay raw, the same as v1.0.60.
+- A key-body line that begins or ends with `-` or `_`, or a key run glued to a path, does not end a truncated PEM block. A real path, prose, or a snake_case identifier does.
+- `./src/app.ts`, `src/App.tsx`, and `app/src/index.ts` stay after the JWT. The signature stays redacted, including when it uses standard base64 (`+` and `/`).
+- A word-like camelCase hump is not enough to keep a letters-only line after a gap. The hump has to be a dictionary word or a known identifier word. Seed `0x1061a11` keeps 0 lines out of 2048 and out of 5000. On a corpus built from `hump-words.ts`, realistic identifiers stay near the v1.0.60 keep rate, including `handleClickEvent` and `computeTaxAmount`. The 78 identifiers stay. On third-party real identifiers, this cut masks 773 of 3000 and main (v1.0.60) masks 246 of 3000. `encodeURIComponent` stays redacted.
+- A dictionary-word camelCase secret tail of 16 to 24 characters, such as `CorrectHorseBatteryStaple`, after a truncated PEM and a gap is kept about 69% of the time, the same as main.
+- Package version bumped to `1.0.61`. Pin comments that track the current cut are `v1.0.61`. The action default pin is `1.0.61`. That pin needs an npm publish, which is on hold.
+- Live workflow files were not edited. The checkout token has no `workflow` scope. No git tags and no GitHub release were created. This cut does not publish to npm.
+- No new runtime dependencies. This is not a certificate authority.
+- Still deferred: full PKI/CA, minisign, GPG/OpenPGP, default auto-sign on capture without config, a long-running prune daemon or cron, SSO / IdP, Cloud Agents, live workflow sync, npm Trusted Publishing, and a `verify --json` hash-cut index.
+
 ## [1.0.60] — 2026-10-22
 
 ### Fixed

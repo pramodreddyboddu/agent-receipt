@@ -3,6 +3,7 @@
  * Masks high-signal secrets in Markdown/HTML bodies, then callers re-hash.
  */
 import { appendHashFooter, integrityCutIndex, sha256Hex } from './hash.js';
+import { humpWordAt } from './hump-words.js';
 
 /**
  * 12 hex chars of sha256(secret). Distinct secrets stay distinct after
@@ -2290,6 +2291,79 @@ function rsaDottedBinCut(text: string, sigStart: number): number {
   return best;
 }
 
+/**
+ * Cut where an exact signature for this token's own `alg` ends and a
+ * clear path begins. The signature may contain standard-base64 `+` or
+ * `/`, so the base64url scan stops inside it. An unslashed path
+ * (`src/App.tsx`, `app/src/index.ts`) is included for every alg, not
+ * only RSA. The longest exact length wins. A `+` or `/` at a shorter
+ * length inside a longer signature is not a split: the tail is longer
+ * than a glued path, or it is not a clear path. Ed448 is not split at
+ * the Ed25519 length. An odd run (511, 600, 682) is not split at the
+ * next exact length when that cut falls inside a short clear path that
+ * already started at the base64url stop (`B`×511 then `/Users/...`
+ * must not split at 512). Shape is checked before the header is decoded.
+ * Returns -1 when no tail is a clear path.
+ */
+function exactAlgPathCut(
+  text: string,
+  cursor: number,
+  dot1: number,
+  dot2: number,
+  end: number,
+  mode: JwtMaskMode,
+  urlEnd: number,
+): number {
+  const sigStart = dot2 + 1;
+  // `urlEnd` is where the base64url scan stopped. When that stop is
+  // itself a short clear path, a later exact length is inside the path.
+  const stoppedTail = end - urlEnd;
+  const pathStartsAtStop =
+    urlEnd > sigStart &&
+    urlEnd < end &&
+    stoppedTail >= 4 &&
+    stoppedTail <= RSA_GLUED_PATH_MAX &&
+    rsaShortTailIsClearPath(text, urlEnd, end);
+  const tables: SigSize[][] = [
+    SIG_HS256,
+    SIG_HS384,
+    SIG_86_88,
+    SIG_ES384,
+    SIG_ES512,
+    SIG_EDDSA,
+    SIG_RSA,
+  ];
+  let shaped = false;
+  for (let t = 0; t < tables.length && !shaped; t += 1) {
+    const table = tables[t];
+    for (let s = 0; s < table.length; s += 1) {
+      const cut = sigStart + table[s].url;
+      if (cut <= sigStart || cut >= end) continue;
+      if (pathStartsAtStop && cut > urlEnd) continue;
+      const tailLen = end - cut;
+      if (tailLen < 4 || tailLen > RSA_GLUED_PATH_MAX) continue;
+      if (!rsaShortTailIsClearPath(text, cut, end)) continue;
+      shaped = true;
+      break;
+    }
+  }
+  if (!shaped) return -1;
+  const sizes = signatureSizesForAlg(jwtHeaderInfo(text.slice(cursor, dot1), mode).alg);
+  if (!sizes) return -1;
+  let best = -1;
+  for (let s = 0; s < sizes.length; s += 1) {
+    const cut = sigStart + sizes[s].url;
+    if (cut <= sigStart || cut >= end) continue;
+    if (pathStartsAtStop && cut > urlEnd) continue;
+    const tailLen = end - cut;
+    if (tailLen < 4 || tailLen > RSA_GLUED_PATH_MAX) continue;
+    if (!rsaShortTailIsClearPath(text, cut, end)) continue;
+    if (!isJwtToken(text.slice(cursor, cut), mode)) continue;
+    if (cut > best) best = cut;
+  }
+  return best;
+}
+
 function clearPathSplit(
   text: string,
   cursor: number,
@@ -2310,6 +2384,13 @@ function clearPathSplit(
   let i = dot2 + 1;
   while (i < end && isBase64UrlChar(text.charCodeAt(i))) i += 1;
   if (i === dot2 + 1) return -1;
+  // `+` or `/` inside the signature, or an unslashed path, stops the
+  // base64url scan before the segment ends. Split only at this alg's
+  // own exact length when the tail is a clear path.
+  if (i < end) {
+    const exact = exactAlgPathCut(text, cursor, dot1, dot2, end, mode, i);
+    if (exact >= 0) return exact;
+  }
   const sigLen = i - (dot2 + 1);
   // Reject before decoding. A space-separated token ends on base64url, so
   // this returns without reading the header. A longer run is a filename
@@ -2719,9 +2800,130 @@ function pemKeyStart(line: string, start: number, end: number, mark: number): nu
   return pemDiffContentStart(line, start, end);
 }
 
+function isBase64UrlCode(code: number): boolean {
+  return isBase64Code(code) || code === 45 || code === 95;
+}
+
+/**
+ * One piece of a hyphenated or underscored line. A real word, or a short
+ * letter run with a vowel and no long consonant cluster. A repeated
+ * character run is not this.
+ */
+function isWordLikeSegment(line: string, from: number, to: number): boolean {
+  const n = to - from;
+  if (n < 1) return true;
+  if (identifierWordAt(line, from, to)) return true;
+  if (n > 24) return false;
+  let vowel = false;
+  let run = 0;
+  for (let i = from; i < to; i += 1) {
+    let code = line.charCodeAt(i);
+    if (code >= 65 && code <= 90) code += 32;
+    else if (code < 97 || code > 122) return false;
+    if (
+      code === 97 || code === 101 || code === 105 || code === 111 ||
+      code === 117 || code === 121 || code === 119
+    ) {
+      vowel = true;
+      run = 0;
+    } else {
+      run += 1;
+      if (run > 4) return false;
+    }
+  }
+  if (n >= 5 && !vowel) return false;
+  return true;
+}
+
+/** True when every `-` / `_` piece of the span is a word-like segment. */
+function segmentsAreWords(line: string, start: number, end: number): boolean {
+  let from = start;
+  let any = false;
+  for (let i = start; i <= end; i += 1) {
+    const split = i === end || line.charCodeAt(i) === 45 || line.charCodeAt(i) === 95;
+    if (!split) continue;
+    if (i > from) {
+      any = true;
+      if (!isWordLikeSegment(line, from, i)) return false;
+    }
+    from = i + 1;
+  }
+  return any;
+}
+
+/**
+ * A key line that uses base64url `-` or `_`. A line that begins or ends
+ * with either character is body. An interior mark is body unless every
+ * piece is a word, so `user_profile_settings_name` stays and a run of
+ * key characters with one `_` does not end the block.
+ */
+function isUrlKeySpan(line: string, start: number, end: number): boolean {
+  const n = end - start;
+  if (n < PEM_BODY_MIN) return false;
+  let url = false;
+  for (let i = start; i < end; i += 1) {
+    const code = line.charCodeAt(i);
+    if (!isBase64UrlCode(code)) return false;
+    if (code === 45 || code === 95) url = true;
+  }
+  if (!url) return false;
+  const first = line.charCodeAt(start);
+  const last = line.charCodeAt(end - 1);
+  if (first === 45 || first === 95 || last === 45 || last === 95) return true;
+  return !segmentsAreWords(line, start, end);
+}
+
+/** A path segment that is a real name, not a repeated key run. */
+function isRealNameRun(line: string, from: number, to: number): boolean {
+  if (to <= from) return false;
+  if (identifierWordAt(line, from, to)) return true;
+  if (to - from >= 2 && isSingleCapIdentifier(line, from, to)) return true;
+  if (to - from >= 4 && isAcronymWordIdentifier(line, from, to)) return true;
+  return isWordLikeSegment(line, from, to);
+}
+
+/**
+ * Base64 glued to a path (`CCCCCCCC/src/app.ts`, `./src/app.ts` plus a
+ * key run). A real path whose segments are words stays a stopping line.
+ * One pass over the span.
+ */
+function isGluedKeyPathSpan(line: string, start: number, end: number): boolean {
+  if (end - start < PEM_BODY_MIN) return false;
+  let sawPath = false;
+  let runFrom = -1;
+  let bad = false;
+  const finish = (runEnd: number): void => {
+    if (runFrom < 0) return;
+    if (runEnd - runFrom >= PEM_BODY_MIN && !isRealNameRun(line, runFrom, runEnd)) bad = true;
+    runFrom = -1;
+  };
+  for (let i = start; i <= end; i += 1) {
+    if (i === end) {
+      finish(end);
+      break;
+    }
+    const code = line.charCodeAt(i);
+    if (code === 32 || code === 9 || code === 13) return false;
+    if (code === 47 || code === 46) {
+      sawPath = true;
+      finish(i);
+      continue;
+    }
+    if (!isBase64UrlCode(code)) return false;
+    if (runFrom < 0) runFrom = i;
+  }
+  return sawPath && bad;
+}
+
+function isExtendedPemSpan(line: string, start: number, end: number): boolean {
+  return isUrlKeySpan(line, start, end) || isGluedKeyPathSpan(line, start, end);
+}
+
 /**
  * A full PEM body line: key-shaped base64 only, after ASCII space, tab,
- * and CR. Inside an `@@` hunk the first space, `+`, or `-` is the diff
+ * and CR. A line that begins or ends with `-` or `_`, or a key run glued
+ * to a path, is still body. A word-like underscored name is not.
+ * Inside an `@@` hunk the first space, `+`, or `-` is the diff
  * marker and is not trimmed as indentation before that check, so a
  * second `+` stays base64.
  */
@@ -2744,7 +2946,8 @@ function isPemBodyLine(line: string, mark: number): boolean {
   }
   start = pemKeyStart(line, start, end, mark === PEM_MARK_HUNK ? PEM_MARK_NONE : mark);
   if (end <= start) return false;
-  return isKeyMaterialSpan(line, start, end);
+  if (isKeyMaterialSpan(line, start, end)) return true;
+  return isExtendedPemSpan(line, start, end) && !isCamelOrPascalIdentifier(line, mark);
 }
 
 /**
@@ -2913,21 +3116,263 @@ function trailingDigitCut(line: string, start: number, end: number): number {
 /**
  * Prose words that are not path atoms. They do not ground a path.
  * A hump of one letter is only `a` or `i`. One lookup per hump.
+ * A camelCase hump counts only when it is one of these words, so a
+ * random vowel-consonant hump stays key material.
  */
 const IDENTIFIER_WORDS = new Set([
   'a',
+  'access',
+  'account',
+  'active',
+  'adapter',
+  'add',
+  'allocate',
+  'allow',
+  'allowed',
+  'application',
+  'apply',
+  'arguments',
+  'asset',
+  'asynchronous',
+  'atob',
+  'audit',
+  'autoscaler',
+  'background',
+  'backoff',
+  'backup',
+  'badge',
+  'balance',
+  'block',
+  'body',
+  'bootstrap',
+  'breaker',
+  'broker',
+  'build',
+  'bulkhead',
+  'bundle',
+  'by',
+  'cache',
+  'calculation',
+  'callback',
   'camel',
+  'canonicalized',
+  'capture',
   'case',
+  'certificate',
+  'change',
+  'check',
+  'checkout',
+  'checksum',
+  'circuit',
+  'claim',
+  'class',
+  'clear',
+  'client',
+  'collect',
+  'command',
+  'compile',
+  'compose',
+  'compute',
+  'configure',
+  'connection',
+  'consumer',
+  'control',
+  'controller',
+  'cookie',
+  'coverage',
+  'create',
+  'crypto',
+  'customer',
+  'dashboard',
+  'database',
+  'decode',
+  'decompress',
+  'dependency',
+  'deployment',
+  'deserialize',
+  'details',
+  'dev',
+  'dir',
+  'discount',
+  'display',
+  'docker',
+  'document',
+  'downstream',
+  'downward',
+  'email',
+  'enqueue',
+  'environment',
+  'error',
+  'eslint',
+  'event',
+  'export',
+  'feature',
+  'fetch',
+  'file',
+  'files',
+  'fingerprint',
+  'flag',
+  'format',
+  'frame',
+  'gateway',
+  'generate',
+  'get',
+  'grant',
+  'graph',
+  'graphql',
+  'group',
+  'handle',
+  'horizontal',
+  'host',
+  'html',
   'i',
   'identifier',
+  'identity',
+  'image',
+  'incoming',
+  'indexed',
+  'ingress',
+  'install',
+  'invalidate',
+  'invoice',
   'is',
+  'isolation',
+  'javascript',
+  'jwt',
+  'kafka',
+  'key',
+  'kubelet',
+  'kubernetes',
+  'limiter',
+  'list',
+  'listener',
+  'load',
+  'loader',
+  'lock',
   'long',
+  'manager',
+  'manifest',
+  'match',
+  'measure',
+  'message',
+  'middleware',
+  'module',
+  'msg',
   'name',
+  'nginx',
+  'normalize',
+  'notes',
+  'notification',
   'now',
+  'oauth',
+  'object',
+  'open',
+  'order',
+  'package',
+  'parse',
+  'password',
+  'path',
+  'paths',
+  'pattern',
+  'payload',
+  'payment',
+  'performance',
+  'permission',
+  'persistent',
+  'personal',
+  'pod',
+  'policy',
+  'postgres',
+  'postgresql',
+  'preferences',
+  'producer',
+  'profile',
+  'project',
+  'prometheus',
+  'publish',
+  'query',
+  'random',
+  'rate',
+  'read',
+  'receipt',
+  'record',
+  'redis',
+  'refresh',
+  'refs',
+  'register',
+  'rel',
+  'release',
+  'render',
+  'report',
+  'repository',
+  'request',
+  'resize',
+  'resolve',
+  'resolver',
   'response',
+  'result',
+  'results',
+  'retry',
+  'revoke',
+  'rotate',
+  'route',
+  'save',
+  'scrape',
+  'screenshot',
+  'security',
+  'send',
+  'serialize',
+  'server',
+  'service',
+  'session',
+  'set',
+  'settings',
+  'share',
+  'sheet',
+  'shutdown',
+  'signature',
+  'signing',
+  'site',
+  'socket',
+  'span',
+  'specifier',
+  'start',
+  'stop',
+  'storage',
+  'store',
+  'strength',
+  'style',
+  'stylesheet',
+  'synchronization',
+  'task',
+  'telemetry',
+  'template',
+  'test',
   'this',
+  'throughput',
+  'toggle',
+  'token',
+  'trace',
+  'trusted',
+  'typescript',
+  'uncommitted',
+  'update',
+  'upstream',
+  'user',
+  'validate',
   'value',
+  'verify',
   'very',
+  'view',
+  'volume',
+  'web',
+  'webhook',
+  'webpack',
+  'websocket',
+  'worker',
+  'workload',
+  'write',
+  'yaml',
 ]);
 
 /**
@@ -2936,10 +3381,14 @@ const IDENTIFIER_WORDS = new Set([
  * `url` and `id` are not.
  */
 const IDENTIFIER_ABBREVS = new Set([
+  'api',
+  'db',
+  'fn',
   'http',
   'id',
   'json',
   'url',
+  'uuid',
 ]);
 
 /**
@@ -3129,9 +3578,12 @@ function identifierPair(first: number, second: number): boolean {
  * vowel (`Msg`, `Jwt`, `Html`). A longer hump is at most 16 letters,
  * contains a vowel (`w` counts), has no consonant run longer than 4, and every letter
  * pair is an ordinary pair. The capital, when present, is the first
- * letter. One pass.
+ * letter. The hump must be a dictionary word or a known identifier word.
+ * Shape alone is not enough, so a random vowel-consonant run stays key
+ * material. One pass, then one dictionary lookup.
  */
 function shapedCamelHump(line: string, from: number, to: number): boolean {
+  if (!humpWordAt(line, from, to) && !identifierWordAt(line, from, to)) return false;
   const n = to - from;
   if (n === 1) {
     let code = line.charCodeAt(from);
@@ -3213,8 +3665,9 @@ function isWordShapedCamelIdentifier(line: string, start: number, end: number): 
 /**
  * camelCase, PascalCase, or snake_case (`veryLongCamelCaseIdentifier`,
  * `IdentifierValue16`, `HTTPServerConfig`, `parseJSONResponse`,
- * `getUserProfileById`). A name stays when every part is a real word or
- * a common abbreviation, or when it is word-shaped camelCase: at least
+ * `getUserProfileById`, `handleClickEvent`). A name stays when every
+ * part is a dictionary word or a common abbreviation, or when it is
+ * word-shaped camelCase whose every hump is a dictionary word: at least
  * two humps of 2 to 16 letters, mostly lowercase, each hump of 5 or
  * more letters containing a vowel. Digits in a camelCase or PascalCase name are only
  * a trailing run, so a digit mixed into the line stays key material, except a
@@ -4123,11 +4576,122 @@ function redactHunkPayloadLine(line: string, secretFile: boolean): string {
   return line;
 }
 
+/**
+ * `@@` context on a secret-looking file with no finding. Redact it only
+ * when the copied line is low-entropy key material. Ordinary code stays.
+ * A high-entropy line stays until a finding names the file.
+ */
+function redactLowEntropyHeader(line: string): string {
+  const headEnd = unifiedHunkHeadEnd(line);
+  if (headEnd < 0 || headEnd >= line.length) return line;
+  let ctxFrom = headEnd;
+  if (line.charCodeAt(ctxFrom) === 32) ctxFrom += 1;
+  let ctxEnd = line.length;
+  while (ctxEnd > ctxFrom) {
+    const code = line.charCodeAt(ctxEnd - 1);
+    if (code !== 32 && code !== 9 && code !== 13) break;
+    ctxEnd -= 1;
+  }
+  if (ctxEnd <= ctxFrom) return line;
+  const context = line.slice(ctxFrom, ctxEnd);
+  if (!isPemBodyLine(context, PEM_MARK_NONE)) return line;
+  if (!isLowEntropyKeyMaterial(line, ctxFrom, ctxEnd)) return line;
+  const lead = ctxFrom > headEnd ? ' ' : '';
+  return `${line.slice(0, headEnd)}${lead}[REDACTED]`;
+}
+
+/** One payload line. The diff marker stays. High-entropy key text stays. */
+function redactLowEntropyPayload(line: string): string {
+  if (line.charCodeAt(0) === 92) return line;
+  const span = hunkKeySpan(line);
+  if (isPemBodyLine(line, PEM_MARK_HUNK) && isLowEntropyKeyMaterial(line, span.start, span.end)) {
+    return `${line.slice(0, hunkPayloadMarkLength(line))}[REDACTED]`;
+  }
+  const partial = pemPartialCut(line, PEM_MARK_HUNK);
+  if (partial >= 0 && isLowEntropyKeyMaterial(line, span.start, partial)) {
+    return `${line.slice(0, hunkPayloadMarkLength(line))}[REDACTED]${line.slice(partial)}`;
+  }
+  return line;
+}
+
+function redactLowEntropyDiff(text: string, lines: PemTextLine[], region: KeyDiffRegion): string {
+  const parts: string[] = [];
+  let inHunk = false;
+  for (let i = region.start; i < region.end; i += 1) {
+    const rec = lines[i];
+    const content = text.slice(rec.start, rec.contentEnd);
+    const br = text.slice(rec.contentEnd, rec.next);
+    if (isUnifiedHunkHeader(content)) {
+      inHunk = true;
+      parts.push(redactLowEntropyHeader(content), br);
+      continue;
+    }
+    if (inHunk && isHunkPayloadLine(content)) {
+      parts.push(redactLowEntropyPayload(content), br);
+      continue;
+    }
+    inHunk = false;
+    parts.push(content, br);
+  }
+  return parts.join('');
+}
+
 interface KeyDiffRegion {
   start: number;
   end: number;
   sensitive: boolean;
   secretFile: boolean;
+  /** Secret-looking file, no BEGIN/END and no finding. Low-entropy body only. */
+  lowEntropyOnly: boolean;
+}
+
+/** Same skip the risk scanner uses before it emits `high-entropy-secret`. */
+const BARE_KEY_ENTROPY_MIN = 32;
+const BARE_KEY_ENTROPY_UNIQ = 10;
+const BARE_KEY_ENTROPY = 4.2;
+
+/**
+ * True when [start, end) would not produce a high-entropy finding.
+ * Unique characters under 10, or Shannon entropy under 4.2. One or two
+ * passes over that span. Shorter than 32 characters is not this case.
+ */
+function isLowEntropyKeyMaterial(line: string, start: number, end: number): boolean {
+  const n = end - start;
+  if (n < BARE_KEY_ENTROPY_MIN) return false;
+  const seen = new Uint8Array(128);
+  let uniq = 0;
+  for (let i = start; i < end; i += 1) {
+    const code = line.charCodeAt(i);
+    if (code >= 128) return false;
+    if (seen[code] === 0) {
+      seen[code] = 1;
+      uniq += 1;
+    }
+  }
+  if (uniq < BARE_KEY_ENTROPY_UNIQ) return true;
+  const freq = new Uint16Array(128);
+  for (let i = start; i < end; i += 1) freq[line.charCodeAt(i)] += 1;
+  let entropy = 0;
+  for (let c = 0; c < 128; c += 1) {
+    const count = freq[c];
+    if (count === 0) continue;
+    const p = count / n;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy < BARE_KEY_ENTROPY;
+}
+
+function textMayHoldBareKeyFile(text: string): boolean {
+  return (
+    text.includes('.pem') ||
+    text.includes('.key') ||
+    text.includes('.p12') ||
+    text.includes('.pfx') ||
+    text.includes('id_rsa') ||
+    text.includes('.npmrc') ||
+    text.includes('.netrc') ||
+    text.includes('credentials')
+  );
 }
 
 function findKeyDiffRegions(
@@ -4160,7 +4724,8 @@ function findKeyDiffRegions(
     const secretFile = path
       ? isSecretLookingPath(path) || pathMatchesFinding(path, secretFiles)
       : signalsKey;
-    regions.push({ start, end: i, sensitive, secretFile });
+    const lowEntropyOnly = !sensitive && Boolean(path && isSecretLookingPath(path));
+    regions.push({ start, end: i, sensitive, secretFile, lowEntropyOnly });
   }
   return regions;
 }
@@ -4211,7 +4776,8 @@ function redactKeyHunkLines(
     !text.includes('PRIVATE KEY-----') &&
     !text.includes('private-key-block') &&
     !text.includes('secret-looking-path') &&
-    !text.includes('high-entropy-secret')
+    !text.includes('high-entropy-secret') &&
+    !textMayHoldBareKeyFile(text)
   ) {
     return text;
   }
@@ -4233,22 +4799,24 @@ function redactKeyHunkLines(
     }
   }
   const regions = findKeyDiffRegions(text, lines, found.all, found.secretFile);
-  let sensitive = false;
+  let actionable = false;
   for (const region of regions) {
-    if (region.sensitive) {
-      sensitive = true;
+    if (region.sensitive || region.lowEntropyOnly) {
+      actionable = true;
       break;
     }
   }
-  if (!sensitive) return text;
+  if (!actionable) return text;
   const parts: string[] = [];
   let cursor = 0;
   for (const region of regions) {
-    if (!region.sensitive) continue;
+    if (!region.sensitive && !region.lowEntropyOnly) continue;
     const start = lines[region.start].start;
     const end = lines[region.end - 1].next;
     parts.push(text.slice(cursor, start));
-    parts.push(redactSensitiveDiff(text, lines, region));
+    parts.push(region.sensitive
+      ? redactSensitiveDiff(text, lines, region)
+      : redactLowEntropyDiff(text, lines, region));
     cursor = end;
   }
   parts.push(text.slice(cursor));
