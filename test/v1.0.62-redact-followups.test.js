@@ -192,6 +192,83 @@ describe('v1.0.62 a glued path does not leak the next secret', () => {
   });
 });
 
+describe('v1.0.62 pronounceable and code-word keep rates', () => {
+  // mulberry32, seed 7, restarted for each length. Humps are 3 to 6
+  // letters, consonant then vowel. 400 draws. The previous tip kept
+  // 74 to 114 of 400 pronounceable names at 20 to 24 characters, and
+  // 128 to 134 of 400 code-word endings at 16 and 19.
+  const CODE = [
+    'reducer', 'widget', 'logger', 'init', 'selector', 'params', 'descriptor',
+    'executable', 'enum', 'cfg', 'ctx', 'req', 'res', 'btn', 'idx', 'len',
+    'str', 'num', 'src', 'dst', 'tmp', 'util', 'impl', 'auth', 'env', 'repo', 'pkg',
+  ];
+  const V = 'aeiou';
+  const C = 'bcdfghjklmnprstvwz';
+
+  function mulberry32(seed) {
+    let s = seed;
+    return () => {
+      s |= 0;
+      s = (s + 0x6D2B79F5) | 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function keptCount(length, endCode) {
+    const rnd = mulberry32(7);
+    const pick = (list) => list[Math.floor(rnd() * list.length)];
+    const cap = (word) => word[0].toUpperCase() + word.slice(1);
+    const syl = (n) => {
+      let hump = '';
+      for (let i = 0; i < n; i += 1) hump += i % 2 ? pick(V) : pick(C);
+      return hump;
+    };
+    const rhump = () => cap(syl(3 + Math.floor(rnd() * 4)));
+    const build = (gen) => {
+      for (let k = 0; k < 8000; k += 1) {
+        const name = gen();
+        if (name.length === length) return name;
+      }
+      throw new Error(`no name of length ${length}`);
+    };
+    let kept = 0;
+    for (let i = 0; i < 400; i += 1) {
+      const name = endCode
+        ? build(() => {
+          let text = rhump();
+          text = text[0].toLowerCase() + text.slice(1);
+          while (text.length < length - 3) text += rhump();
+          return text + cap(pick(CODE));
+        })
+        : build(() => {
+          let text = rhump();
+          text = text[0].toLowerCase() + text.slice(1);
+          while (text.length < length) text += rhump();
+          return text;
+        });
+      if (keptAfterGap(name)) kept += 1;
+    }
+    return kept;
+  }
+
+  it('keeps few pronounceable humps of 20 to 24 characters', () => {
+    const kept = [20, 21, 22, 23, 24].map((length) => keptCount(length, false));
+    assert.deepEqual(kept, [5, 5, 2, 3, 4]);
+    for (const count of kept) assert.ok(count <= 12, String(count));
+  });
+
+  it('masks random humps that end in a code word at 16 to 19 characters', () => {
+    for (const length of [16, 17, 18, 19]) {
+      assert.equal(keptCount(length, true), 0, String(length));
+    }
+    for (const name of ['TosiliWibuSelector', 'NugiRawigExecutable']) {
+      assert.equal(keptAfterGap(name), false, name);
+    }
+  });
+});
+
 describe('v1.0.62 reproducible corpus and wording', () => {
   it('prints the keep-rate line the changelog quotes', () => {
     const ran = spawnSync(process.execPath, ['scripts/print-corpus-keep-rate.mjs'], {
@@ -203,10 +280,14 @@ describe('v1.0.62 reproducible corpus and wording', () => {
     assert.match(ran.stdout, /kind node_modules-dts-camelCase/);
     const line = ran.stdout.split('\n').find((row) => /^masked \d+ of 3000$/.test(row));
     const real = ran.stdout.split('\n').find((row) => /^real-masked \d+ of 3000$/.test(row));
+    const frozen = ran.stdout.split('\n').find((row) => /^frozen-masked \d+ of 3000$/.test(row));
     assert.ok(line, ran.stdout);
     assert.ok(real, ran.stdout);
+    assert.ok(frozen, ran.stdout);
     const realMasked = Number(real.slice('real-masked '.length).split(' ')[0]);
+    const frozenMasked = Number(frozen.slice('frozen-masked '.length).split(' ')[0]);
     assert.ok(realMasked <= 773, real);
+    assert.ok(frozenMasked <= 773, frozen);
     const note = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     const entry61 = note.slice(note.indexOf('## [1.0.61]'), note.indexOf('## [1.0.60]'));
     const entry62 = note.slice(note.indexOf('## [1.0.62]'), note.indexOf('## [1.0.61]'));
@@ -224,7 +305,10 @@ describe('v1.0.62 reproducible corpus and wording', () => {
     assert.match(entry62, /not a real-identifier over-mask rate/);
     assert.ok(entry62.includes(line), `${line} missing from changelog`);
     assert.ok(entry62.includes(real), `${real} missing from changelog`);
+    assert.ok(entry62.includes(frozen), `${frozen} missing from changelog`);
     assert.match(entry62, /at or below the v1\.0\.61 rate of 773 of 3000/);
+    assert.match(entry62, /551 vs 901 is v1\.0\.61 on the same sample/);
+    assert.match(entry62, /depends on the lockfile/);
     assert.match(entry62, /CorrectHorseBatteryStaple-style/);
     assert.match(entry62, /56 of 2000/);
     assert.match(entry62, /about 3%/);

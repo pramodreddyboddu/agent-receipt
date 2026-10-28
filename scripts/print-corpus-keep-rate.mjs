@@ -15,7 +15,17 @@
  *
  * The second count is not built from that list. It takes camelCase
  * identifiers from node_modules type declarations, length 16 to 48,
- * sorts them, and keeps the first 3000.
+ * sorts them, and keeps the first 3000. That walk depends on the
+ * lockfile and the installed node_modules. 551 vs 901 is v1.0.61 on
+ * the same sample: 901 is what v1.0.61 prints for this walk, and 551
+ * is what the previous tip of this branch printed for it. The
+ * changelog figure 773 is v1.0.61 on the frozen 16-to-24 sample, not
+ * on this walk.
+ *
+ * The third count is the frozen file
+ * test/fixtures/v1.0.62/real-identifiers.txt. Same 3000 names the
+ * release check uses. The harness is two PEM body lines, a gap, the
+ * name, then "~ ctx". v1.0.61 masks 773 of those 3000.
  * A name is masked when it does not stay after a truncated PEM and a gap.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -145,3 +155,16 @@ for (const name of realSample) {
 }
 console.log('kind node_modules-dts-camelCase');
 console.log(`real-masked ${realMasked} of 3000`);
+
+const frozenPath = join(root, 'test', 'fixtures', 'v1.0.62', 'real-identifiers.txt');
+const body = 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7aZ9+/QxWv3LmP';
+const frozen = readFileSync(frozenPath, 'utf8').split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('#'));
+if (frozen.length !== 3000) throw new Error(`built ${frozen.length} frozen identifiers`);
+let frozenMasked = 0;
+for (const name of frozen) {
+  const raw = `-----BEGIN PRIVATE KEY-----\n${body}\n${body}\n\n${name}\n~ ctx\n`;
+  const out = redactSecretsInText(raw);
+  if (!out.includes(name)) frozenMasked += 1;
+}
+console.log('kind frozen-real-identifiers');
+console.log(`frozen-masked ${frozenMasked} of 3000`);

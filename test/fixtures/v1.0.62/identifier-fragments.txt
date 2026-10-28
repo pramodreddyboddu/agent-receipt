@@ -4,8 +4,10 @@
 # from `dictionary` plus `gap`, and prints `masked N of 3000`.
 # This count is circular: `gap` words are defined as words that are not
 # in the hump list. It is not a real-identifier over-mask rate.
-# The real count is the script's `real-masked` line, from node_modules
-# type declarations. Do not add a gap word to hump-words.ts.
+# The node_modules count is the script's `real-masked` line. It depends
+# on the lockfile and the installed node_modules. The reproducible
+# over-mask count is `frozen-masked`, from real-identifiers.txt.
+# Do not add a gap word to hump-words.ts.
 
 # dictionary
 handle
