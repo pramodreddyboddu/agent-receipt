@@ -3,6 +3,7 @@
  * Masks high-signal secrets in Markdown/HTML bodies, then callers re-hash.
  */
 import { appendHashFooter, integrityCutIndex, sha256Hex } from './hash.js';
+import { humpWordAt } from './hump-words.js';
 
 /**
  * 12 hex chars of sha256(secret). Distinct secrets stay distinct after
@@ -3577,12 +3578,12 @@ function identifierPair(first: number, second: number): boolean {
  * vowel (`Msg`, `Jwt`, `Html`). A longer hump is at most 16 letters,
  * contains a vowel (`w` counts), has no consonant run longer than 4, and every letter
  * pair is an ordinary pair. The capital, when present, is the first
- * letter. One pass.
+ * letter. The hump must be a dictionary word or a known identifier word.
+ * Shape alone is not enough, so a random vowel-consonant run stays key
+ * material. One pass, then one dictionary lookup.
  */
 function shapedCamelHump(line: string, from: number, to: number): boolean {
-  // A vowel-consonant hump is not a word. Every hump of a kept name is a
-  // real word or abbreviation, so a random word-like line stays key material.
-  if (!identifierWordAt(line, from, to)) return false;
+  if (!humpWordAt(line, from, to) && !identifierWordAt(line, from, to)) return false;
   const n = to - from;
   if (n === 1) {
     let code = line.charCodeAt(from);
@@ -3664,8 +3665,9 @@ function isWordShapedCamelIdentifier(line: string, start: number, end: number): 
 /**
  * camelCase, PascalCase, or snake_case (`veryLongCamelCaseIdentifier`,
  * `IdentifierValue16`, `HTTPServerConfig`, `parseJSONResponse`,
- * `getUserProfileById`). A name stays when every part is a real word or
- * a common abbreviation, or when it is word-shaped camelCase: at least
+ * `getUserProfileById`, `handleClickEvent`). A name stays when every
+ * part is a dictionary word or a common abbreviation, or when it is
+ * word-shaped camelCase whose every hump is a dictionary word: at least
  * two humps of 2 to 16 letters, mostly lowercase, each hump of 5 or
  * more letters containing a vowel. Digits in a camelCase or PascalCase name are only
  * a trailing run, so a digit mixed into the line stays key material, except a

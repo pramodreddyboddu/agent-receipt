@@ -161,6 +161,32 @@ describe('v1.0.61 a low-entropy lone mid-body hunk is redacted', () => {
     assert.equal(out.includes('--- a/key.pem'), true);
     assert.equal(out.includes('--- a/readme.md'), true);
   });
+
+  it('leaves a low-entropy line raw on notes.txt, config.js, and data.txt', () => {
+    const low = 'A'.repeat(64);
+    for (const path of ['notes.txt', 'config.js', 'data.txt', 'readme.md']) {
+      const diff = loneHunk(path, [
+        `@@ -8,3 +8,4 @@ ${low}`,
+        ` ${low}`,
+        `-${low}`,
+        `+${low}`,
+        '+hello',
+      ]);
+      const out = redactSecretsInText(diff);
+      assert.equal(out.includes(low), true, path);
+      assert.equal(out.includes('+hello'), true, path);
+      assert.equal(out.includes('[REDACTED]'), false, path);
+    }
+    const pem = loneHunk('key.pem', [
+      `@@ -8,3 +8,4 @@ ${low}`,
+      ` ${low}`,
+      `-${low}`,
+      `+${low}`,
+    ]);
+    const pemOut = redactSecretsInText(pem);
+    assert.equal(pemOut.includes(low), false);
+    assert.equal(pemOut.includes('[REDACTED]'), true);
+  });
 });
 
 describe('v1.0.61 a dash, underscore, or glued path does not end a PEM block', () => {
@@ -357,6 +383,131 @@ downwardAPIVolume bulkheadIsolation
     assert.equal(drawn, 2048);
     assert.equal(keptLines, 0);
   });
+
+  it('keeps none of 5000 seeded word-like camelCase humps', () => {
+    const letters = 'abcdefghijklmnopqrstuvwxyz';
+    const vowels = new Set(['a', 'e', 'i', 'o', 'u', 'y', 'w']);
+    const next = lcg(0x1061a11);
+    const hump = () => {
+      const len = 2 + (next() % 7);
+      let word = letters[next() % 26];
+      let run = vowels.has(word) ? 0 : 1;
+      while (word.length < len) {
+        let ch = letters[next() % 26];
+        const consonant = !vowels.has(ch);
+        if (consonant && run >= 4) ch = 'a';
+        word += ch;
+        run = vowels.has(ch) ? 0 : run + 1;
+      }
+      if (word.length >= 5 && ![...word].some((ch) => vowels.has(ch))) {
+        word = `${word.slice(0, word.length - 1)}a`;
+      }
+      return word;
+    };
+    let keptLines = 0;
+    let drawn = 0;
+    while (drawn < 5000) {
+      const parts = [];
+      let line = '';
+      while (line.length < 16) {
+        const word = hump();
+        parts.push(word);
+        const chunk = parts.length === 1 ? word : word[0].toUpperCase() + word.slice(1);
+        line += chunk;
+      }
+      if (line.length > 19) continue;
+      drawn += 1;
+      assert.ok(parts.length >= 2, line);
+      const out = redactSecretsInText(block([LINE64, '', line, 'Next']));
+      if (out.includes(line)) keptLines += 1;
+      assert.equal(out.includes(LINE64), false, line);
+      assert.equal(out.includes('Next'), true, line);
+    }
+    assert.equal(drawn, 5000);
+    assert.equal(keptLines, 0);
+  });
+});
+
+describe('v1.0.61 realistic identifier corpora stay near the v1.0.60 rate', () => {
+  function keptAfterGap(name) {
+    const gap = redactSecretsInText(block([LINE64, '', name, 'Next']));
+    return gap.includes(name) && !gap.includes(LINE64) && gap.includes('Next');
+  }
+
+  it('keeps a 78-name realistic corpus near the v1.0.60 rate', () => {
+    const names = `
+handleClickEvent computeTaxAmount renderInvoiceSummary validateShippingAddress
+fetchCustomerProfile updateInventoryCount calculateMonthlyPayment processRefundRequest
+generateReportSummary parseConfigurationFile searchProductCatalog filterOrderHistory
+sortCustomerRecords mergeAccountBalance splitPaymentSchedule convertCurrencyValue
+buildReleaseNotes publishVersionTag reviewCommentThread commitBranchChanges
+documentSectionTitle formatErrorMessage cacheQueryResult clearSessionState
+startBackgroundJob stopWorkerThread openDatabaseFile closeNetworkSocket
+writeAuditRecord readConfigValue loadServiceData saveUserProfile
+createOrderItem deleteExpiredToken encodePlainText decodeCipherText
+buttonClickHandler inputChangeEvent formSubmitAction imageLoadError
+windowResizeHandler elementFocusState parentChildNode styleColorValue
+widthHeightRatio marginPaddingBox borderFontSize textAlignContent
+customerAddressBook monthlyStatement inventoryWarehouse supplierContract
+ledgerJournalEntry balanceSheetRow permissionRoleMap auditLogTrace
+featureFlagToggle experimentBucket networkPacketFrame bufferStreamSize
+invoicePaymentTotal productCatalogItem shippingAddressLine orderHistoryPage
+queryResultCache requestHeaderMap responseStatusCode sessionCookieJar
+clientServerPort serviceMethodName modulePackageRef importExportMap
+renderUpdateCycle createDeleteFlow fetchLoadSave writeReadParse
+validateProcessRun generateCalculate searchFilterSort groupMergeSplit
+getUserProfileById fetchAccountBalance handleIncomingMessage loadServiceAccount
+storeRefreshToken clearSessionCookie applySecurityPolicy renderDashboardView
+toggleFeatureFlag writeCoverageReport computeFileChecksum normalizeRequestPath
+resolveModuleSpecifier
+`.trim().split(/\s+/).filter((name) => name.length >= 16);
+    const shapeMasked = [
+      'calculateMonthlyPayment',
+      'widthHeightRatio',
+      'monthlyStatement',
+      'renderUpdateCycle',
+      'generateCalculate',
+    ];
+    assert.equal(names.length, 78);
+    assert.equal(new Set(names).size, 78);
+    assert.equal(names.includes('handleClickEvent'), true);
+    assert.equal(names.includes('computeTaxAmount'), true);
+    const masked = names.filter((name) => !keptAfterGap(name));
+    assert.deepEqual(masked, shapeMasked);
+    assert.equal(keptAfterGap('handleClickEvent'), true);
+    assert.equal(keptAfterGap('computeTaxAmount'), true);
+  });
+
+  it('keeps a 1500-name ordinary camelCase corpus near the v1.0.60 rate', () => {
+    const words = `handle click event compute tax amount user profile account balance order invoice payment refund report summary config file path name value data record item price total count index list table field column query result request response message error status code token session cookie header client server service method function module package import export render update create delete fetch load save write read parse format validate process generate calculate search filter sort group merge split convert encode decode cache store clear reset start stop open close build publish release version change review comment thread commit branch document section paragraph title label button input form image video audio canvas context window document element node child parent style color width height margin padding border font text align content customer shipping address monthly product inventory warehouse supplier contract invoice receipt ledger journal entry balance sheet statement permission role policy audit log trace span metric counter gauge feature flag experiment rollout bucket cohort variant control network socket packet frame buffer stream cipher plain text`
+      .trim().split(/\s+/);
+    const uniq = [...new Set(words.filter((word) => word.length >= 2))];
+    const camel = (parts) => parts.map((word, i) => (i ? word[0].toUpperCase() + word.slice(1) : word)).join('');
+    const next = lcg(0x1061c15);
+    const names = new Set();
+    let guard = 0;
+    while (names.size < 1500 && guard < 1500 * 80) {
+      guard += 1;
+      const parts = [];
+      let line = '';
+      while (line.length < 16 && parts.length < 7) {
+        parts.push(uniq[next() % uniq.length]);
+        line = camel(parts);
+      }
+      if (line.length >= 16 && line.length <= 48 && parts.length >= 2) names.add(line);
+    }
+    assert.equal(names.size, 1500);
+    let masked = 0;
+    for (const name of names) {
+      if (!keptAfterGap(name)) masked += 1;
+    }
+    // v1.0.60 shape-only masking on this seed is 116. A short hand list masked 1205.
+    assert.equal(masked, 116);
+    assert.equal(keptAfterGap('handleClickEvent'), true);
+    assert.equal(keptAfterGap('computeTaxAmount'), true);
+    assert.equal(keptAfterGap('encodeURIComponent'), false);
+    assert.equal(keptAfterGap('decodeURIComponent'), false);
+  });
 });
 
 describe('v1.0.61 changelog', () => {
@@ -375,5 +526,13 @@ describe('v1.0.61 changelog', () => {
     assert.match(entry, /1\.0\.61/);
     assert.match(entry, /does not publish to npm/);
     assert.match(entry, /not a certificate authority/);
+    assert.match(entry, /secret-looking path/);
+    assert.match(entry, /normal path still leaks/);
+    assert.match(entry, /notes\.txt/);
+    assert.match(entry, /config\.js/);
+    assert.match(entry, /data\.txt/);
+    assert.match(entry, /handleClickEvent/);
+    assert.match(entry, /computeTaxAmount/);
+    assert.match(entry, /5000/);
   });
 });
