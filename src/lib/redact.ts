@@ -2873,29 +2873,42 @@ function isUrlKeySpan(line: string, start: number, end: number): boolean {
   return !segmentsAreWords(line, start, end);
 }
 
-/** A path segment that is a real name, not a repeated key run. */
-function isRealNameRun(line: string, from: number, to: number): boolean {
-  if (to <= from) return false;
+/**
+ * A path run that is a real identifier, not a shape-only letter string.
+ * Shape alone kept a random 16-letter run glued to a path, so the next
+ * secret line stayed visible. A dictionary word, an identifier word,
+ * camelCase or an acronym whose humps are those words, or a digit name
+ * such as `sha256DigestValue` still counts. One pass per check.
+ */
+function isKeptGluedRun(line: string, from: number, to: number): boolean {
+  if (to - from < 2) return false;
+  if (isDigitBearingName(line, from, to)) return true;
   if (identifierWordAt(line, from, to)) return true;
-  if (to - from >= 2 && isSingleCapIdentifier(line, from, to)) return true;
+  if (humpWordAt(line, from, to)) return true;
+  if (isSingleCapIdentifier(line, from, to)) return true;
   if (to - from >= 4 && isAcronymWordIdentifier(line, from, to)) return true;
-  return isWordLikeSegment(line, from, to);
+  return isWordShapedCamelIdentifier(line, from, to);
 }
 
 /**
  * Base64 glued to a path (`CCCCCCCC/src/app.ts`, `./src/app.ts` plus a
  * key run). A real path whose segments are words stays a stopping line.
- * One pass over the span.
+ * `/` and `.` split the span, so a `+` or `=` inside a shorter segment
+ * is still key material. A run of 16 or more characters is key material
+ * unless it is a real identifier. One pass over the span.
  */
 function isGluedKeyPathSpan(line: string, start: number, end: number): boolean {
   if (end - start < PEM_BODY_MIN) return false;
   let sawPath = false;
   let runFrom = -1;
+  let runKey = false;
   let bad = false;
   const finish = (runEnd: number): void => {
     if (runFrom < 0) return;
-    if (runEnd - runFrom >= PEM_BODY_MIN && !isRealNameRun(line, runFrom, runEnd)) bad = true;
+    const n = runEnd - runFrom;
+    if (runKey || (n >= PEM_BODY_MIN && !isKeptGluedRun(line, runFrom, runEnd))) bad = true;
     runFrom = -1;
+    runKey = false;
   };
   for (let i = start; i <= end; i += 1) {
     if (i === end) {
@@ -2911,6 +2924,7 @@ function isGluedKeyPathSpan(line: string, start: number, end: number): boolean {
     }
     if (!isBase64UrlCode(code)) return false;
     if (runFrom < 0) runFrom = i;
+    if (code === 43 || code === 61) runKey = true;
   }
   return sawPath && bad;
 }
@@ -3373,6 +3387,34 @@ const IDENTIFIER_WORDS = new Set([
   'workload',
   'write',
   'yaml',
+  // v1.0.62 code-word humps. These are not path atoms.
+  'auth',
+  'btn',
+  'cfg',
+  'ctx',
+  'descriptor',
+  'dst',
+  'enum',
+  'env',
+  'executable',
+  'idx',
+  'impl',
+  'init',
+  'len',
+  'logger',
+  'num',
+  'params',
+  'pkg',
+  'reducer',
+  'repo',
+  'req',
+  'res',
+  'selector',
+  'src',
+  'str',
+  'tmp',
+  'util',
+  'widget',
 ]);
 
 /**
