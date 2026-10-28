@@ -1,9 +1,11 @@
-# Seeded fragments for scripts/print-corpus-keep-rate.mjs
+# Circular gap-word fixture for scripts/print-corpus-keep-rate.mjs
 # Seed 0x1062c15. LCG: state = (Math.imul(1664525, state) + 1013904223) >>> 0
 # The script builds 3000 camelCase names, length 16 to 48, 2 to 7 parts,
-# and prints `masked N of 3000`. CHANGELOG quotes that line.
-# `dictionary` words are humps this package keeps. `gap` words are not,
-# so a name that draws one is masked. Do not add a gap word to hump-words.ts.
+# from `dictionary` plus `gap`, and prints `masked N of 3000`.
+# This count is circular: `gap` words are defined as words that are not
+# in the hump list. It is not a real-identifier over-mask rate.
+# The real count is the script's `real-masked` line, from node_modules
+# type declarations. Do not add a gap word to hump-words.ts.
 
 # dictionary
 handle

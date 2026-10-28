@@ -1,8 +1,10 @@
 /**
  * v1.0.62 — v1.0.61 Release QA follow-ups.
  * Code-word humps stay visible. Random humps that only contain those
- * words stay masked. A glued path does not leave the next secret line raw.
- * The 3000-sample keep-rate line is whatever the corpus script prints.
+ * words stay masked. A glued path does not leave the next secret line raw
+ * on the seeded sweeps. A fresh draw can still leak when `/` splits the
+ * prefix. The gap-word 3000-sample line is circular. The real-identifier
+ * line is whatever the corpus script prints from node_modules.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -136,6 +138,31 @@ describe('v1.0.62 a glued path does not leak the next secret', () => {
     assert.equal(found, 0, `letter leaks ${found} of 200`);
   });
 
+  it('leaks 56 of 2000 fresh draws when a slash splits the prefix', () => {
+    // mulberry32, not the sweep LCG. The LCG's low bits almost never
+    // place `/` so every segment is shorter than 16 and free of `+`/`=`.
+    function mulberry32(seed) {
+      let a = seed >>> 0;
+      return () => {
+        a |= 0;
+        a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return (t ^ (t >>> 14)) >>> 0;
+      };
+    }
+    const next = mulberry32(0xC0FFEE);
+    let found = 0;
+    for (let n = 0; n < 2000; n += 1) {
+      const len = 24 + (next() % 17);
+      let prefix = '';
+      for (let i = 0; i < len; i += 1) prefix += ALPHABET[next() % 64];
+      const line = prefix + PATHS[next() % PATHS.length];
+      if (leaks(line)) found += 1;
+    }
+    assert.equal(found, 56, `fresh leaks ${found} of 2000`);
+  });
+
   it('still stops on a real path and keeps the following line', () => {
     const stops = [
       '/src/app.ts',
@@ -172,18 +199,36 @@ describe('v1.0.62 reproducible corpus and wording', () => {
       encoding: 'utf8',
     });
     assert.equal(ran.status, 0, ran.stderr);
+    assert.match(ran.stdout, /kind circular-gap-words/);
+    assert.match(ran.stdout, /kind node_modules-dts-camelCase/);
     const line = ran.stdout.split('\n').find((row) => /^masked \d+ of 3000$/.test(row));
+    const real = ran.stdout.split('\n').find((row) => /^real-masked \d+ of 3000$/.test(row));
     assert.ok(line, ran.stdout);
+    assert.ok(real, ran.stdout);
+    const realMasked = Number(real.slice('real-masked '.length).split(' ')[0]);
+    assert.ok(realMasked <= 773, real);
     const note = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     const entry61 = note.slice(note.indexOf('## [1.0.61]'), note.indexOf('## [1.0.60]'));
     const entry62 = note.slice(note.indexOf('## [1.0.62]'), note.indexOf('## [1.0.61]'));
     assert.match(entry61, /73 of 78 identifiers stay/);
-    assert.equal(entry61.includes('773 of 3000'), false);
-    assert.equal(entry61.includes('246 of 3000'), false);
-    assert.equal(entry61.includes('about 69%'), false);
+    assert.match(entry61, /773 of 3000/);
+    assert.match(entry61, /246 of 3000/);
+    assert.match(entry61, /CorrectHorseBatteryStaple/);
+    assert.match(entry61, /16 to 24/);
+    assert.match(entry61, /about 69%/);
+    assert.match(entry61, /same as main/);
+    assert.equal(entry61.includes('The 78 identifiers stay'), false);
     assert.match(entry62, /73 of 78 identifiers stay/);
     assert.match(entry62, /v1\.0\.61 Release QA follow-ups/);
+    assert.match(entry62, /circular/);
+    assert.match(entry62, /not a real-identifier over-mask rate/);
     assert.ok(entry62.includes(line), `${line} missing from changelog`);
+    assert.ok(entry62.includes(real), `${real} missing from changelog`);
+    assert.match(entry62, /at or below the v1\.0\.61 rate of 773 of 3000/);
+    assert.match(entry62, /CorrectHorseBatteryStaple-style/);
+    assert.match(entry62, /56 of 2000/);
+    assert.match(entry62, /about 3%/);
+    assert.match(entry62, /leaks 0/);
     assert.match(entry62, /1\.0\.62/);
     assert.match(entry62, /npm publish, which is on hold/);
     assert.match(entry62, /does not publish to npm/);

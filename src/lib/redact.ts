@@ -2878,7 +2878,11 @@ function isUrlKeySpan(line: string, start: number, end: number): boolean {
  * Shape alone kept a random 16-letter run glued to a path, so the next
  * secret line stayed visible. A dictionary word, an identifier word,
  * camelCase or an acronym whose humps are those words, or a digit name
- * such as `sha256DigestValue` still counts. One pass per check.
+ * such as `sha256DigestValue` still counts. A camelCase run of 16 to 19
+ * letters needs one dictionary hump of 3 or more letters. A longer
+ * camelCase run stays when every hump is word-shaped, so a real
+ * identifier is not eaten just because one hump is outside the short
+ * list. One pass per check.
  */
 function isKeptGluedRun(line: string, from: number, to: number): boolean {
   if (to - from < 2) return false;
@@ -2895,7 +2899,9 @@ function isKeptGluedRun(line: string, from: number, to: number): boolean {
  * key run). A real path whose segments are words stays a stopping line.
  * `/` and `.` split the span, so a `+` or `=` inside a shorter segment
  * is still key material. A run of 16 or more characters is key material
- * unless it is a real identifier. One pass over the span.
+ * unless it is a real identifier: a dictionary word, or camelCase whose
+ * humps are word-shaped. A 16-to-19 letter camelCase run still needs one
+ * dictionary hump. One pass over the span.
  */
 function isGluedKeyPathSpan(line: string, start: number, end: number): boolean {
   if (end - start < PEM_BODY_MIN) return false;
@@ -3620,12 +3626,10 @@ function identifierPair(first: number, second: number): boolean {
  * vowel (`Msg`, `Jwt`, `Html`). A longer hump is at most 16 letters,
  * contains a vowel (`w` counts), has no consonant run longer than 4, and every letter
  * pair is an ordinary pair. The capital, when present, is the first
- * letter. The hump must be a dictionary word or a known identifier word.
- * Shape alone is not enough, so a random vowel-consonant run stays key
- * material. One pass, then one dictionary lookup.
+ * letter. Shape alone is not a dictionary word. The caller decides
+ * whether a dictionary hump is also required. One pass.
  */
 function shapedCamelHump(line: string, from: number, to: number): boolean {
-  if (!humpWordAt(line, from, to) && !identifierWordAt(line, from, to)) return false;
   const n = to - from;
   if (n === 1) {
     let code = line.charCodeAt(from);
@@ -3670,7 +3674,12 @@ function shapedCamelHump(line: string, from: number, to: number): boolean {
  * (`getUserProfileById`, `fetchAccountBalance`, `handleWebSocketMsg`).
  * At least two humps, and at least one hump is 4 or more letters. The
  * name is mostly lowercase. Two capitals in a row are an acronym, not
- * this shape. One pass over a letter span already cut from one line.
+ * this shape. Every hump is still word-shaped, so a random
+ * vowel-consonant run stays key material. A name of 16 to 19 letters
+ * also needs one dictionary hump of 3 or more letters, which is what
+ * keeps the seeded 16-to-19 sweep masked. A longer name stays on shape,
+ * so a real identifier is not masked because one hump is outside the
+ * short list. One pass over a letter span already cut from one line.
  */
 function isWordShapedCamelIdentifier(line: string, start: number, end: number): boolean {
   if (end - start < 2) return false;
@@ -3680,6 +3689,8 @@ function isWordShapedCamelIdentifier(line: string, start: number, end: number): 
   let longHump = false;
   let lowers = 0;
   let uppers = 0;
+  let allDict = true;
+  let anchor = false;
   let humpFrom = start;
   for (let i = start + 1; i <= end; i += 1) {
     const atEnd = i === end;
@@ -3692,6 +3703,9 @@ function isWordShapedCamelIdentifier(line: string, start: number, end: number): 
     if (!atEnd && line.charCodeAt(i - 1) >= 65 && line.charCodeAt(i - 1) <= 90) return false;
     if (!shapedCamelHump(line, humpFrom, i)) return false;
     const n = i - humpFrom;
+    const known = humpWordAt(line, humpFrom, i) || identifierWordAt(line, humpFrom, i);
+    if (!known) allDict = false;
+    if (known && n >= 3) anchor = true;
     if (n >= 4) longHump = true;
     for (let k = humpFrom; k < i; k += 1) {
       const humpCode = line.charCodeAt(k);
@@ -3701,7 +3715,10 @@ function isWordShapedCamelIdentifier(line: string, start: number, end: number): 
     humps += 1;
     humpFrom = i;
   }
-  return humps >= 2 && longHump && lowers > uppers;
+  if (!(humps >= 2 && longHump && lowers > uppers)) return false;
+  if (allDict) return true;
+  if (end - start >= 20) return true;
+  return anchor;
 }
 
 /**
@@ -3709,9 +3726,10 @@ function isWordShapedCamelIdentifier(line: string, start: number, end: number): 
  * `IdentifierValue16`, `HTTPServerConfig`, `parseJSONResponse`,
  * `getUserProfileById`, `handleClickEvent`). A name stays when every
  * part is a dictionary word or a common abbreviation, or when it is
- * word-shaped camelCase whose every hump is a dictionary word: at least
- * two humps of 2 to 16 letters, mostly lowercase, each hump of 5 or
- * more letters containing a vowel. Digits in a camelCase or PascalCase name are only
+ * word-shaped camelCase: at least two humps of 2 to 16 letters, mostly
+ * lowercase, each hump of 5 or more letters containing a vowel. A name
+ * of 16 to 19 letters also needs one dictionary hump of 3 or more
+ * letters. A longer name stays on that shape. Digits in a camelCase or PascalCase name are only
  * a trailing run, so a digit mixed into the line stays key material, except a
  * hump that is exactly `k8s`, `sha256`, or `base64` beside real words
  * (`k8sNamespaceName`, `sha256DigestValue`, `base64UrlEncoded`).

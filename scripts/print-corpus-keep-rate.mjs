@@ -1,17 +1,24 @@
 /**
- * Print the v1.0.62 identifier keep-rate line.
+ * Print the v1.0.62 corpus lines.
  *
  * Regenerate:
  *   node scripts/print-corpus-keep-rate.mjs
  *
- * The vocabulary is test/fixtures/v1.0.62/identifier-fragments.txt.
- * Seed 0x1062c15. Same LCG as the redact sweeps:
+ * The first count is circular. The vocabulary is
+ * test/fixtures/v1.0.62/identifier-fragments.txt. Seed 0x1062c15.
+ * Same LCG as the redact sweeps:
  *   state = (Math.imul(1664525, state) + 1013904223) >>> 0
- * Build 3000 camelCase names of length 16 to 48 with 2 to 7 parts.
+ * It builds 3000 camelCase names of length 16 to 48 with 2 to 7 parts
+ * from hump-list words plus gap words. A gap word is defined as a word
+ * that is not in the hump list, so this count is not a real-identifier
+ * over-mask rate.
+ *
+ * The second count is not built from that list. It takes camelCase
+ * identifiers from node_modules type declarations, length 16 to 48,
+ * sorts them, and keeps the first 3000.
  * A name is masked when it does not stay after a truncated PEM and a gap.
- * Gap words in the fixture must not be hump-dictionary words.
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { humpWordAt } from '../dist/lib/hump-words.js';
@@ -91,4 +98,50 @@ for (const name of names) {
 console.log('fixture test/fixtures/v1.0.62/identifier-fragments.txt');
 console.log('seed 0x1062c15');
 console.log('samples 3000');
+console.log('kind circular-gap-words');
 console.log(`masked ${masked} of 3000`);
+
+function walkDts(dir, acc) {
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    const path = join(dir, name);
+    let st;
+    try {
+      st = statSync(path);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) {
+      if (name === 'node_modules' && dir !== root) continue;
+      walkDts(path, acc);
+    } else if (name.endsWith('.d.ts')) acc.push(path);
+  }
+}
+
+const declFiles = [];
+walkDts(join(root, 'node_modules'), declFiles);
+const identRe = /\b[A-Za-z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+\b/g;
+const realNames = new Set();
+for (const file of declFiles) {
+  const text = readFileSync(file, 'utf8');
+  for (const match of text.matchAll(identRe)) {
+    const name = match[0];
+    if (name.length >= 16 && name.length <= 48) realNames.add(name);
+  }
+}
+const realSample = [...realNames].sort().slice(0, 3000);
+if (realSample.length !== 3000) throw new Error(`built ${realSample.length} real identifiers`);
+let realMasked = 0;
+for (const name of realSample) {
+  const raw = `-----BEGIN PRIVATE KEY-----\n${LINE64}\n\n${name}\nNext\n`;
+  const out = redactSecretsInText(raw);
+  const kept = out.includes(name) && !out.includes(LINE64) && out.includes('Next');
+  if (!kept) realMasked += 1;
+}
+console.log('kind node_modules-dts-camelCase');
+console.log(`real-masked ${realMasked} of 3000`);
