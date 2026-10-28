@@ -428,13 +428,13 @@ downwardAPIVolume bulkheadIsolation
   });
 });
 
-describe('v1.0.61 realistic identifier corpora stay near the v1.0.60 rate', () => {
+describe('v1.0.61 dictionary-built identifier corpora', () => {
   function keptAfterGap(name) {
     const gap = redactSecretsInText(block([LINE64, '', name, 'Next']));
     return gap.includes(name) && !gap.includes(LINE64) && gap.includes('Next');
   }
 
-  it('keeps a 78-name realistic corpus near the v1.0.60 rate', () => {
+  it('keeps a 78-name dictionary corpus except the listed shape misses', () => {
     const names = `
 handleClickEvent computeTaxAmount renderInvoiceSummary validateShippingAddress
 fetchCustomerProfile updateInventoryCount calculateMonthlyPayment processRefundRequest
@@ -478,7 +478,7 @@ resolveModuleSpecifier
     assert.equal(keptAfterGap('computeTaxAmount'), true);
   });
 
-  it('keeps a 1500-name ordinary camelCase corpus near the v1.0.60 rate', () => {
+  it('bounds masking on a 1500-name dictionary-word camelCase corpus', () => {
     const words = `handle click event compute tax amount user profile account balance order invoice payment refund report summary config file path name value data record item price total count index list table field column query result request response message error status code token session cookie header client server service method function module package import export render update create delete fetch load save write read parse format validate process generate calculate search filter sort group merge split convert encode decode cache store clear reset start stop open close build publish release version change review comment thread commit branch document section paragraph title label button input form image video audio canvas context window document element node child parent style color width height margin padding border font text align content customer shipping address monthly product inventory warehouse supplier contract invoice receipt ledger journal entry balance sheet statement permission role policy audit log trace span metric counter gauge feature flag experiment rollout bucket cohort variant control network socket packet frame buffer stream cipher plain text`
       .trim().split(/\s+/);
     const uniq = [...new Set(words.filter((word) => word.length >= 2))];
@@ -501,8 +501,11 @@ resolveModuleSpecifier
     for (const name of names) {
       if (!keptAfterGap(name)) masked += 1;
     }
-    // v1.0.60 shape-only masking on this seed is 116. A short hand list masked 1205.
-    assert.equal(masked, 116);
+    // These names are built from dictionary words in hump-words.ts.
+    // v1.0.60 shape-only masking on this seed is 116. A short hand list
+    // masked 1205. Do not pin 116. Third-party real identifiers are a
+    // different rate: this cut masks 773 of 3000, and main masks 246 of 3000.
+    assert.ok(masked <= 300, `masked ${masked} of ${names.size}`);
     assert.equal(keptAfterGap('handleClickEvent'), true);
     assert.equal(keptAfterGap('computeTaxAmount'), true);
     assert.equal(keptAfterGap('encodeURIComponent'), false);
@@ -534,5 +537,20 @@ describe('v1.0.61 changelog', () => {
     assert.match(entry, /handleClickEvent/);
     assert.match(entry, /computeTaxAmount/);
     assert.match(entry, /5000/);
+    assert.match(entry, /hump-words\.ts/);
+    assert.match(entry, /773 of 3000/);
+    assert.match(entry, /246 of 3000/);
+    assert.match(entry, /CorrectHorseBatteryStaple/);
+    assert.match(entry, /16 to 24/);
+    assert.match(entry, /about 69%/);
+    assert.match(entry, /same as main/);
+    assert.equal(
+      entry.includes('A 1500-name corpus of ordinary camelCase identifiers stays near the v1.0.60 keep rate'),
+      false,
+    );
+    assert.equal(
+      entry.includes('Realistic identifiers stay near the v1.0.60 keep rate'),
+      false,
+    );
   });
 });
