@@ -1,10 +1,11 @@
 /**
  * v1.0.62 — v1.0.61 Release QA follow-ups.
- * Code-word humps stay visible. Random humps that only contain those
- * words stay masked. A glued path does not leave the next secret line raw
- * on the seeded sweeps. A fresh draw can still leak when `/` splits the
- * prefix. The gap-word 3000-sample line is circular. The real-identifier
- * line is whatever the corpus script prints from node_modules.
+ * A hump stays only when it is an ENABLE dictionary word or a light stem
+ * of one. A code word is not a hump on its own. Random humps stay masked.
+ * A glued path does not leave the next secret line raw on the seeded
+ * sweeps. A fresh draw can still leak when `/` splits the prefix. The
+ * gap-word 3000-sample line is circular. The real-identifier line is
+ * whatever the corpus script prints from node_modules.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,31 +45,38 @@ function keptAfterGap(name) {
   return gap.includes(name) && !gap.includes(LINE64) && gap.includes('Next');
 }
 
-const CODE_WORDS = [
-  'reducer', 'widget', 'logger', 'init', 'selector', 'params', 'descriptor',
-  'executable', 'enum', 'cfg', 'ctx', 'req', 'res', 'msg', 'btn', 'idx', 'len',
-  'str', 'num', 'src', 'dst', 'tmp', 'util', 'impl', 'auth', 'env', 'repo', 'pkg',
+const DICTIONARY_HUMPS = [
+  'reducer', 'widget', 'logger', 'selector', 'descriptor', 'executable', 'repo',
+];
+const NOT_HUMPS = [
+  'init', 'params', 'enum', 'cfg', 'ctx', 'req', 'btn', 'idx', 'len', 'str',
+  'num', 'dst', 'tmp', 'impl', 'env',
 ];
 
-describe('v1.0.62 code-word humps stay and random humps stay masked', () => {
+describe('v1.0.62 dictionary humps stay and code words do not', () => {
   const kept = [
+    'loggerReducerSelector',
+    'widgetSelectorDescriptor',
+    'executableLoggerReducer',
+    'CorrectHorseBatteryStaple',
+  ];
+  const maskedNames = [
     'initLoggerReducer',
     'widgetSelectorParams',
     'loadCfgCtxReqRes',
-    'authEnvRepoPkgImpl',
-    'msgBtnIdxLenStrNum',
-    'srcDstTmpUtilImpl',
-    'descriptorExecutable',
-    'enumLoggerReducer',
-    'CorrectHorseBatteryStaple',
   ];
 
-  it('keeps identifiers built from the code words after a gap', () => {
-    for (const word of CODE_WORDS) {
+  it('keeps a name only when every hump is a dictionary word', () => {
+    for (const word of DICTIONARY_HUMPS) {
       assert.equal(humpWordAt(word, 0, word.length), true, word);
       const titled = word[0].toUpperCase() + word.slice(1);
       assert.equal(humpWordAt(titled, 0, titled.length), true, titled);
     }
+    for (const word of NOT_HUMPS) {
+      assert.equal(humpWordAt(word, 0, word.length), false, word);
+    }
+    assert.equal(humpWordAt('batteries', 0, 'batteries'.length), true);
+    assert.equal(humpWordAt('tax', 0, 3), true);
     for (const name of kept) {
       assert.ok(name.length >= 16, name);
       assert.equal(keptAfterGap(name), true, name);
@@ -76,6 +84,9 @@ describe('v1.0.62 code-word humps stay and random humps stay masked', () => {
       assert.equal(wide.includes(name), false, `wide ${name}`);
       assert.equal(wide.includes(LINE64), false, `wide ${name}`);
       assert.equal(wide.includes('Next'), true, `wide ${name}`);
+    }
+    for (const name of maskedNames) {
+      assert.equal(keptAfterGap(name), false, name);
     }
   });
 
@@ -358,9 +369,9 @@ describe('v1.0.62 reproducible corpus and wording', () => {
     assert.ok(line, ran.stdout);
     assert.ok(real, ran.stdout);
     assert.ok(frozen, ran.stdout);
-    assert.equal(line, 'masked 1934 of 3000');
-    assert.equal(real, 'real-masked 2850 of 3000');
-    assert.equal(frozen, 'frozen-masked 2806 of 3000');
+    assert.equal(line, 'masked 2083 of 3000');
+    assert.equal(real, 'real-masked 690 of 3000');
+    assert.equal(frozen, 'frozen-masked 736 of 3000');
     const note = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
     const entry61 = note.slice(note.indexOf('## [1.0.61]'), note.indexOf('## [1.0.60]'));
     const entry62 = note.slice(note.indexOf('## [1.0.62]'), note.indexOf('## [1.0.61]'));
@@ -381,13 +392,23 @@ describe('v1.0.62 reproducible corpus and wording', () => {
     assert.ok(entry62.includes(frozen), `${frozen} missing from changelog`);
     assert.match(entry62, /773 of 3000 is what v1\.0\.61 masks on Release QA's rq74b real\.txt corpus/);
     assert.match(entry62, /not a sample of node_modules type declarations/);
-    assert.match(entry62, /frozen-masked 2806 of 3000/);
-    assert.match(entry62, /above 773 of 3000/);
-    assert.match(entry62, /1783 of 1876/);
+    assert.match(entry62, /frozen-masked 736 of 3000/);
+    assert.match(entry62, /598 of 1876/);
+    assert.match(entry62, /655 of 3000/);
     assert.match(entry62, /c671acc masked 621/);
-    assert.match(entry62, /previous tip masked 648/);
+    assert.match(entry62, /32a1260 tip masked 1783 of 1876/);
+    assert.match(entry62, /2560 of 6000/);
+    assert.match(entry62, /111 of 5000/);
+    assert.match(entry62, /randPronStartCode` keeps 1 of 6000/);
+    assert.match(entry62, /c671acc kept 0 of 6000/);
+    assert.match(entry62, /10,603/);
+    assert.match(entry62, /public domain/);
+    assert.match(entry62, /Pramod's sign-off at merge/);
+    assert.equal(entry62.includes('551 vs 901'), false);
+    assert.equal(entry62.includes('above 773 of 3000'), false);
     assert.equal(entry62.includes('at or below the v1.0.61 rate of 773 of 3000'), false);
     assert.equal(entry62.includes('tuned to'), false);
+    assert.equal(entry62.includes('self-authored'), false);
     const frozenFile = readFileSync(join(root, 'test', 'fixtures', 'v1.0.62', 'real-identifiers.txt'), 'utf8');
     const frozenHeader = frozenFile.split('\n').slice(0, 12).join('\n');
     assert.match(frozenHeader, /rq74b real\.txt/);
@@ -397,9 +418,12 @@ describe('v1.0.62 reproducible corpus and wording', () => {
     const rule = readFileSync(join(root, 'src', 'lib', 'redact.ts'), 'utf8');
     assert.equal(rule.includes('past 773'), false);
     assert.equal(rule.includes('tuned to'), false);
-    assert.match(entry62, /551 vs 901 is v1\.0\.61 on the same sample/);
+    const script = readFileSync(join(root, 'scripts', 'print-corpus-keep-rate.mjs'), 'utf8');
+    assert.equal(script.includes('551 vs 901'), false);
+    assert.match(script, /That walk is not a v1\.0\.61 comparison/);
+    assert.match(entry62, /That walk is not a v1\.0\.61 comparison/);
     assert.match(entry62, /depends on the lockfile/);
-    assert.match(entry62, /CorrectHorseBatteryStaple-style/);
+    assert.match(entry62, /CorrectHorseBatteryStaple/);
     assert.match(entry62, /56 of 2000/);
     assert.match(entry62, /about 3%/);
     assert.match(entry62, /leaks 0/);
@@ -409,13 +433,21 @@ describe('v1.0.62 reproducible corpus and wording', () => {
     assert.match(entry62, /not a certificate authority/);
   });
 
-  it('states that the hump list is self-authored and not the frequency lists', () => {
+  it('states the ENABLE provenance and does not ship the frequency lists', () => {
     const src = readFileSync(join(root, 'src', 'lib', 'hump-words.ts'), 'utf8');
-    assert.match(src, /self-authored/);
+    const note = readFileSync(join(root, 'docs', 'hump-words.md'), 'utf8');
+    assert.match(src, /ENABLE1, public domain/);
     assert.match(src, /not shipped/);
+    assert.match(note, /public domain/);
+    assert.match(note, /10,603/);
+    assert.match(note, /not a rank picked by scoring the rq74b/);
+    assert.match(note, /7,611/);
+    assert.match(note, /Pramod's sign-off at merge/);
+    assert.match(note, /CC-BY-SA-4\.0/);
     assert.equal(src.includes('inflateSync'), false);
     assert.equal(src.includes('PACKED_HUMP_WORDS'), false);
-    const gap = ['accrual', 'amortized', 'foreclosure', 'tranche', 'fiduciary'];
+    assert.equal(src.includes('self-authored'), false);
+    const gap = ['accrual', 'amortized', 'foreclosure', 'tranche', 'fiduciary', 'quixotic'];
     for (const word of gap) assert.equal(humpWordAt(word, 0, word.length), false, word);
   });
 });

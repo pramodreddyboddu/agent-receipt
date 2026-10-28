@@ -16,11 +16,10 @@
  * The second count is not built from that list. It takes camelCase
  * identifiers from node_modules type declarations, length 16 to 48,
  * sorts them, and keeps the first 3000. That walk depends on the
- * lockfile and the installed node_modules. 551 vs 901 is v1.0.61 on
- * the same sample: 901 is what v1.0.61 prints for this walk, and 551
- * is what the previous tip of this branch printed for it. 773 of 3000
- * is what v1.0.61 masks on Release QA's rq74b real.txt corpus, not on
- * this walk.
+ * lockfile and the installed node_modules.
+ * That walk is not a v1.0.61 comparison.
+ * 773 of 3000 is what v1.0.61 masks on Release QA's rq74b
+ * real.txt corpus, not on this walk.
  *
  * The third count is the frozen file
  * test/fixtures/v1.0.62/real-identifiers.txt. Those 3000 names are

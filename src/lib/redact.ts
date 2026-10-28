@@ -3394,34 +3394,6 @@ const IDENTIFIER_WORDS = new Set([
   'workload',
   'write',
   'yaml',
-  // v1.0.62 code-word humps. These are not path atoms.
-  'auth',
-  'btn',
-  'cfg',
-  'ctx',
-  'descriptor',
-  'dst',
-  'enum',
-  'env',
-  'executable',
-  'idx',
-  'impl',
-  'init',
-  'len',
-  'logger',
-  'num',
-  'params',
-  'pkg',
-  'reducer',
-  'repo',
-  'req',
-  'res',
-  'selector',
-  'src',
-  'str',
-  'tmp',
-  'util',
-  'widget',
 ]);
 
 /**
@@ -3679,11 +3651,11 @@ function shapedCamelHump(line: string, from: number, to: number): boolean {
  * this shape. Every hump is still word-shaped, so a random
  * vowel-consonant run stays key material. Every hump also has to be a
  * dictionary word or a documented variant. A documented variant is an
- * identifier word, a code word, or an abbreviation already accepted by
+ * identifier word or an abbreviation already accepted by
  * `identifierWordAt`: `config`, `api`, `db`, `fn`, `http`, `id`, `json`,
- * `url`, `uuid`, and the one-letter words `a` and `i`. One dictionary
- * hump does not keep the neighboring humps, so `TosiliWibuHandler` stays
- * key material and `initLoggerReducer` stays visible. A hump of 7 or
+ * `url`, `uuid`, and the one-letter words `a` and `i`. A code word is
+ * not a variant. One dictionary hump does not keep the neighboring
+ * humps, so `TosiliWibuHandler` stays key material. A hump of 7 or
  * more letters does not stay on shape. One pass over a letter span
  * already cut from one line.
  */
